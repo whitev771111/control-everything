@@ -1,0 +1,23 @@
+# Local environments, caches and generated evidence
+.venv/
+.exe/
+__pycache__/
+*.py[cod]
+node_modules/
+/work/
+
+# Local configuration and user data
+/.codex/*
+!/.codex/config.toml.example
+/.env
+/.env.*
+!/.env.example
+/progress-registry.json
+/progress-manual.json
+/progress-todos.json
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.sqlite3.*
+*.sqlite-*
+*.log

@@ -3,7 +3,6 @@ const $ = id => document.getElementById(id);
 const state = { records: [], selected: null, page: null, pageOld: false, csrf: '', epoch: 0, reading: false, focusing: false, refreshing: false, connected: false, received: 0, coverage: {}, snapshotAge: null, sourceReason: null,
   workbench: null, workbenchReceived: 0, workbenchCurrent: false, workbenchReason: null, workbenchError: '', refreshingWorkbench: false, connecting: false, workbenchBlocked: false, workbenchNotice: '' };
 const codexState = { items: [], offset: 0, nextOffset: null, total: null, coverage: {}, selected: null, available: false, received: 0, sampledAt: null, refreshing: false, error: '' };
-let cockpit = null;
 let garden = null;
 const reasons = {
   reader_empty_unverified: '读取结果未验证：有效空历史与查找或读取失败暂时无法区分',
@@ -128,7 +127,7 @@ function clearCodex(error) {
 function renderCodexCoverage() {
   const fresh = codexFresh(), coverage = codexState.coverage;
   $('codex-status').textContent = fresh ? `本机身份索引 · 采样于 ${timeText(codexState.sampledAt)} · 证据年龄 ${((performance.now() - codexState.received) / 1000).toFixed(1)} 秒` : '本机 Codex 身份索引未确认';
-  $('codex-coverage').textContent = fresh ? `本页 ${codexState.items.length} / 交互 ${codexState.total} · 全库 ${coverage.total_count} · 排除归档 ${coverage.archived_count}、子代理 ${coverage.excluded_subagent_count}、其他来源 ${coverage.excluded_other_source_count}` : '当前记录不可用；不显示旧记录为当前角色。';
+  $('codex-coverage').textContent = fresh ? `本页 ${codexState.items.length} / 交互 ${codexState.total} · 全库 ${coverage.total_count} · 排除归档 ${coverage.archived_count}、子代理 ${coverage.excluded_subagent_count}、其他来源 ${coverage.excluded_other_source_count}` : '当前记录不可用；不显示旧记录为当前身份。';
   $('codex-notice').textContent = codexState.error;
   $('refresh-codex').disabled = codexState.refreshing;
   $('codex-previous').disabled = codexState.refreshing || codexState.offset === 0;
@@ -158,8 +157,7 @@ function renderCodexThreads() {
     }
     $('codex-detail').append(element('h3', 'Codex 身份元数据'), element('code', item.thread_id, 'wrap'), element('p', item.cwd, 'path wrap'), facts,
       element('p', '只读身份索引；未读取正文，不提供实时工作状态。', 'small muted'));
-  } else $('codex-detail').append(element('p', '从 Codex 列表或机器人选择一条真实身份记录。', 'small muted'));
-  renderCockpit();
+  } else $('codex-detail').append(element('p', '从 Codex 列表选择一条真实身份记录。', 'small muted'));
   renderEvidenceFlow();
 }
 async function refreshCodexThreads(offset = codexState.offset) {
@@ -193,11 +191,6 @@ function selectCodexThread(key) {
   updatePaging(); $('focus-session').disabled = true; $('refresh-messages').disabled = true;
   $('detail-heading').textContent = '远端 Claude · 等待选择';
   renderSessions(); renderSelection(); renderCodexThreads();
-}
-function selectRobot(key) {
-  if (garden?.owns(key)) return garden.selectActor(key);
-  if (typeof key === 'string' && key.startsWith('codex:')) return selectCodexThread(key);
-  return selectSession(key);
 }
 function current(record) { return state.connected && age(record) <= 30000; }
 function eligible(record) { return current(record) && age(record) <= 5000 && recordView(record).category === 'confirmed' && record.identity_state === 'verified' && record.terminal_binding === 'confirmed'; }
@@ -261,16 +254,16 @@ function renderEvidenceFlow() {
   $('mapping-workbench-link').hidden = Boolean(codex);
   if (codex) {
     $('mapping-source').textContent = `本机 Codex · ${codex.source_kind} · 采样 ${timeText(codexState.sampledAt)} · 证据年龄 ${((performance.now() - codexState.received) / 1000).toFixed(1)} 秒`;
-    $('mapping-robot').textContent = '角色与本页原身份键一致；身份已索引，位置证据未提供。活动 / 完成：未知 / 未判断。';
+    $('mapping-identity').textContent = '完整身份键与本页记录一致；身份已索引，位置证据未提供。活动 / 完成：未知 / 未判断。';
     $('mapping-history').textContent = '正文未接入；当前只读身份元数据。';
     $('mapping-terminal').textContent = '终端绑定未接入；不会按目录猜测位置。';
     $('mapping-workbench').textContent = '所选 Codex 没有定位能力。';
-    $('mapping-next').textContent = '可复制完整身份键、查看身份详情或刷新 Codex 索引；巡游不代表正在工作。';
+    $('mapping-next').textContent = '可复制完整身份键、查看身份详情或刷新 Codex 索引。';
     return;
   }
   const valid = record && current(record), evidenceAge = record ? age(record) : Infinity;
   $('mapping-source').textContent = `${valid ? '本次' : '上次'}来源 · ${sourceText(record?.source)}${record?.source?.id ? ` · ${record.source.id}` : ''} · 采样 ${timeText(record?.observed_at)} · 证据年龄 ${Number.isFinite(evidenceAge) ? (evidenceAge / 1000).toFixed(1) + ' 秒' : '未知'}`;
-  $('mapping-robot').textContent = `${record ? recordView(record).label : reasonText('not_found')} · ${verified ? '身份已核验' : '身份未确认'}；角色使用此完整 UUID。活动 / 完成：未知 / 未判断。`;
+  $('mapping-identity').textContent = `${record ? recordView(record).label : reasonText('not_found')} · ${verified ? '身份已核验' : '身份未确认'}；记录使用此完整 UUID。活动 / 完成：未知 / 未判断。`;
   $('mapping-history').textContent = state.reading ? '正在按需读取所选历史页。' : state.page ? `${state.pageOld ? '上次读取结果' : '已读取所选历史页'} · 读取 ${timeText(state.page.read_at)}；reader 结果独立于当前位置证据。` : $('message-notice').textContent || '尚未读取；可在历史区刷新最近消息。';
   const position = record && (valid && record.terminal_binding === 'confirmed' ? `本次位置 · ${record.slot || '槽位未知'} → ${record.pane_id}`
     : `位置未确认${record.pane_id ? ` · 上次位置 ${record.slot || '槽位未知'} → ${record.pane_id}` : ''}`);
@@ -279,15 +272,6 @@ function renderEvidenceFlow() {
   const workbenchReasons = state.workbenchError || reasonText(state.workbenchBlocked ? 'cleanup_unverified' : state.workbenchReason);
   $('mapping-workbench').textContent = canFocus ? '当前所选位置可定位；切换已有 Zellij pane。' : `${workbenchReasons ? workbenchReasons + ' · ' : ''}${state.connecting || state.focusing ? '终端动作正在核验。' : !terminalReady() ? '客户端或归属未确认，或终端证据需刷新。' : !state.csrf ? '动作凭据未确认。' : '所选位置尚不满足原定位条件。'}${workbenchAge() > 5000 ? ' 工作台动作证据也需在 5 秒内，请刷新终端状态。' : ''}`;
   $('mapping-next').textContent = canFocus ? '查看身份与历史后，可在详情中定位原终端。' : '可复制完整 UUID、查看独立历史页或刷新观察；定位条件见上方原因与工作台详情。';
-}
-function renderCockpit() {
-  const codexViews = codexFresh() ? codexState.items.map(item => ({ sessionId: item.session_key, label: `Codex · ${item.thread_id.slice(0, 8)}`, category: 'unknown' })) : [];
-  try { cockpit?.update(garden?.getView() ?? { records: [...state.records.map(recordView), ...codexViews], selected: codexState.selected || state.selected }); }
-  catch {
-    try { cockpit?.dispose(); } catch { /* Preserve the independent DOM surface. */ }
-    cockpit = null; $('robot-stage').replaceChildren(); $('robot-stage').dataset.rendererMode = 'text';
-    $('robot-status').textContent = '文字模式 · 图形不可用';
-  }
 }
 function renderSessions() {
   const root = $('sessions');
@@ -317,7 +301,7 @@ function renderSessions() {
   }
   if (!state.records.length) root.append(element('p', '尚无会话证据；不会按目录猜测绑定。', 'small muted'));
   if (focusedId) Array.from(root.querySelectorAll('button[data-session-id]')).find(node => node.dataset.sessionId === focusedId)?.focus();
-  renderCoverage(); renderCockpit();
+  renderCoverage();
 }
 function renderSelection() {
   renderEvidenceFlow();
@@ -459,19 +443,13 @@ $('copy-mapping-key').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(key); $('mapping-copy-notice').textContent = '完整身份键已复制'; }
   catch { $('mapping-copy-notice').textContent = '复制不可用，请手动选择上方完整身份键'; }
 });
-try {
-  cockpit = window.SessionCockpit?.create({ stage: $('robot-stage'), status: $('robot-status'),
-    modeButtons: { '3d': $('robot-mode-3d'), pixel: $('robot-mode-pixel'), text: $('robot-mode-text') },
-    rotateButtons: { left: $('robot-rotate-left'), right: $('robot-rotate-right'), reset: $('robot-rotate-reset') }, onSelect: selectRobot }) || null;
-  if (!cockpit) $('robot-status').textContent = '文字模式 · 图形不可用';
-} catch { $('robot-status').textContent = '文字模式 · 图形不可用'; }
-document.addEventListener('visibilitychange', () => { document.body.dataset.pageHidden = String(document.hidden); if (!document.hidden) { refreshObservations(); garden?.refresh(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshObservations(); garden?.refresh(); } });
 setInterval(() => { if (!document.hidden) { refreshObservations(); garden?.refresh(); } }, 10000);
 setInterval(() => { if (!document.hidden) { renderWorkbench(); renderSelection(); renderCoverage(); expireCodexThreads(); if (state.records.some(record => age(record) > 30000)) renderSessions(); } }, 1000);
 query('/api/bootstrap').then(async result => {
   state.csrf = result.csrf_token; renderWorkbench(); renderSelection();
   if (typeof result.garden_root === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(result.garden_root)) {
-    try { const module = await import('/garden.js'); garden = module.mount({ root: result.garden_root, query, csrf: () => state.csrf, onView: () => queueMicrotask(renderCockpit) }); }
+    try { const module = await import('/garden.js'); garden = module.mount({ root: result.garden_root, query, csrf: () => state.csrf }); }
     catch { $('garden-notice').textContent = '小院模块暂未接入，可继续使用会话观察。'; }
   }
 }).catch(error => { $('list-notice').textContent = error.message; });

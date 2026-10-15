@@ -159,8 +159,6 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/": ("index.html", "text/html; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
             "/style.css": ("style.css", "text/css; charset=utf-8"),
-            "/cockpit.js": ("cockpit.js", "text/javascript; charset=utf-8"),
-            "/robot3d.js": ("robot3d.js", "text/javascript; charset=utf-8"),
             "/garden.js": ("garden.js", "text/javascript; charset=utf-8"),
             "/progress": ("progress.html", "text/html; charset=utf-8"),
             "/progress.js": ("progress.js", "text/javascript; charset=utf-8"),
@@ -169,9 +167,6 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/workspace.js": ("workspace.js", "text/javascript; charset=utf-8"),
             "/execution.js": ("execution.js", "text/javascript; charset=utf-8"),
             "/workspace.css": ("workspace.css", "text/css; charset=utf-8"),
-            "/vendor/three-0.186.0/three.module.js": ("vendor/three-0.186.0/three.module.js", "text/javascript; charset=utf-8"),
-            "/vendor/three-0.186.0/three.core.js": ("vendor/three-0.186.0/three.core.js", "text/javascript; charset=utf-8"),
-            "/vendor/three-0.186.0/LICENSE": ("vendor/three-0.186.0/LICENSE", "text/plain; charset=utf-8"),
         }
         if path.path in static and not path.query:
             filename, mime = static[path.path]

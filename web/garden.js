@@ -49,7 +49,7 @@ function currentReviewPassed(task) {
   return task.current_valid && (task.state === 'reviewed_pass' || task.state === 'accepted') && task.review?.outcome === 'pass';
 }
 
-export function mount({ root, query, csrf, onView }) {
+export function mount({ root, query, csrf }) {
   const $ = id => document.getElementById(id);
   let snapshot = null, selected = null, active = true, domain = root, generation = 0, dialogueGeneration = 0;
   let dialogue = { state: 'idle' }, busy = false, received = 0, minimumRevision = 0;
@@ -58,24 +58,17 @@ export function mount({ root, query, csrf, onView }) {
   $('garden-panel').hidden = false;
   $('garden-root-key').textContent = `codex:${root}`;
   const originalTitle = document.title, originalHeading = document.querySelector('header h1').textContent;
-  const sceneHeading = $('robot-heading'), originalSceneHeading = sceneHeading.textContent;
   const subtitle = document.querySelector('header p.muted'), originalSubtitle = subtitle.textContent;
 
-  function getView() {
-    if (!active) return null;
-    const records = snapshot && domain === root ? Object.values(snapshot.actors).filter(actor => actor.actor_id !== root)
-      .map(actor => ({ sessionId: `codex:${actor.actor_id}`, label: displayName(actor), category: 'unknown' })) : [];
-    return { records, selected: selected ? `codex:${selected}` : null, theme: 'garden' };
-  }
   function owns(key) { return Boolean(active && snapshot && domain === root && key.startsWith('codex:') && key.slice(6) !== root && snapshot.actors[key.slice(6)]); }
   function selectActor(key) {
     if (!owns(key)) return;
     selected = key.slice(6); dialogueGeneration++; dialogue = { state: 'idle', actorId: selected };
-    render(); onView(); loadPublic(selected);
+    render(); loadPublic(selected);
   }
   function clear(message) {
     dialogueGeneration++; dialogue = { state: 'idle' }; snapshot = null; selected = null; $('garden-announcement').textContent = '';
-    $('garden-notice').textContent = message; render(); onView();
+    $('garden-notice').textContent = message; render();
   }
   function observeDomain(key) {
     generation++; domain = key === `codex:${root}` ? root : null;
@@ -92,7 +85,6 @@ export function mount({ root, query, csrf, onView }) {
     $('observation-view').setAttribute('aria-pressed', String(!active));
     document.title = active ? '子agent 协作小院' : originalTitle;
     document.querySelector('header h1').textContent = active ? '子agent 协作小院' : originalHeading;
-    sceneHeading.textContent = active ? '小院里的伙伴' : originalSceneHeading;
     subtitle.textContent = active ? '小院里的伙伴 · 同主会话协作 · 交付结果有据可查' : originalSubtitle;
     domain = active ? root : null;
     clear(active ? '正在读取本会话的交付记录…' : '');
@@ -173,11 +165,9 @@ export function mount({ root, query, csrf, onView }) {
       const button = node('button', undefined, 'garden-actor');
       button.dataset.gardenFocus = actor.actor_id; button.dataset.actorId = actor.actor_id;
       button.setAttribute('aria-pressed', String(selected === actor.actor_id));
-      const bot = node('span', undefined, `garden-bot ${actor.role}`); bot.setAttribute('aria-hidden', 'true');
-      for (const part of ['antenna', 'head', 'body', 'feet']) bot.append(node('i', undefined, part));
       const label = node('span', undefined, 'garden-name');
       label.append(node('strong', displayName(actor)), node('span', `${role} · ${phase}`, 'small'));
-      button.append(bot, label); button.addEventListener('click', () => selectActor(`codex:${actor.actor_id}`)); card.append(button);
+      button.append(label); button.addEventListener('click', () => selectActor(`codex:${actor.actor_id}`)); card.append(button);
       card.append(node('p', task ? `负责：${task.title}` : '已登记，待任务', 'garden-task-line'));
       const abilities = node('p', actor.capabilities.map(name => names[name] || name).join(' · '), 'small garden-abilities'); card.append(abilities);
       if (task && task.state !== 'assigned') {
@@ -189,8 +179,8 @@ export function mount({ root, query, csrf, onView }) {
         cloud.append(node('strong', reviewed ? '独立复核通过' : phases[task.state]));
         if (!collapsedClouds.has(cloudId)) cloud.append(node('span', reviewed ? `${task.title}，独立复核通过。` : summary(task)));
         cloud.title = '点击收起或展开摘要；完整记录在所选伙伴详情中。';
-        cloud.addEventListener('click', () => { if (collapsedClouds.has(cloudId)) collapsedClouds.delete(cloudId); else collapsedClouds.add(cloudId); selected = actor.actor_id; render(); onView(); });
-        if (task.state === 'accepted' && actor.role === 'worker' && !seen.has(receipt.id)) { cloud.classList.add('new-result'); newResults.push(receipt); }
+        cloud.addEventListener('click', () => { if (collapsedClouds.has(cloudId)) collapsedClouds.delete(cloudId); else collapsedClouds.add(cloudId); selected = actor.actor_id; render(); });
+        if (task.state === 'accepted' && actor.role === 'worker' && !seen.has(receipt.id)) { newResults.push(receipt); }
         card.append(cloud);
       }
       list.append(card);
@@ -297,7 +287,7 @@ export function mount({ root, query, csrf, onView }) {
       if (attempt !== generation || !active || domain !== root) return;
       if (performance.now() - start > 30000 || !validSnapshot(next, root)) { clear('小院记录未能核验，请刷新。'); return; }
       if (next.revision < minimumRevision || (snapshot && next.revision < snapshot.revision)) return;
-      snapshot = next; received = start; render(); onView();
+      snapshot = next; received = start; render();
       if ($('garden-notice').textContent === '正在读取本会话的交付记录…') $('garden-notice').textContent = '';
     } catch (error) { if (attempt === generation && active && domain === root) clear(`小院暂未接入：${error.message}`); }
   }
@@ -306,9 +296,8 @@ export function mount({ root, query, csrf, onView }) {
   $('refresh-garden').addEventListener('click', refresh);
   document.addEventListener('visibilitychange', visibilityChanged);
   switchView('garden');
-  return { refresh, owns, selectActor, getView, observeDomain, dispose() {
+  return { refresh, observeDomain, dispose() {
     generation++; active = false; clear(''); delete document.body.dataset.gardenView;
-    sceneHeading.textContent = originalSceneHeading;
     $('garden-view').removeEventListener('click', selectGarden); $('observation-view').removeEventListener('click', selectObservation);
     $('refresh-garden').removeEventListener('click', refresh); $('garden-panel').hidden = true; $('garden-tabs').hidden = true;
     document.removeEventListener('visibilitychange', visibilityChanged);

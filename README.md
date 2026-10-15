@@ -1,5 +1,7 @@
 # 开发会话指挥室
 
+当前能力与待验收边界见 [开发进度](docs/DEVELOPMENT_STATUS.md)。首次检出请复制 `progress-registry.example.json` 为 `progress-registry.json` 并填写本机项目路径，复制 `progress-manual.example.json` 为 `progress-manual.json`；已有本机文件不要覆盖。
+
 ## 多 Agent 工作台
 
 新增统一入口 `/workspace`：项目与待办概览、可持久化的任务、Agent 能力与会话入口、Codex 官方订阅额度、人工每日用量记录、固定来源的 AI 资讯。架构选择、开源参考和后续执行控制路线见 [架构方案](docs/current/agent-workbench-20261013/hlplan.md)，本轮证据与限制见 [实施报告](docs/current/agent-workbench-20261013/impl_report_r1.md)。
@@ -12,7 +14,7 @@
 
 下文保留原会话与协作小院的使用说明。
 
-在一个页面查看本机 Codex 身份与远端 Claude 对话，用真实 UUID 对应机器人。远端消息与 Zellij 定位沿原有证据核验；三个只读 MCP 工具仍仅查询远端 Claude 索引。
+在一个页面查看本机 Codex 身份与远端 Claude 对话，用完整身份键区分记录。远端消息与 Zellij 定位沿原有证据核验；三个只读 MCP 工具仍仅查询远端 Claude 索引。
 
 当前首批固定来源为 `example@192.0.2.10`、`/home/example/.claude`、Claude Code `2.1.278`；本机 Zellij `0.45.1` 的 `workbench-v4 / Work-for-Linux`。元数据、存活进程和终端位置分别验证。此列表不是全服务器会话总数，也不判断任务是否完成。
 
@@ -35,9 +37,9 @@ Set-Location 'C:/example/control-everything'
 
 打开 `http://127.0.0.1:8766/`。远端 Claude 列表按 UUID 分行，即使两个会话 cwd 相同。点击明确的远端 ID 才读取最近 20 条可见消息；刷新观察只更新元数据。刷新最近消息与翻页才再次读取正文，隐藏页面暂停 10 秒一次的元数据轮询。
 
-✅ 已实现：本机 Codex 只读身份索引，固定读取 `C:/example/private-69202ba3.sqlite` 的六个元数据字段，筛选未归档 cli/exec/vscode，每页 12 条；归档、子代理及其他来源数量另列。角色键使用 `codex:<UUID>`，与远端相同 UUID 仍是两个身份。选择 Codex 只显示身份详情、清空远端正文并禁用远端定位；失败或超过 30 秒的采样清空当前角色。内部格式变更时明确显示不可用。
+✅ 已实现：本机 Codex 只读身份索引，固定读取 `C:/example/private-69202ba3.sqlite` 的六个元数据字段，筛选未归档 cli/exec/vscode，每页 12 条；归档、子代理及其他来源数量另列。身份键使用 `codex:<UUID>`，与远端相同 UUID 仍是两个身份。选择 Codex 只显示身份详情、清空远端正文并禁用远端定位；失败或超过 30 秒的采样清空当前身份。内部格式变更时明确显示不可用。
 
-✅ 已实现：3D 工位、每个可见身份的独立区域、圆角巡游、平滑起停/归位/巡游选中收腿、不同巡游节奏、光粒子、远端会话证据流程、环绕/缩放、暂停与像素/文字回退。在场 UUID 刷新保持位置，翻页重新安排；原会话观察区尚未提供永久座位或实际 session 协作。页面显示近期可见帧的 FPS/p95；巡游与动态连线不代表工作状态或任务进度。运动和个人区域验收见 [本批报告](docs/current/robot-personal-space-delivery-r1.md)。
+会话证据区保留来源、身份、按需历史、终端位置和动作条件；使用列表按钮选择身份，支持键盘操作。3D/像素人物、巡游、粒子、场景控制与 Three 本地依赖已从源码移除；本轮验证状态见 [展示退役](docs/current/display-retirement-20261015/README.md)。历史图形交付报告保留原始结论，运行中的服务未在本轮重启。
 
 ⛔ 未实现/未验收：Codex 正文与实时活动监控；全服务器会话覆盖；真实 WezTerm 正向关联和定位。本轮实机观察 workbench-v4 已退出，远端 terminal_unavailable，不能以本地测试推断双端会话全部接入。当前证据与失败记录见 [本轮交付报告](docs/current/game-scene-delivery-r1.md)。
 
@@ -69,11 +71,11 @@ enabled_tools = ["list_sessions", "get_session_status", "get_session_messages"]
 
 ## 同主会话子agent协作小院
 
-网关由当前主 Codex 会话的 `CODEX_THREAD_ID` 启动且能够核验本机原生父子元数据时，首页默认进入“协作小院”。小院只列出这个主会话明确登记的子agent；点击“会话与终端观察”可回到原页面。相同目录或相同工作环境不会合并不同主会话。页面中的草木色庭院和像素机器人是可选择的角色场景，动画不表示任务正在运行。
+网关由当前主 Codex 会话的 `CODEX_THREAD_ID` 启动且能够核验本机原生父子元数据时，首页默认进入“协作小院”。小院只列出这个主会话明确登记的子agent；点击“会话与终端观察”可回到原页面。相同目录或相同工作环境不会合并不同主会话。角色以原生文字按钮展示，任务状态来自真实收据。
 
-当前闭环支持四种身份：主会话协调者登记子agent、分配固定产物、请求复核和验收；提交者用自己的会话身份交付；另一位已登记复核者用自己的身份接收复核并记录结论。每一步产生收据，产物与复核证据按版本和 SHA-256 核验。只有当前版本经过独立复核且由主会话验收后，云朵才显示“完成交付”的短摘要；展开工位可见完整身份、路径、哈希和历史收据。文件变更会使当前结果失效，重新交付会产生新版本。
+当前闭环支持四种身份：主会话协调者登记子agent、分配固定产物、请求复核和验收；提交者用自己的会话身份交付；另一位已登记复核者用自己的身份接收复核并记录结论。每一步产生收据，产物与复核证据按版本和 SHA-256 核验。只有当前版本经过独立复核且由主会话验收后，摘要区才显示“完成交付”；展开工位可见完整身份、路径、哈希和历史收据。文件变更会使当前结果失效，重新交付会产生新版本。
 
-主屏的伙伴名牌先显示登记角色、负责事项和已有收据阶段；点选名牌或场景角色后，工位展示职责、能力、实际工作节点与时间。公开发言按需从当前主会话已登记子agent的本机记录中读取最近最多六条 assistant 公开发言；这是有限摘录，不是完整聊天，也不用于推断实时运行进度。小院默认自主巡游，动作按钮在小院隐藏；3D、像素、文字模式仍可选择，原“会话与终端观察”保留原控制。页面详情与使用边界见 [清晰主界面与角色详情](docs/current/subagent-garden-detail/README.md)。
+主屏的伙伴名牌先显示登记角色、负责事项和已有收据阶段；点选名牌后，工位展示职责、能力、实际工作节点与时间。公开发言按需从当前主会话已登记子agent的本机记录中读取最近最多六条 assistant 公开发言；这是有限摘录，不是完整聊天，也不用于推断实时运行进度。任务摘要可展开或收起；原“会话与终端观察”保留终端操作条件。旧详情批次的历史证据见 [清晰主界面与角色详情](docs/current/subagent-garden-detail/README.md)，当前展示退役状态见本轮报告。
 
 本地 MCP 服务是 `session_panel.garden_mcp`，提供 `garden_context`、`garden_register_actor`、`garden_assign_task`、`garden_submit_artifact`、`garden_request_review`、`garden_claim_review`、`garden_record_review`、`garden_accept_artifact` 八个固定工具。各子agent从**自己的**进程执行固定客户端，客户端继承其 `CODEX_THREAD_ID`，不接受参数冒充身份：
 
@@ -93,8 +95,9 @@ enabled_tools = ["list_sessions", "get_session_status", "get_session_messages"]
 ```powershell
 & '.venv/Scripts/python.exe' -m unittest discover -s tests -v
 & '.venv/Scripts/python.exe' -m compileall session_panel
-& 'C:/example/private-318dad85.exe' work/verify-ui-r1.cjs
-& 'C:/example/private-318dad85.exe' tests/verify_robot_cockpit.cjs --fixture
+& 'C:/example/private-318dad85.exe' tests/verify_workspace.cjs --fixture
+& 'C:/example/private-318dad85.exe' tests/verify_session_panel.cjs
+& 'C:/example/private-318dad85.exe' tests/verify_garden.cjs
 ```
 
 真实 SSH 补绑、独立 SDK 合成链/空结果对照、选中真实 UUID 分页、Edge 桌面/360px、真实 focus 和 Codex 加载由协调者分别承接。fixture 自证不代表这些已验收；详细状态与所有失败见 `docs/current/unified-dev-control-panel/impl_report_r1.md` 及 `work/` 证据。

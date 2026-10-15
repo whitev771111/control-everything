@@ -7,7 +7,7 @@ const path = require('node:path');
 const { chromium } = require('C:/example/user/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 
 const root = path.resolve(__dirname, '..');
-const report = { fixture_only: true, production_port_used: false, cases: [], failures: [], started_at: new Date().toISOString() };
+const report = { fixture_only: true, production_port_used: false, cases: [], failures: [], requests: [], screenshots: [], started_at: new Date().toISOString() };
 const output = path.join(root, 'work', `garden-browser-${report.started_at.replace(/[:.]/g, '-')}.json`);
 const ids = {
   root: 'a1000000-0000-4000-8000-000000000001',
@@ -40,14 +40,14 @@ function snapshot(phase = 'accepted', revision = 1) {
 const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/style.css"><title>原观察页面</title><body><header><h1>原观察页面</h1><p class="muted">观察</p></header>
 <nav id="garden-tabs" hidden><button id="garden-view">协作小院</button><button id="observation-view">会话与终端观察</button></nav>
-<main><section class="panel robot-panel"><h2 id="robot-heading">机器人工作空间</h2><div id="garden-peek" class="garden-peek"><span id="garden-peek-domain"></span><strong id="garden-peek-title"></strong><span id="garden-peek-summary"></span></div><div id="garden-scene-roster" class="garden-scene-roster"></div><div class="robot-stage" style="height:420px">真实页面的 3D 庭院由原场景负责</div><button id="robot-motion-toggle" aria-pressed="false">暂停</button></section>
+<main>
 <section id="garden-panel" class="panel garden-panel" hidden><h2>伙伴工位</h2><p id="garden-counts"></p><code id="garden-root-key"></code>
-<button id="refresh-garden">刷新小院</button><p id="garden-notice"></p><p id="garden-announcement" aria-live="polite"></p><div class="garden-layout"><div id="garden-actors"></div><div id="garden-detail"></div></div></section></main>
-<script type="module">import { mount } from '/garden.js'; window.fixture = { state: null, pending: null, pendingPublic: null, publicReads: [], publicResult: {available:true,root_thread_id:'${ids.root}',actor_id:'${ids.worker}',coverage:'最近公开发言',messages:[{phase:'commentary',text:'正在整理能力边界 <img src=x onerror=private()>',created_at:null}]}, pendingPost: null, posts: [], viewCalls: 0 };
+<div id="garden-peek" class="garden-peek"><span id="garden-peek-domain"></span><strong id="garden-peek-title"></strong><span id="garden-peek-summary"></span></div><div id="garden-scene-roster" class="garden-scene-roster"></div><button id="refresh-garden">刷新小院</button><p id="garden-notice"></p><p id="garden-announcement" aria-live="polite"></p><div class="garden-layout"><div id="garden-actors"></div><div id="garden-detail"></div></div></section></main>
+<script type="module">import { mount } from '/garden.js'; window.fixture = { state: null, pending: null, pendingPublic: null, publicReads: [], publicResult: {available:true,root_thread_id:'${ids.root}',actor_id:'${ids.worker}',coverage:'最近公开发言',messages:[{phase:'commentary',text:'正在整理能力边界 <img src=x onerror=private()>',created_at:null}]}, pendingPost: null, posts: [] };
 const query = async (route, options) => { if (options) { fixture.posts.push({route, body:JSON.parse(options.body)}); if (fixture.pendingPost) return fixture.pendingPost.promise; return {root_thread_id:'${ids.root}',revision:fixture.state.revision+1,receipt:{root_thread_id:'${ids.root}'}}; }
   if (route.includes('/public-messages')) { fixture.publicReads.push(route); if (fixture.pendingPublic) return fixture.pendingPublic.promise; return {...fixture.publicResult,actor_id:route.split('/')[4]}; }
   if (fixture.pending) return fixture.pending.promise; return fixture.state; };
-window.start = (value) => { fixture.state=value; fixture.garden=mount({root:'${ids.root}',query,csrf:()=> 'fixture-csrf',onView:()=>fixture.viewCalls++}); };
+window.start = (value) => { fixture.state=value; fixture.garden=mount({root:'${ids.root}',query,csrf:()=> 'fixture-csrf'}); };
 window.pauseGet = () => { let resolve; const promise = new Promise(done=>resolve=done); fixture.pending={promise,resolve}; };
 window.finishGet = (value) => { const pending=fixture.pending; fixture.pending=null; pending.resolve(value); };
 window.pausePublic = () => { let resolve; const promise = new Promise(done=>resolve=done); fixture.pendingPublic={promise,resolve}; };
@@ -55,7 +55,25 @@ window.finishPublic = (value) => { const pending=fixture.pendingPublic; fixture.
 window.pausePost = () => { let resolve; const promise = new Promise(done=>resolve=done); fixture.pendingPost={promise,resolve}; };
 window.finishPost = (value) => { const pending=fixture.pendingPost; fixture.pendingPost=null; pending.resolve(value); };</script></body></html>`;
 const server = http.createServer((request, response) => {
+  const url = new URL(request.url, 'http://127.0.0.1');
+  if (url.pathname.startsWith('/api/')) {
+    report.requests.push({ path: url.pathname, method: request.method });
+    const now = new Date().toISOString();
+    const data = {
+      '/api/bootstrap': { csrf_token: 'fixture-csrf', garden_root: ids.root },
+      '/api/garden': snapshot(),
+      '/api/sessions': { status: 'observed', reason: null, source: { user: 'fixture', host: 'synthetic.invalid', config_dir: '/synthetic' }, age_ms: 0, observed_at: now, sessions: [], coverage: { registration_count: 0, process_count: 0, confirmed_binding_count: 0, warnings: [] } },
+      '/api/workbench': { session: 'workbench-v4', status: 'observed', server_state: 'missing', gui_state: 'absent', gui_count: 0, interactive_client_count: 0, unmanaged_mux_count: 0, client_scope: 'interactive_only', watcher_count: null, gui_visibility: 'unverified', association_state: 'disconnected', observed_at: now, age_ms: 0, can_connect: false, can_focus: false, actions_blocked: false, reason: 'workbench_missing' },
+      '/api/codex/threads': { available: true, reason: null, source: 'codex_local', sampled_at: now, items: [], offset: 0, limit: 12, total_visible: 0, next_offset: null, coverage: { total_count: 0, archived_count: 0, excluded_subagent_count: 0, excluded_other_source_count: 0 } }
+    };
+    if (url.pathname === `/api/garden/actors/${ids.worker}/public-messages`) data[url.pathname] = { available: true, root_thread_id: ids.root, actor_id: ids.worker, coverage: '最近公开发言', messages: [{ phase: 'commentary', text: '合成首页的公开发言', created_at: null }] };
+    const item = request.method === 'GET' && data[url.pathname];
+    response.writeHead(item ? 200 : 404, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(item || { reason: 'fixture_route_not_found' })); return;
+  }
   const files = { '/': [html, 'text/html; charset=utf-8'], '/garden.js': [fs.readFileSync(path.join(root, 'web', 'garden.js')), 'text/javascript; charset=utf-8'],
+    '/full': [fs.readFileSync(path.join(root, 'web', 'index.html')), 'text/html; charset=utf-8'],
+    '/app.js': [fs.readFileSync(path.join(root, 'web', 'app.js')), 'text/javascript; charset=utf-8'],
     '/style.css': [fs.readFileSync(path.join(root, 'web', 'style.css')), 'text/css; charset=utf-8'] };
   const item = files[request.url]; response.writeHead(item ? 200 : 404, { 'Content-Type': item ? item[1] : 'text/plain' }); response.end(item ? item[0] : 'missing');
 });
@@ -64,6 +82,16 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   const page = await browser.newPage({ viewport: { width: 574, height: 866 } });
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const pagesErrors = [];
+  page.on('pageerror', error => pagesErrors.push(error.message));
+  await page.route('**/*', route => {
+    if (new URL(route.request().url()).origin !== origin) {
+      report.failures.push('Request outside controlled fixture'); return route.abort();
+    }
+    if (/\/(?:cockpit\.js|robot3d\.js|vendor\/three-)/.test(route.request().url())) report.failures.push('Retired rendering resource requested');
+    return route.continue();
+  });
   try {
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.waitForFunction(() => typeof window.start === 'function');
@@ -124,7 +152,7 @@ async function main() {
       await page.evaluate(() => { document.querySelector('#garden-announcement').textContent=''; });
       await page.evaluate(() => window.fixture.garden.refresh());
       assert.equal(await page.locator('#garden-announcement').innerText(), '');
-      assert.equal(await page.locator('.garden-cloud.new-result').count(), 0);
+      assert.equal(await page.locator('.garden-cloud').count(), 2);
     });
     await check('foreign root clears cards and late response', async () => {
       await page.evaluate(() => window.pauseGet());
@@ -134,7 +162,8 @@ async function main() {
       await page.evaluate(value => window.finishGet(value), snapshot('accepted', 2)); await pending;
       assert.equal(await page.locator('.garden-booth').count(), 0);
       assert.equal(await page.locator('#garden-announcement').innerText(), '');
-      assert.equal(await page.evaluate(() => window.fixture.garden.owns('codex:' + window.fixture.state.root_thread_id)), false);
+      assert.equal(await page.locator('.garden-conversation').count(), 0);
+      assert.equal(await page.locator('[data-actor-id="' + ids.root + '"]').count(), 0);
     });
     await check('explicit return restores this root only', async () => {
       await page.evaluate(() => window.fixture.garden.observeDomain(`codex:${window.fixture.state.root_thread_id}`));
@@ -191,10 +220,10 @@ async function main() {
       const geometry = await page.evaluate(() => {
         const peek = document.querySelector('#garden-peek').getBoundingClientRect();
         const roster = document.querySelector('#garden-scene-roster').getBoundingClientRect();
-        const stage = document.querySelector('.robot-stage').getBoundingClientRect();
-        return {peekBottom:peek.bottom,rosterBottom:roster.bottom,stageTop:stage.top,stageVisible:Math.min(866,stage.bottom)-stage.top};
+        const first = document.querySelector('.garden-roster-card').getBoundingClientRect();
+        return {peekBottom:peek.bottom,rosterBottom:roster.bottom,firstBottom:first.bottom};
       });
-      assert.ok(geometry.rosterBottom < 866 && geometry.stageTop < 866 && geometry.stageVisible >= 120, JSON.stringify(geometry));
+      assert.ok(geometry.peekBottom < 866 && geometry.firstBottom < 866, JSON.stringify(geometry));
       assert.equal(await page.locator('.garden-roster-card').count(), 4);
       assert.match(await page.locator('.garden-roster-card').first().innerText(), /提交者[\s\S]*能力调研/);
     });
@@ -208,8 +237,9 @@ async function main() {
       assert.equal(await page.locator('.garden-roster-card').count(),4);
       assert.match(await page.locator('.garden-roster-more').innerText(),/还有 1 位伙伴/);
       assert.equal(await page.locator('.garden-booth').count(),5);
-      const stageTop = await page.locator('.robot-stage').evaluate(element => element.getBoundingClientRect().top);
-      assert.ok(stageTop <= 746, `stage top ${stageTop}`);
+      const firstBottom = await page.locator('.garden-roster-card').first().evaluate(element => element.getBoundingClientRect().bottom);
+      assert.ok(firstBottom < 866, `first actor bottom ${firstBottom}`);
+      assert.equal(await page.locator('canvas,.garden-bot,[id^=robot-]').count(), 0);
     });
     await check('keyboard selection retains roster focus after render', async () => {
       await page.locator('.garden-roster-card').first().focus();
@@ -222,6 +252,39 @@ async function main() {
       await page.locator('.garden-roster-more').focus();
       await page.evaluate(() => window.fixture.garden.refresh());
       assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('garden-roster-more')), true);
+    });
+    await check('complete index app garden wiring and responsive views', async () => {
+      await page.goto(`${origin}/full`);
+      await page.locator('.garden-roster-card').first().waitFor();
+      assert.equal(await page.locator('#garden-panel #garden-peek').count(), 1);
+      assert.equal(await page.locator('#garden-panel #garden-scene-roster').count(), 1);
+      assert.equal(report.requests.some(item => item.path.endsWith('/public-messages')), false);
+      assert.equal(await page.locator('canvas,.garden-bot,[id^=robot-]').count(), 0);
+      await page.locator('.garden-roster-card').first().click();
+      await page.getByText('合成首页的公开发言', { exact: true }).waitFor();
+      assert.match(await page.locator('#garden-detail').innerText(), /产物与完整收据/);
+      for (const width of [1280, 360]) {
+        await page.setViewportSize({ width, height: 900 });
+        for (const view of ['garden', 'observations']) {
+          await page.locator(view === 'garden' ? '#garden-view' : '#observation-view').click();
+          await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+          assert.equal(await page.locator('#garden-panel').isVisible(), view === 'garden');
+          assert.equal(await page.locator('.evidence-panel').isVisible(), view === 'observations');
+          if (view === 'garden') {
+            await page.locator('.garden-roster-card').first().waitFor();
+            const bottom = await page.locator('.garden-roster-card').first().evaluate(element => element.getBoundingClientRect().bottom);
+            assert.ok(bottom < 900, `first actor below fold: ${bottom}`);
+          } else {
+            assert.equal(await page.locator('.workbench-panel').isVisible(), true);
+            assert.equal(await page.locator('#focus-session').isEnabled(), false);
+          }
+          const screenshot = path.join(root, 'work', `display-retirement-${view}-${width}-${report.started_at.replace(/[:.]/g, '-')}.png`);
+          await page.screenshot({ path: screenshot, fullPage: true }); report.screenshots.push(screenshot);
+        }
+      }
+      assert.equal(report.requests.some(item => item.method !== 'GET'), false);
+      assert.deepEqual(pagesErrors, []);
     });
   } finally { await browser.close(); }
 }

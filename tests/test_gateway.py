@@ -224,15 +224,14 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.request("/../requirements.txt")[0], 404)
         self.service.list_sessions.assert_not_called()
 
-    def test_robot_static_routes_preserve_bytes_mime_and_security_headers(self):
-        routes = ["cockpit.js", "robot3d.js", "vendor/three-0.186.0/three.module.js",
-                  "vendor/three-0.186.0/three.core.js", "vendor/three-0.186.0/LICENSE"]
+    def test_business_static_routes_preserve_bytes_mime_and_security_headers(self):
+        routes = ["app.js", "garden.js", "style.css"]
         for filename in routes:
             with self.subTest(filename=filename):
                 status, headers, body = self.request('/' + filename)
                 self.assertEqual(status, 200)
                 self.assertEqual(body, (WEB / filename).read_bytes())
-                self.assertEqual(headers["Content-Type"], "text/plain; charset=utf-8" if filename.endswith("LICENSE")
+                self.assertEqual(headers["Content-Type"], "text/css; charset=utf-8" if filename.endswith(".css")
                                  else "text/javascript; charset=utf-8")
                 self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
                 self.assertEqual(headers["Cache-Control"], "no-store")
@@ -241,15 +240,28 @@ class GatewayTests(unittest.TestCase):
         self.service.get_session_messages.assert_not_called()
         self.service.terminal.focus_session.assert_not_called()
 
-    def test_robot_static_missing_file_is_explicit_404(self):
+    def test_retired_rendering_routes_are_404_without_business_calls(self):
+        routes = ["/cockpit.js", "/robot3d.js", "/vendor/three-0.186.0/three.module.js",
+                  "/vendor/three-0.186.0/three.core.js", "/vendor/three-0.186.0/LICENSE"]
+        for route in routes:
+            with self.subTest(route=route):
+                status, headers, body = self.request(route)
+                self.assertEqual((status, body["reason"]), (404, "route_not_found"))
+                self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+                self.assertIn("default-src 'self'", headers["Content-Security-Policy"])
+        self.service.list_sessions.assert_not_called()
+        self.service.get_session_messages.assert_not_called()
+        self.service.terminal.focus_session.assert_not_called()
+
+    def test_business_static_missing_file_is_explicit_404(self):
         with TemporaryDirectory() as directory, patch("session_panel.gateway.WEB", Path(directory)):
-            for path in ("/cockpit.js", "/robot3d.js", "/vendor/three-0.186.0/three.core.js"):
+            for path in ("/app.js", "/garden.js", "/style.css"):
                 status, headers, body = self.request(path)
                 self.assertEqual((status, body["reason"]), (404, "route_not_found"))
                 self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
                 self.assertIn("default-src 'self'", headers["Content-Security-Policy"])
 
-    def test_robot_static_whitelist_rejects_prefix_query_and_encoded_paths(self):
+    def test_static_whitelist_rejects_retired_prefix_query_and_encoded_paths(self):
         paths = ["/cockpit.js?v=1", "/vendor/three-0.186.0/", "/vendor/three-0.186.0/package.json",
                  "/vendor/three-0.186.0/../three.core.js", "/vendor/three-0.186.0/%2e%2e/three.core.js",
                  "/vendor/three-0.186.0/%74hree.core.js", "/vendor/three-0.186.0/three.core.js/extra"]

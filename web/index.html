@@ -5,12 +5,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>开发会话指挥室</title>
   <link rel="stylesheet" href="/style.css">
-  <script src="/cockpit.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
   <header>
-    <div><p class="eyebrow">DEVELOPMENT COMMAND ROOM</p><h1>开发会话指挥室</h1><p class="muted">真实会话身份 · 空间工位 · 按证据连接项目与终端</p><p class="mapping-links"><a href="/workspace">工作台</a><a href="/progress">项目进度</a></p></div>
+    <div><p class="eyebrow">DEVELOPMENT COMMAND ROOM</p><h1>开发会话指挥室</h1><p class="muted">真实会话身份 · 按证据连接项目与终端</p><p class="mapping-links"><a href="/workspace">工作台</a><a href="/progress">项目进度</a></p></div>
     <div class="connection"><span class="dot" id="connection-dot"></span><span id="connection-state">来源观察 · 准备采样</span></div>
   </header>
   <nav id="garden-tabs" class="garden-tabs" aria-label="工作空间视图" hidden><button id="garden-view" aria-pressed="false">协作小院</button><button id="observation-view" aria-pressed="true">会话与终端观察</button></nav>
@@ -23,19 +22,10 @@
       <p class="small muted wrap">窗口仅观察 GUI 进程，可见性未核验；交互客户端含 web，watcher 覆盖未验证。外部独立 mux 的归属与内部客户端未核验。关联结果是组合证据观察。</p>
       <div id="workbench-notice" class="notice" role="status" aria-live="polite"></div>
     </section>
-    <section class="panel robot-panel" aria-labelledby="robot-heading">
-      <div class="section-head"><div><h2 id="robot-heading">机器人工作空间</h2><p class="small muted">巡游与光粒子是展示动画；颜色表示位置证据，活动与完成未知。点选真实角色查看所属会话。</p></div>
-        <div class="robot-modes" aria-label="显示模式"><button id="robot-mode-3d" aria-pressed="false">3D</button><button id="robot-mode-pixel" aria-pressed="false">像素</button><button id="robot-mode-text" aria-pressed="true">文字</button></div>
-      </div>
-      <div class="robot-controls" aria-label="旋转场景"><button id="robot-rotate-left" disabled>向左旋转</button><button id="robot-rotate-right" disabled>向右旋转</button><button id="robot-rotate-reset" disabled>重置视角</button></div>
-      <p id="robot-status" class="small muted" role="status" aria-live="polite">文字模式 · 准备图形</p>
-      <p class="garden-render-note small muted">伙伴自主巡游（展示动画），工作阶段以收据为准；点选名牌看详情。</p>
-      <div id="garden-peek" class="garden-peek"><span id="garden-peek-domain"></span><strong id="garden-peek-title"></strong><span id="garden-peek-summary"></span></div>
-      <div id="garden-scene-roster" class="garden-scene-roster" aria-label="本会话伙伴角色与当前事项"></div>
-      <div id="robot-stage" class="robot-stage" data-renderer-mode="text"></div>
-      <p class="small muted robot-legend">每个可见角色有独立工位与巡游区域，选中区域高亮；在场身份刷新保持位置。翻页重新安排，协作关系尚未接入。位置已确认 · 待关联 · 保留记录 · 当前未观察。</p>
+    <section class="panel evidence-panel" aria-labelledby="evidence-heading">
+      <div class="section-head"><h2 id="evidence-heading">会话证据</h2></div>
       <div class="evidence-flow" aria-labelledby="flow-heading">
-        <div class="flow-heading"><h3 id="flow-heading">远端 Claude · 会话证据链</h3><span class="small muted">连线表示关系，动画不代表任务进度</span></div>
+        <div class="flow-heading"><h3 id="flow-heading">远端 Claude · 会话证据链</h3><span class="small muted">身份、历史与位置分别核验</span></div>
         <ol class="flow-track">
           <li id="flow-source"><span class="flow-number">01</span><strong>固定来源</strong><span class="flow-value">等待采样</span></li>
           <li id="flow-index"><span class="flow-number">02</span><strong>真实 UUID 索引</strong><span class="flow-value">0 条记录</span></li>
@@ -47,7 +37,7 @@
           <div class="identity mapping-identity"><code id="mapping-key" class="wrap"></code><button id="copy-mapping-key" disabled>复制完整身份键</button></div>
           <dl class="facts mapping-facts">
             <div><dt>来源与采样</dt><dd id="mapping-source"></dd></div>
-            <div><dt>角色与身份</dt><dd id="mapping-robot"></dd></div>
+            <div><dt>身份核验</dt><dd id="mapping-identity"></dd></div>
             <div><dt>历史能力</dt><dd id="mapping-history"></dd></div>
             <div><dt>会话位置证据</dt><dd id="mapping-terminal"></dd></div>
             <div><dt>工作台动作条件</dt><dd id="mapping-workbench"></dd></div>
@@ -60,6 +50,8 @@
     </section>
     <section id="garden-panel" class="panel garden-panel" aria-labelledby="garden-heading" hidden>
       <div class="section-head"><div><h2 id="garden-heading">伙伴工位</h2><p id="garden-counts" class="small muted"></p></div><button id="refresh-garden">刷新小院</button></div>
+      <div id="garden-peek" class="garden-peek"><span id="garden-peek-domain"></span><strong id="garden-peek-title"></strong><span id="garden-peek-summary"></span></div>
+      <div id="garden-scene-roster" class="garden-scene-roster" aria-label="本会话伙伴角色与当前事项"></div>
       <details class="garden-domain"><summary>本主会话的小院 · 与其它会话隔离</summary><code id="garden-root-key" class="wrap"></code><p class="small">仅展示明确属于本主会话且已登记的子agent；相同项目目录也不会合并。</p></details>
       <div id="garden-notice" role="status" aria-live="polite"></div>
       <div id="garden-announcement" role="status" aria-live="polite"></div>
@@ -67,7 +59,7 @@
     </section>
     <section class="panel codex-panel" id="codex-panel" aria-labelledby="codex-heading">
       <div class="section-head"><div><h2 id="codex-heading">本机 Codex · 身份索引</h2><p id="codex-status" class="small muted" role="status">准备采样</p></div><button id="refresh-codex">刷新 Codex 索引</button></div>
-      <p class="small muted">仅未归档 cli / exec / vscode 记录；子代理与归档数量单独说明。内部索引格式版本相关；活动与完成未知，巡游不代表正在工作。</p>
+      <p class="small muted">仅未归档 cli / exec / vscode 记录；子代理与归档数量单独说明。内部索引格式版本相关；活动与完成未知。</p>
       <p id="codex-coverage" class="small muted">等待身份记录</p>
       <div id="codex-notice" class="notice" role="status" aria-live="polite"></div>
       <div class="codex-layout"><div id="codex-list" aria-label="Codex 身份选择"></div><div id="codex-detail" aria-label="Codex 身份详情"></div></div>
@@ -101,6 +93,6 @@
       </div>
     </section>
   </main>
-  <footer><span class="observation-footer">页面可见时每 10 秒刷新元数据；隐藏时暂停。Codex 仅身份元数据；远端消息只在选择、刷新或翻页时读取。定位仅切换已有 Zellij pane。</span><span class="garden-footer">每 10 秒读取本会话交付记录；隐藏时暂停。云朵来自真实产物与复核收据；动画不表示正在工作。复核请求等待本会话协调者派发。</span></footer>
+  <footer><span class="observation-footer">页面可见时每 10 秒刷新元数据；隐藏时暂停。Codex 仅身份元数据；远端消息只在选择、刷新或翻页时读取。定位仅切换已有 Zellij pane。</span><span class="garden-footer">每 10 秒读取本会话交付记录；隐藏时暂停。任务状态来自真实产物与复核收据。复核请求等待本会话协调者派发。</span></footer>
 </body>
 </html>

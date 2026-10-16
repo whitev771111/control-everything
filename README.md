@@ -6,19 +6,71 @@
 
 1080p 中文配音与字幕，展示项目任务、会话观察、用量来源和协作收据。画面使用 `44c359f` 版本的真实界面与演示数据；已实现与待验收能力分别说明。
 
-当前能力与待验收边界见 [开发进度](docs/DEVELOPMENT_STATUS.md)。首次检出请复制 `progress-registry.example.json` 为 `progress-registry.json` 并填写本机项目路径，复制 `progress-manual.example.json` 为 `progress-manual.json`；已有本机文件不要覆盖。
+当前项目与进度兼容增量见[实现与验收状态](docs/current/project-progress-compat-20261014/README.md)；较早里程碑见[开发进度](docs/DEVELOPMENT_STATUS.md)。默认启动使用当前用户独立的空 profile，通过页面登记项目，不再要求复制个人 registry 文件。已有本机文件保留，可显式导入。
+
+## 源码与测试目录
+
+后端保留 `session_panel` 包，内部按 `http`、`sessions`、`workspace`、`execution`、`garden`、`profiles`、`integrations` 七个功能包组织。前端使用原生 HTML/CSS/JS，页面资源放在 `web/sessions`、`web/progress`、`web/workspace`、`web/garden`，无需构建步骤。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+
+测试按 `tests/backend`（Python）、`tests/frontend`（纯 Node 合同）、`tests/e2e`（浏览器/协议 harness）和 `tests/fixtures`（合成替身）归类。新增功能放入所属功能目录，测试按类型放置；详细职责与验证命令见 [参与开发](CONTRIBUTING.md)。原有 `python -m session_panel.gateway` 等外部 CLI 继续使用，内部代码直接导入功能包实现。
 
 ## 多 Agent 工作台
 
-新增统一入口 `/workspace`：项目与待办概览、可持久化的任务、Agent 能力与会话入口、Codex 官方订阅额度、人工每日用量记录、固定来源的 AI 资讯。架构选择、开源参考和后续执行控制路线见 [架构方案](docs/current/agent-workbench-20261013/hlplan.md)，本轮证据与限制见 [实施报告](docs/current/agent-workbench-20261013/impl_report_r1.md)。
+统一入口 `/workspace` 提供项目登记、多个工作目录、人工进度与历史、任务和待办、可选文档进度来源、Codex 官方订阅额度、人工每日用量和固定来源 AI 资讯。项目不要求 Git 或特定工作流。人工进度、任务统计、文档观察分别展示；未填写百分比与真实 0 不混用，文档 PASS 或来源报告完成不会改写人工状态。
 
-启动下述新版网关后打开 `http://127.0.0.1:8766/workspace`，或执行 `& './scripts/open-workspace.ps1'` 进入 Edge 应用窗口。脚本只打开已运行的服务，不替换占用端口的旧进程。本轮为保留原 8766 服务，另在 `http://127.0.0.1:8770/workspace` 运行预览，可执行 `& './scripts/open-workspace.ps1' -Port 8770` 打开。
+在自己的检出目录使用 Python 3.10+ 创建环境；已有 `.venv` 时核对归属与版本，不覆盖：
 
-新增任务与人工记录保存在项目根目录 `workspace-state.sqlite3`，原有项目注册、待办和手工进度继续使用既有文件。首次没有任务时显示空状态；任务负责人表示人工分配记录，不会向 Agent 发送命令。每日 Token/费用与 Grok 额度目前需要手工记录；Codex 额度只在点击查询后通过官方 app-server 读取。资讯为固定 RSS 抓取，含来源与采样时间，不是推送流。
+```powershell
+python -m venv .venv
+& '.venv/Scripts/python.exe' -m pip install -r requirements.txt
+& '.venv/Scripts/python.exe' -m session_panel.gateway
+```
 
-桌面浏览器及 360/390px 布局已有实际验收；当前仅监听本机。真正手机远程访问、Agent 派发/审批/取消、自动每日成本、原生安装包属于后续里程碑。Edge 入口已运行验证，2026-10-13用户已目检确认独立窗口正常显示；该观察不代表原生安装包或手机远程能力已经交付。
+打开 `http://127.0.0.1:8766/workspace`。默认数据目录在 Windows 为 `%LOCALAPPDATA%/SessionPanel`（环境变量缺失时为当前用户 `AppData/Local/SessionPanel`）；目录内的 `profile.json` 保存来源设置，`workspace-state.sqlite3` 保存管理记录。路径优先级为 `--data-dir`、非空 `SESSION_PANEL_DATA_DIR`、当前用户默认目录；显式路径必须绝对。
 
-下文保留原会话与协作小院的使用说明。
+保留已有服务时明确选择另一个端口，例如：
+
+```powershell
+& '.venv/Scripts/python.exe' -m session_panel.gateway --data-dir 'C:/example/SessionPanel/main' --port 14401
+& './scripts/open-workspace.ps1' -Port 14401
+```
+
+随后访问 `http://127.0.0.1:14401/workspace` 或 `/progress`。网关只监听 `127.0.0.1`，端口范围为 1024–65535；占用即退出，不自动换端口、终止或接管旧服务。脚本只打开已经运行的服务。Ctrl+C 停止自己的实例；没有新增自动启动。
+
+在“添加项目”填写名称与真实的主目录，可添加最多七个附加目录；搬迁时编辑路径，项目 ID 和绑定 ID 保持。归档保留任务、人工记录及待办，随时可恢复。新增任务只能选择活动项目；已有归档或未登记项目的任务可以保留原项目继续编辑，兼容记录区也可按原 ID 恢复登记。任务和用量列表提供分页，不以首批展示条数代表全集。
+
+项目进度来源可选“未配置（人工管理）”、workflow-for-coding、普通文本或版本化 JSON。文本/JSON 使用选定目录内的相对路径；预设读取该目录的 `docs/current`，仅读有限直接子目录及 README/progress 文本。缺文件、空内容、出界或读取错误分别显示，不影响人工管理。JSON 示例：
+
+```json
+{"version":1,"state":"active","stage":"implementation","percent":0,"note":"等待测试","updated_at":"2026-10-15T08:00:00Z"}
+```
+
+除 version 外字段可选，但 state/stage/percent/note 至少一项有效。state 为 planned/active/blocked/completed；percent 为整数 0–100 或 NULL。单文件最多 256 KiB，预设每项目最多 64 个直接子目录、128 个候选文件；超预算明确报错，不把截断读取当作完整来源。
+
+“来源与导入”可显式填写 Codex 元数据库的绝对路径并启用。只读六字段元数据，不读会话正文；禁用后不访问该库，也不回退开发者个人路径。新 profile 不装配远端 SSH、个人启动器、小院或执行 owner。额度缓存、用户点击后的官方只读额度查询和公开资讯仍保留；每日 Token/费用与 Grok 额度仍可人工记录。执行、审批、模型费用试跑及 Orca 接入沿用原有暂停边界。
+
+## 导入旧记录与恢复
+
+在空 profile 的“来源与导入”填写旧数据目录的绝对路径，例如 `C:/example/previous-panel`。固定读取 `progress-registry.json`，以及可选的 `progress-manual.json`、`progress-todos.json`、`workspace-state.sqlite3`。只导入全部合法项目、人工进度、待办、工作台任务和人工用量；保留原 ID、顺序、关联与已有时间。未登记项目的记录进入兼容区；没有原时间的导入快照显示“来源未提供时间”。
+
+导入不改源目录、不读或复制 execution/审批/事件/garden/私人正文，不导入个人来源设置。非法、重复、schema 不兼容或超预算的批次整批拒绝并给出字段定位；不会只取旧页面前 500/100 条。目的 profile 必须业务为空且未导入过，来源与目的目录不能重合或互相包含。已有记录应另选空 `--data-dir`，不能覆盖或合并导入。
+
+提交前会在目的 `backups/<UTC>-<random>/` 生成管理库、配置快照和 manifest。成功页面显示完整 counts、备份路径及排除范围；备份失败不提交导入，失败的 `.pending-*` 目录可能留作诊断。恢复在离线命令中写到另一个不存在或真正空的目录，拒绝覆盖已有 profile：
+
+```powershell
+& '.venv/Scripts/python.exe' -m session_panel.profile restore --backup 'C:/example/SessionPanel/main/backups/<备份目录>' --data-dir 'C:/example/SessionPanel/restored'
+& '.venv/Scripts/python.exe' -m session_panel.gateway --data-dir 'C:/example/SessionPanel/restored' --port 14401
+```
+
+恢复会校验 manifest、文件大小/哈希、schema 与 SQLite 完整性。停止自己的旧实例后另行启动恢复目录；不在线切换，不删除原 profile 或导入后的新记录。真实个人数据是否符合导入合同需实际校验，隔离 fixture 验证不能替代个人迁移结果。
+
+新记录保存在所选 profile，源码旁旧 JSON/SQLite 与既有服务保留原位。任务负责人表示人工分配，不向 Agent 发送命令。资讯含来源与采样时间，不是推送流。
+
+2026-10-13 的桌面、360/390px 和 Edge 窗口验收属于旧工作台对象，证据见[旧实施报告](docs/current/agent-workbench-20261013/impl_report_r1.md)。本兼容增量的当前验证状态以[当前 feature](docs/current/project-progress-compat-20261014/README.md)为准。手机远程访问、自动每日成本和原生安装包仍是后续能力。
+
+## 旧个人服务与协作小院（历史入口）
+
+下文保留原版本或已有旧实例的说明。新版 profile 默认不启用这些个人服务，不能把新网关的 `/` 或 MCP 配置当作已恢复远端会话/小院；旧数据与旧运行不会被本增量接管。
 
 在一个页面查看本机 Codex 身份与远端 Claude 对话，用完整身份键区分记录。远端消息与 Zellij 定位沿原有证据核验；三个只读 MCP 工具仍仅查询远端 Claude 索引。
 
@@ -31,13 +83,14 @@
 本机专属 `.venv` 只安装 `requirements.txt` 中的 MCP `1.26.0`。远端独立 reader 环境为 `/home/example/.local/share/session-panel-reader/.venv`，安装 `requirements-reader.txt` 中的 Claude Agent SDK `0.2.163` 与 MCP `1.26.0`。安装与真实兼容由协调者核验；不使用系统 pip，不改现有 CLI/PATH/Claude 设置。远端环境缺失时仍可观察身份，消息显示 `sdk_unavailable`。
 
 ```powershell
-Set-Location 'C:/example/control-everything'
-& 'C:/example/private-8e9f974a.exe' -m venv .venv
+Set-Location 'C:/example/panel'
+python -m venv .venv
 & '.venv/Scripts/python.exe' -m pip install -r requirements.txt
-& 'C:/example/private-b8446a21.exe' -m session_panel.gateway
+# 新版 profile 启动命令；旧个人服务行为仅适用于原版本/已有实例。
+& '.venv/Scripts/python.exe' -m session_panel.gateway --data-dir 'C:/example/SessionPanel/main' --port 14401
 ```
 
-环境已存在时先核对归属和版本，不覆盖现有环境。生产网关固定监听 `http://127.0.0.1:8766/`；端口占用会退出，不换端口或接管现有服务。默认前台手动运行，Ctrl+C 停止；不配置自动启动。
+环境已存在时先核对归属和版本，不覆盖现有环境。原实例固定 8766 的说明为历史记录；新版端口由上文参数明确选择。
 
 ## 网页使用与状态
 
@@ -101,9 +154,9 @@ enabled_tools = ["list_sessions", "get_session_status", "get_session_messages"]
 ```powershell
 & '.venv/Scripts/python.exe' -m unittest discover -s tests -v
 & '.venv/Scripts/python.exe' -m compileall session_panel
-& 'C:/example/private-318dad85.exe' tests/verify_workspace.cjs --fixture
-& 'C:/example/private-318dad85.exe' tests/verify_session_panel.cjs
-& 'C:/example/private-318dad85.exe' tests/verify_garden.cjs
+node tests/e2e/verify_workspace.cjs --fixture
+node tests/e2e/verify_session_panel.cjs
+node tests/e2e/verify_garden.cjs
 ```
 
 真实 SSH 补绑、独立 SDK 合成链/空结果对照、选中真实 UUID 分页、Edge 桌面/360px、真实 focus 和 Codex 加载由协调者分别承接。fixture 自证不代表这些已验收；详细状态与所有失败见 `docs/current/unified-dev-control-panel/impl_report_r1.md` 及 `work/` 证据。

@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from session_panel.profiles.profile import ProfileError, absolute_path, strict_json, validate_config
+from session_panel.profiles.profile import (CONFIG_MAX_BYTES, ProfileError, absolute_path,
+                                          config_file_lock, strict_json, validate_config)
 from session_panel.sessions.source import canonical_uuid
 from session_panel.workspace.service import WorkspaceService, TASK_STATES, PROVIDERS, finite_number
 from session_panel.workspace.store import (BASE_SCHEMA, MANAGEMENT_TABLES, WorkspaceError, WorkspaceStore,
@@ -313,7 +314,7 @@ def import_legacy(profile, source_dir):
     except (OSError, UnicodeError, RecursionError):
         invalid("source_dir", "source_unavailable")
     writer = None
-    with profile.config_lock, profile.store.write_lock:
+    with profile.config_lock, config_file_lock(profile.data_dir), profile.store.write_lock:
         try:
             writer = sqlite3.connect(profile.store.path, isolation_level=None, timeout=5)
             writer.execute("PRAGMA busy_timeout=5000")
@@ -384,7 +385,7 @@ def validate_backup(directory):
                     or path.stat().st_size != metadata["size"] or digest(path) != metadata["sha256"]):
                 invalid("manifest.files." + name)
         config_path = root / "profile.json"
-        if config_path.stat().st_size > 16384:
+        if config_path.stat().st_size > CONFIG_MAX_BYTES:
             invalid("profile.json")
         validate_config(strict_json(config_path.read_text(encoding="utf-8")))
         connection = sqlite3.connect((root / "management.sqlite3").as_uri() + "?mode=ro", uri=True)

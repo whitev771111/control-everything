@@ -40,7 +40,7 @@ const viewCopy = {
   news: ['AI 资讯', '留一点时间，看向前沿。', '来自公开来源的标题与原文。按发布时间排序，保留抓取状态。', 'A WINDOW INTO AI'],
   settings: ['来源与导入', '让数据留在自己的空间。', '配置可选的元数据来源，或将旧管理记录导入空 profile。', 'PROFILE & SOURCES'],
 };
-const app = { view: 'overview', csrf: '', snapshot: null, usage: null, news: null, taskId: null, recordId: null, profileMode: false, profile: null, projectId: null, restoreId: null, manualId: null, historyRequest: 0, pages: { tasks: 0, records: 0, todos: 0, history: 0, compatibility: 0 } };
+const app = { view: 'overview', csrf: '', snapshot: null, usage: null, news: null, taskId: null, recordId: null, profileMode: false, profile: null, capabilities: {}, projectId: null, restoreId: null, manualId: null, historyRequest: 0, pages: { tasks: 0, records: 0, todos: 0, history: 0, compatibility: 0 } };
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -463,7 +463,7 @@ fillOptions($('task-provider'), [['', '暂不分配'], ...Object.entries(provide
 fillOptions($('record-provider'), Object.entries(providerNames), 'codex');
 showView(location.hash.slice(1) || 'overview');
 async function bootstrap() {
-  try { const value = await api('/api/bootstrap'); app.csrf = typeof value.csrf_token === 'string' ? value.csrf_token : ''; app.profileMode = value.capabilities?.profile === true; }
+  try { const value = await api('/api/bootstrap'); app.csrf = typeof value.csrf_token === 'string' ? value.csrf_token : ''; app.capabilities = value.capabilities || {}; app.profileMode = app.capabilities.profile === true; }
   catch { message('workspace-status', '保存凭据不可用，仍可尝试读取信息。', true); }
   if (app.profileMode) { setupProfile(); try { await loadProfile(); } catch (error) { message('workspace-status', error.message, true); } }
   else { window.WorkspaceExecution?.init({ api, post, showView, getSnapshot: () => app.snapshot });
@@ -518,8 +518,8 @@ function setupProfile() {
   $('new-project').hidden = false; document.querySelector('[data-view="settings"]').hidden = false;
   document.querySelector('[data-view="runs"]').hidden = true;
   document.querySelector('.sidebar-links').replaceChildren(el('p', 'nav-label', '项目进度'), link('进度与待办 ↗', '/progress'));
-  document.querySelector('#agents-view .section-heading a').hidden = true;
-  document.querySelector('#sessions-status').previousElementSibling.querySelector('a').hidden = true;
+  document.querySelector('#agents-view .section-heading a').hidden = !(app.capabilities.remote_sessions || app.capabilities.workbench);
+  document.querySelector('#sessions-status').previousElementSibling.querySelector('a').hidden = !app.capabilities.remote_sessions;
   for (const [after, id] of [['tasks-list', 'tasks-pager'], ['records-list', 'records-pager'], ['todos-list', 'todos-pager']]) { const root = el('div', 'pager'); root.id = id; $(after).after(root); }
   const scope = el('select'); scope.id = 'task-scope'; scope.setAttribute('aria-label', '项目登记状态');
   fillOptions(scope, [['all', '全部项目记录'], ['active', '活动项目'], ['archived', '归档项目'], ['orphan', '未登记项目']], 'all');
@@ -533,6 +533,7 @@ function setupProfile() {
   $('project-source-kind').addEventListener('change', syncSource); $('project-form').addEventListener('input', projectBytes);
   $('project-form').addEventListener('submit', saveProject); $('manual-form').addEventListener('submit', saveManual);
   $('clear-percent').addEventListener('click', () => { $('manual-percent').value = ''; });
+  $('refresh-launchers').addEventListener('click', () => loadLaunchers().catch(error => message('integrations-feedback', error.message, true)));
   $('settings-form').addEventListener('submit', saveSettings); $('import-form').addEventListener('submit', importLegacy);
   if (app.view === 'runs') showView('overview'); else showView(app.view);
 }
@@ -545,8 +546,37 @@ async function loadProfile(preserveDraft = false) {
   $('import-submit').disabled = !value.can_import || !app.csrf;
   $('import-availability').textContent = value.can_import ? `目的目录：${value.data_dir} · 当前可导入` : `${reason(value.import_reason || (value.import_receipt ? 'already_imported' : 'profile_not_empty'))} · 目的目录：${value.data_dir}`;
   if (value.import_receipt) renderImport(value.import_receipt);
-  await loadCompatibility();
+  renderIntegrations(value);
+  await Promise.all([loadCompatibility(), loadLaunchers()]);
 }
+function renderIntegrations(value) {
+  const root = $('integration-statuses'); root.replaceChildren();
+  const names = { remote: '远端 Claude', terminal: '终端观察', workbench: '终端工作台', launchers: '本机启动器' };
+  const statuses = { not_configured: '未配置', disabled: '已禁用', configured: '已配置 · 连接与工具状态待核验' };
+  for (const [name, label] of Object.entries(names)) {
+    const item = value.integrations?.[name] || { status: 'not_configured' };
+    const row = el('div', 'source-line'); row.dataset.integration = name;
+    row.append(el('strong', '', label), el('p', '', statuses[item.status] || '状态未确认'));
+    if (item.reason === 'reader_upgrade_recommended') row.append(el('p', 'section-note', '旧 reader 依赖仅迁移兼容；建议升级并单独核验。'));
+    root.append(row);
+  }
+  $('integration-restart').textContent = value.restart_required ? '配置已保存；请重启同一 data-dir 的服务。当前接入仍使用启动时配置。' : '当前服务使用启动时的接入配置。';
+  $('integration-import-command').textContent = `python -m session_panel.profile import-settings --file "<自己的高级配置 JSON 绝对路径>" --data-dir "${value.data_dir}"`;
+}
+async function loadLaunchers() {
+  const root = $('configured-launchers'); root.replaceChildren();
+  $('refresh-launchers').disabled = !app.capabilities.personal_launchers;
+  if (!app.capabilities.personal_launchers) { message('launcher-status', '当前服务未启用本机启动器；导入配置并重启后可用。'); return; }
+  const value = await api('/api/desk');
+  message('launcher-status', value.launchers.length ? '只启动已登记的入口；按钮不会修改目标配置。' : '当前没有已登记的启动器。');
+  for (const item of value.launchers) {
+    const row = el('div', 'source-line');
+    row.append(el('strong', '', item.name), el('p', 'section-note', `${item.group} · ${item.blurb} · ${item.status}`));
+    row.append(action('启动', async () => { await post('/api/launch', { id: item.id }); message('integrations-feedback', '启动请求已提交；请查看对应窗口或工具。'); await loadLaunchers(); }));
+    root.append(row);
+  }
+}
+
 function directoryRows() { return [...$('project-directories').querySelectorAll('[data-binding-id]')]; }
 function addDirectory(id, path) {
   const row = el('div', 'directory-row'); row.dataset.bindingId = id;

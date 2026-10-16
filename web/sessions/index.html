@@ -13,8 +13,9 @@
     <div class="connection"><span class="dot" id="connection-dot"></span><span id="connection-state">来源观察 · 准备采样</span></div>
   </header>
   <main>
+    <p id="integration-notice" class="panel small" hidden>可选接入未启用时不会连接远端或终端。<a href="/workspace#settings">查看来源设置与本机配置指引 ↗</a></p>
     <section class="panel workbench-panel" aria-labelledby="workbench-heading">
-      <div class="section-head"><div><h2 id="workbench-heading">WezTerm 工作台</h2><p id="workbench-state" class="small muted" role="status" aria-live="polite">workbench-v4 · 尚未观察</p></div>
+      <div class="section-head"><div><h2 id="workbench-heading">WezTerm 工作台</h2><p id="workbench-state" class="small muted" role="status" aria-live="polite">终端工作台 · 尚未观察</p></div>
         <div class="workbench-controls"><button id="refresh-workbench">刷新终端状态</button><button id="connect-workbench" class="primary" disabled>连接现有工作台</button></div>
       </div>
       <dl class="facts workbench-facts" id="workbench-facts"></dl>
@@ -57,7 +58,7 @@
     </section>
     <aside class="panel" aria-labelledby="sessions-heading">
       <div class="section-head"><h2 id="sessions-heading">会话</h2><button id="refresh-sessions">刷新观察</button></div>
-      <p id="source" class="small wrap">example@192.0.2.10</p>
+      <p id="source" class="small wrap">等待来源配置</p>
       <p id="coverage" class="small muted">等待来源证据</p>
       <div id="list-notice" class="notice" role="status" aria-live="polite"></div>
       <div id="sessions" class="session-list" aria-label="会话选择"></div>

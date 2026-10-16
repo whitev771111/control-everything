@@ -7,10 +7,10 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../..');
 const sourcePath = path.resolve(process.argv[2] || path.join(root, 'web/workspace/workspace.js'));
 const source = fs.readFileSync(sourcePath, 'utf8');
-const names = ['el', 'message', 'action', 'pager', 'openManual', 'loadHistory', 'saveManual'];
+const names = ['el', 'message', 'action', 'pager', 'openManual', 'loadHistory', 'saveManual', 'renderIntegrations', 'loadLaunchers'];
 const functions = names.map(name => { const match = source.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`)); assert.ok(match, name); return match[0]; }).join('\n');
 class Element {
-  constructor() { this.children = []; this.listeners = {}; this.value = ''; this.text = ''; this.classList = { toggle() {} }; }
+  constructor() { this.children = []; this.listeners = {}; this.dataset = {}; this.value = ''; this.text = ''; this.classList = { toggle() {} }; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; this.text = ''; }
   addEventListener(name, callback) { this.listeners[name] = callback; }
@@ -57,5 +57,35 @@ async function race(firstId, secondId, firstOffset, secondOffset, olderFirst = f
   await test('pager resets on current empty history', async () => { const f = fixture(); f.run('var current=loadHistory();'); f.requests[0].resolve({ items: [], total: 0, offset: 0, limit: 20 }); await f.run('current'); assert.match(f.node('manual-history').textContent, /还没有人工历史/); assert.equal(f.node('history-pager').children[0].disabled, true); assert.equal(f.node('history-pager').children[2].disabled, true); });
   await test('history refresh preserves manual draft and NULL/zero save bodies', async () => { const f = fixture(); f.open('a'); f.requests[0].resolve(response(0, 'INITIAL')); await tick(); f.node('manual-note').value = 'edited draft'; f.node('manual-percent').value = ''; f.run('var saving=saveManual({preventDefault(){}});'); await tick(); f.requests[1].resolve(response(0, 'NEW')); await f.run('saving'); assert.equal(f.writes[0].body.percent, null); assert.equal(f.node('manual-note').value, 'edited draft'); f.node('manual-percent').value = '0'; f.run('var savingAgain=saveManual({preventDefault(){}});'); await tick(); f.requests[2].resolve(response(0, 'ZERO')); await f.run('savingAgain'); assert.equal(f.writes[1].body.percent, 0); });
   await test('no-profile pager remains hidden', async () => { const f = fixture(); f.run('app.profileMode=false; var current=loadHistory();'); f.requests[0].resolve(response(0, 'CURRENT')); await f.run('current'); assert.equal(f.node('history-pager').hidden, true); });
+  await test('integration summaries expose status and restart without raw settings', () => {
+    const f = fixture();
+    f.run(`renderIntegrations({data_dir:'C:/example/profile',restart_required:true,integrations:{remote:{status:'configured',reason:'reader_upgrade_recommended'},terminal:{status:'disabled'},workbench:{status:'not_configured'},launchers:{status:'configured'}}});`);
+    assert.match(f.node('integration-statuses').textContent, /远端 Claude/); assert.match(f.node('integration-statuses').textContent, /迁移兼容/);
+    assert.match(f.node('integration-restart').textContent, /重启/); assert.ok(f.node('integration-import-command').textContent.includes('--data-dir "C:/example/profile"'));
+    assert.equal(f.node('integration-statuses').children.length, 4);
+  });
+  await test('disabled launcher capability makes no desk request', async () => {
+    const f = fixture(); await f.run('loadLaunchers()'); assert.equal(f.requests.length, 0); assert.match(f.node('launcher-status').textContent, /未启用/);
+  });
+  await test('launcher button posts only its registered id and refreshes catalog', async () => {
+    const f = fixture(); f.run("app.capabilities={personal_launchers:true}; var loading=loadLaunchers();");
+    f.requests[0].resolve({launchers:[{id:'synthetic',group:'tools',name:'Safe <literal>',blurb:'Example',status:'ready',target:'must-not-forward'}]}); await f.run('loading');
+    const pending = f.node('configured-launchers').children[0].children[2].listeners.click(); await tick();
+    assert.equal(f.writes[0].url, '/api/launch'); assert.deepEqual(JSON.parse(JSON.stringify(f.writes[0].body)), {id:'synthetic'});
+    assert.equal(f.requests[1].url, '/api/desk'); f.requests[1].resolve({launchers:[]}); await pending;
+  });
+  await test('session bootstrap finishes before optional reads and disabled capabilities never poll', async () => {
+    const sessionSource = fs.readFileSync(path.join(root,'web/sessions/app.js'),'utf8');
+    const calls=[], nodes=new Map(); let release;
+    const selected = ['capability','refreshObservations','initializeSessionPage'].map(name => { const match=sessionSource.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`)); assert.ok(match,name); return match[0]; }).join('\n');
+    const context=vm.createContext({$:id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);},query:()=>new Promise(resolve=>{release=resolve;}),
+      renderWorkbench(){},renderCoverage(){},renderSelection(){},refreshCodexThreads:async()=>{calls.push('codex');},refreshSessions:async()=>{calls.push('remote');},refreshWorkbench:async()=>{calls.push('workbench');}});
+    vm.runInContext(sessionSource.match(/const state = [^]*?;\r?\n/)[0]+'\n'+selected,context);
+    const initializing=vm.runInContext('initializeSessionPage()',context); assert.deepEqual(calls,[]);
+    release({csrf_token:'fixture',capabilities:{profile:true,remote_sessions:false,workbench:false}}); await initializing;
+    assert.deepEqual(calls,['codex']); await vm.runInContext('refreshObservations()',context); assert.deepEqual(calls,['codex','codex']);
+    calls.length=0; vm.runInContext('state.capabilities={remote_sessions:true,workbench:true};',context); await vm.runInContext('refreshObservations()',context);
+    assert.deepEqual(calls,['codex','remote','workbench']);
+  });
   console.log(JSON.stringify({ scope: 'actual workspace functions / controlled promises only', source: path.relative(process.cwd(), sourcePath), cases, failures: cases.filter(row => !row.passed).length }, null, 2)); process.exitCode = cases.some(row => !row.passed) ? 1 : 0;
 })();

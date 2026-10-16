@@ -38,7 +38,7 @@ function uiHarness(options = {}) {
   if (options.saved) storage.set('workspace.execution.receipt', JSON.stringify(options.saved));
   const get = id => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
   const task = { id: '20000000-0000-4000-8000-000000000001', title: '准备提示词', provider_id: 'codex' };
-  const ctx = { task, project: { id: 'alpha', name: 'Alpha', cwd: 'E:\\fixture\\alpha' }, context_hash: 'hash-1', policy: { mode: 'workspace-write', approval_policy: 'on-request', approvals_reviewer: 'user', network_access: false, writable_roots: [], inheritance_note: 'MCP may inherit' } };
+  const ctx = { task, project: { id: 'alpha', name: 'Alpha', cwd: 'C:/example/fixture\\alpha' }, context_hash: 'hash-1', policy: { mode: 'workspace-write', approval_policy: 'on-request', approvals_reviewer: 'user', network_access: false, writable_roots: [], inheritance_note: 'MCP may inherit' } };
   const list = { capability: { implemented: true, available: true, is_owner: true }, runs: [], active: [], total: 0 };
   const sandbox = { window: {}, document: { hidden: false, getElementById: get, createElement: tag => new Element(tag), addEventListener() {} }, sessionStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, crypto: { randomUUID }, TextEncoder, setTimeout: () => 1, clearTimeout() {}, console };
   vm.createContext(sandbox); vm.runInContext(executionSource, sandbox);
@@ -109,7 +109,7 @@ async function main() {
   await settle(); await restored.open(); await restored.get('execution-retry').fire(); await restored.submit();
   check('reload stores only key/task and never reconstructs or resends body', restored.records.every(item => item.method !== 'POST') && restored.get('execution-retry').hidden && restored.get('execution-prompt').disabled);
   const run = { id: randomUUID(), task_title: '审批焦点', state: 'waiting_approval' };
-  const detail = { run, approvals: [{ id: randomUUID(), kind: 'command', detail: { command: 'echo <unsafe>', cwd: 'E:\\fixture', scope_verified: true }, detail_complete: true, can_accept: true, status: 'pending' }, { id: randomUUID(), kind: 'file_change', detail: { changes: [{ path: 'a.txt', diff: '+ exact diff' }] }, detail_complete: false, can_accept: false, status: 'pending' }], events: [], next_cursor: 0 };
+  const detail = { run, approvals: [{ id: randomUUID(), kind: 'command', detail: { command: 'echo <unsafe>', cwd: 'C:/example/fixture', scope_verified: true }, detail_complete: true, can_accept: true, status: 'pending' }, { id: randomUUID(), kind: 'file_change', detail: { changes: [{ path: 'a.txt', diff: '+ exact diff' }] }, detail_complete: false, can_accept: false, status: 'pending' }], events: [], next_cursor: 0 };
   const cards = uiHarness({ detail, post: async () => ({}) }); cards.list.runs = [run]; cards.list.active = [run];
   cards.ui.onView('runs'); await settle(); cards.get('execution-active').children[0].fire(); await settle();
   const firstCard = cards.get('execution-approvals').children[0];

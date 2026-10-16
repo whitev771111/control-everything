@@ -123,17 +123,17 @@ class WorkspaceTests(unittest.TestCase):
             self.service.save_task(body)
 
     def test_windows_containment_is_normalized_and_not_a_prefix(self):
-        self.assertTrue(inside_project("c:/PROJECT/child", "C:\\project"))
-        self.assertTrue(inside_project("C:/project/child/..", "C:/project"))
-        for path in ("C:/project-other", "C:/project/../else", "D:/project", "project/child"):
-            self.assertFalse(inside_project(path, "C:/project"))
+        self.assertTrue(inside_project("c:/example/PROJECT/child", r"C:\example\project"))
+        self.assertTrue(inside_project("C:/example/project/child/..", "C:/example/project"))
+        for path in ("C:/example/project-other", "C:/example/project/../else", "D:/example/project", "project/child"):
+            self.assertFalse(inside_project(path, "C:/example/project"))
 
     def test_windows_extended_paths_match_drive_and_unc_aliases(self):
-        self.assertTrue(inside_project(r"\\?\C:/example/control-everything", "C:/example/control-everything"))
-        self.assertTrue(inside_project(r"\\?\C:\project\child", "C:/project"))
-        self.assertTrue(inside_project("C:/project/child", r"\\?\C:\project"))
+        self.assertTrue(inside_project(r"\\?\C:\example\panel", "C:/example/panel"))
+        self.assertTrue(inside_project(r"\\?\C:\example\project\child", "C:/example/project"))
+        self.assertTrue(inside_project("C:/example/project/child", r"\\?\C:\example\project"))
         self.assertTrue(inside_project(r"\\?\UNC\server\share\project\child", r"\\server\share\project"))
-        self.assertFalse(inside_project(r"\\?\C:\project-other", "C:/project"))
+        self.assertFalse(inside_project(r"\\?\C:\example\project-other", "C:/example/project"))
         self.assertFalse(inside_project(r"\\?\UNC\server\share\project-other", r"\\server\share\project"))
         body = {**TASK, "provider_id": "codex", "session_key": "codex:" + SESSION_ID}
         self.sample["items"][0]["cwd"] = "\\\\?\\" + str(self.root / "child")

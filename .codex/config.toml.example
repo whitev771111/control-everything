@@ -1,5 +1,5 @@
 [mcp_servers.remote_claude_sessions]
-command = "C:/example/private-b8446a21.exe"
+command = "C:/example/session-panel/.venv/Scripts/python.exe"
 args = ["-m", "session_panel.mcp_stdio"]
-cwd = "C:/example/control-everything"
+cwd = "C:/example/session-panel"
 enabled_tools = ["list_sessions", "get_session_status", "get_session_messages"]

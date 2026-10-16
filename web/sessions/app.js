@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const state = { records: [], selected: null, page: null, pageOld: false, csrf: '', epoch: 0, reading: false, focusing: false, refreshing: false, connected: false, received: 0, coverage: {}, snapshotAge: null, sourceReason: null,
-  workbench: null, workbenchReceived: 0, workbenchCurrent: false, workbenchReason: null, workbenchError: '', refreshingWorkbench: false, connecting: false, workbenchBlocked: false, workbenchNotice: '' };
+  capabilities: null, initialized: false, workbench: null, workbenchReceived: 0, workbenchCurrent: false, workbenchReason: null, workbenchError: '', refreshingWorkbench: false, connecting: false, workbenchBlocked: false, workbenchNotice: '' };
 const codexState = { items: [], offset: 0, nextOffset: null, total: null, coverage: {}, selected: null, available: false, received: 0, sampledAt: null, refreshing: false, error: '' };
 const reasons = {
   reader_empty_unverified: '读取结果未验证：有效空历史与查找或读取失败暂时无法区分',
@@ -14,6 +14,7 @@ const reasons = {
   binding_changed: '终端绑定在复核期间发生变化', focus_sent_unverified: '定位命令已发送，但当前焦点未能唯一确认',
   registration_time_unexplained: '注册时间与进程时间关系未解释', stale_observation: '观察已陈旧',
   observation_stale: '观察已陈旧', source_unavailable: '无法连接或核验远端来源', observe_timeout: '远端观察超过时间预算',
+  not_configured: '尚未配置来源，请到工作台的来源设置中登记', capability_unavailable: '该接入尚未启用',
   reader_timeout: '消息读取超过时间预算', terminal_unavailable: '无法读取当前 Zellij 清单',
   terminal_version_mismatch: 'Zellij 版本与已核验版本不同', terminal_timeout: '终端清单超过时间预算',
   registration_missing: '本次观察没有该会话的注册', process_unverified: '进程实例未确认', instance_changed: '进程实例已变化，需要重新观察',
@@ -45,7 +46,7 @@ function age(record) { return (record.age_ms ?? Infinity) + performance.now() - 
 function workbenchAge() { return (state.workbench?.age_ms ?? Infinity) + performance.now() - state.workbenchReceived; }
 function validWorkbench(value) {
   const count = item => item === null || (Number.isInteger(item) && item >= 0);
-  return value && typeof value === 'object' && value.session === 'workbench-v4'
+  return value && typeof value === 'object' && typeof value.session === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value.session)
     && ['observed', 'unknown'].includes(value.status) && ['running', 'exited', 'missing', 'unknown'].includes(value.server_state)
     && ['absent', 'observed', 'multiple', 'unknown'].includes(value.gui_state)
     && ['disconnected', 'unique_observed', 'ambiguous', 'unknown'].includes(value.association_state)
@@ -74,11 +75,20 @@ function acceptWorkbench(value) {
   state.workbench = value; state.workbenchReceived = performance.now(); state.workbenchCurrent = true;
   state.workbenchReason = value.reason; state.workbenchError = ''; if (value.reason === 'cleanup_unverified') state.workbenchBlocked = true;
 }
+function capability(name) {
+  return state.initialized && state.capabilities?.[name] === true;
+}
 function renderWorkbench() {
+  if (state.initialized && !capability('workbench')) {
+    $('workbench-state').textContent = '终端工作台 · 未配置或已禁用';
+    $('workbench-notice').textContent = '可在工作台的来源设置中查看接入状态和本机配置指引。';
+    $('refresh-workbench').disabled = true; $('connect-workbench').disabled = true;
+    return;
+  }
   const value = state.workbench, evidenceAge = workbenchAge();
   const currentValue = state.workbenchCurrent && evidenceAge <= 30000;
   const association = { disconnected: '未关联', unique_observed: '唯一关联观察', ambiguous: '关联有歧义', unknown: '关联未知' };
-  $('workbench-state').textContent = `workbench-v4 · ${currentValue ? association[value.association_state] : '状态未知 · 上次证据'} · ${Number.isFinite(evidenceAge) ? `证据年龄 ${(evidenceAge / 1000).toFixed(1)} 秒` : '年龄未知'}`;
+  $('workbench-state').textContent = `${value?.session || '终端工作台'} · ${currentValue ? association[value.association_state] : '状态未知 · 上次证据'} · ${Number.isFinite(evidenceAge) ? `证据年龄 ${(evidenceAge / 1000).toFixed(1)} 秒` : '年龄未知'}`;
   const facts = [
     ['后台', ({ running: '存活', exited: '已退出', missing: '不存在', unknown: '未知' }[value?.server_state] || '未知')],
     ['WezTerm GUI 进程', value?.gui_count ?? '未知'], ['交互客户端', value?.interactive_client_count ?? '未知'],
@@ -92,13 +102,19 @@ function renderWorkbench() {
     : state.workbenchError || state.workbenchNotice || reasonText(state.workbenchReason) || (!currentValue ? '当前终端证据未知，请刷新终端状态。' : evidenceAge > 5000 ? '动作证据需刷新；状态保留至 30 秒。' : '');
 }
 async function refreshWorkbench() {
-  if (state.refreshingWorkbench) return;
+  if (!capability('workbench') || state.refreshingWorkbench) return;
   state.refreshingWorkbench = true; renderWorkbench(); renderSelection();
   try { acceptWorkbench(await query('/api/workbench')); }
   catch (error) { state.workbenchCurrent = false; state.workbenchReason = 'workbench_unknown'; state.workbenchError = error.message; }
   finally { state.refreshingWorkbench = false; renderWorkbench(); renderSelection(); }
 }
-async function refreshObservations() { await Promise.all([refreshSessions(), refreshWorkbench(), refreshCodexThreads()]); }
+async function refreshObservations() {
+  if (!state.initialized) return;
+  const jobs = [refreshCodexThreads()];
+  if (capability('remote_sessions')) jobs.push(refreshSessions());
+  if (capability('workbench')) jobs.push(refreshWorkbench());
+  await Promise.all(jobs);
+}
 function codexFresh() { return codexState.available && performance.now() - codexState.received <= 30000; }
 function validCodexPage(value, offset) {
   const count = item => Number.isSafeInteger(item) && item >= 0;
@@ -214,6 +230,14 @@ function currentReasons(record) {
   return record.reason_codes || [];
 }
 function renderCoverage() {
+  if (state.initialized && !capability('remote_sessions')) {
+    $('source').textContent = '远端会话未配置或已禁用';
+    $('coverage').textContent = '本机 Codex 元数据可单独配置；远端不会自动连接。';
+    $('connection-state').textContent = '远端来源 · 未配置';
+    $('connection-dot').hidden = true;
+    $('refresh-sessions').disabled = true;
+    renderEvidenceFlow(); return;
+  }
   const fresh = state.connected && state.snapshotAge !== null && state.snapshotAge + performance.now() - state.received <= 30000;
   const coverage = state.coverage;
   $('coverage').textContent = `${fresh ? '' : '上次采样 · '}注册 ${coverage.registration_count ?? '未知'} · 进程 ${coverage.process_count ?? '未知'} · 位置确认 ${coverage.confirmed_binding_count ?? '未知'} · 索引 ${state.records.length}（含保留/未知）`;
@@ -331,7 +355,7 @@ function renderSelection() {
   $('evidence').textContent = JSON.stringify(evidence, null, 2);
 }
 async function refreshSessions() {
-  if (state.refreshing) return;
+  if (!capability('remote_sessions') || state.refreshing) return;
   state.refreshing = true; $('refresh-sessions').disabled = true;
   try {
     const result = await query('/api/sessions');
@@ -443,7 +467,15 @@ $('copy-mapping-key').addEventListener('click', async () => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshObservations(); } });
 setInterval(() => { if (!document.hidden) { refreshObservations(); } }, 10000);
 setInterval(() => { if (!document.hidden) { renderWorkbench(); renderSelection(); renderCoverage(); expireCodexThreads(); if (state.records.some(record => age(record) > 30000)) renderSessions(); } }, 1000);
-query('/api/bootstrap').then(result => {
-  state.csrf = result.csrf_token; renderWorkbench(); renderSelection();
-}).catch(error => { $('list-notice').textContent = error.message; });
-refreshObservations();
+async function initializeSessionPage() {
+  try {
+    const result = await query('/api/bootstrap');
+    state.csrf = result.csrf_token;
+    state.capabilities = result.capabilities || { remote_sessions: true, terminal: true, workbench: true };
+    state.initialized = true;
+    $('integration-notice').hidden = capability('remote_sessions') && capability('workbench');
+    renderWorkbench(); renderCoverage(); renderSelection();
+    await refreshObservations();
+  } catch (error) { $('list-notice').textContent = error.message; }
+}
+initializeSessionPage();

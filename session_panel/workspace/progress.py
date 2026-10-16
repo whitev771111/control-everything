@@ -91,8 +91,10 @@ def belongs(cwd, root):
     return left == right or left.startswith(right + "/")
 
 
-def codex_cwds():
-    path = Path("C:/example/private-69202ba3.sqlite")
+def codex_cwds(db_path=None):
+    if db_path is None:
+        return []
+    path = Path(db_path).resolve()
     if not path.is_file():
         return []
     try:
@@ -168,9 +170,9 @@ def load_manual(path):
     return data
 
 
-def board(registry_path=REGISTRY, manual_path=MANUAL):
+def board(registry_path=REGISTRY, manual_path=MANUAL, *, codex_db_path=None):
     saved = load_manual(manual_path)
-    codex, grok = codex_cwds(), grok_cwds()
+    codex, grok = codex_cwds(codex_db_path), grok_cwds()
     projects = []
     for project in load_registry(registry_path):
         item = saved.get(project["id"], {})

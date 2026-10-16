@@ -12,9 +12,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from session_panel.sessions.source import (
-    SOURCE, SLOT_FILES, READER_VERSION, MCP_VERSION, MAX_TRANSCRIPT_BYTES,
-    MAX_RESPONSE_BYTES, canonical_uuid, message_arguments,
+    READER_VERSION, MCP_VERSION, MAX_TRANSCRIPT_BYTES,
+    MAX_RESPONSE_BYTES, canonical_uuid, message_arguments, validate_remote_payload,
 )
+
+
+SOURCE, HOME, SLOT_FILES = None, None, {}
 
 
 def utc_now():
@@ -89,9 +92,11 @@ def transcript_metadata(path, session_id):
 
 
 def fixed_source_check():
+    if SOURCE is None or HOME is None:
+        raise ProbeError("not_configured")
     import pwd
     if (pwd.getpwuid(os.getuid()).pw_name != SOURCE["user"]
-            or str(Path.home()) != "/home/example"
+            or str(Path.home()) != HOME
             or os.environ.get("CLAUDE_CONFIG_DIR", SOURCE["config_dir"]) != SOURCE["config_dir"]):
         raise ProbeError("source_mismatch")
     if Path(SOURCE["config_dir"]).resolve(strict=True) != Path(SOURCE["config_dir"]):
@@ -250,6 +255,8 @@ def require_reader_scope_matches(path, cwd, session_id, projects):
 
 def read_messages(session_id, offset=None, limit=20, revision=None, *, projects=None, reader=None):
     message_arguments(session_id, offset, limit, revision)
+    if projects is None and SOURCE is None:
+        return unavailable(session_id, "not_configured")
     projects = projects or Path(SOURCE["config_dir"]) / "projects"
     try:
         if reader is None:
@@ -305,19 +312,24 @@ def read_messages(session_id, offset=None, limit=20, revision=None, *, projects=
         return unavailable(session_id, "reader_failed")
 
 
-def main():
+def main(payload=None):
+    global SOURCE, HOME, SLOT_FILES, MCP_VERSION
+    SOURCE, HOME, SLOT_FILES = None, None, {}
     try:
-        if sys.argv[1] == "observe":
+        payload = validate_remote_payload(payload)
+        SOURCE, HOME, SLOT_FILES = payload["source"], payload["home"], payload["slot_files"]
+        MCP_VERSION = payload["reader_mcp_version"]
+        if payload["mode"] == "observe":
             result = observe_source()
-        elif sys.argv[1] == "messages":
-            request = json.loads(sys.argv[2])
-            result = read_messages(**request)
         else:
-            raise ProbeError("invalid_request")
+            result = read_messages(**payload["request"])
     except (ProbeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
         result = {"ok": False, "status": "unknown",
-                  "reason": error.reason if isinstance(error, ProbeError) else "source_unavailable",
+                  "reason": error.reason if isinstance(error, ProbeError) else
+                            "invalid_request" if isinstance(error, ValueError) else "source_unavailable",
                   "source": SOURCE, "observed_at": utc_now()}
+    if SOURCE is not None and MCP_VERSION == "1.26.0":
+        result["reader_upgrade_required"] = True
     sys.stdout.write(json.dumps(result, ensure_ascii=False))
 
 

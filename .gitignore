@@ -9,6 +9,9 @@ node_modules/
 # Private project documentation stays local
 /docs/
 
+# Local video source and renders are not publication candidates
+/videos/
+
 # Local configuration and user data
 /.codex/*
 !/.codex/config.toml.example

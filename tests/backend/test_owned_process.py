@@ -71,7 +71,7 @@ class FakeAPI:
 
 class OwnedProcessTests(unittest.TestCase):
     def process(self, api):
-        return OwnedProcess("C:/native.exe", ["fixed", "a b"], "C:/fixture", "owned-job", api)
+        return OwnedProcess("C:/example/native.exe", ["fixed", "a b"], "C:/example/fixture", "owned-job", api)
 
     def test_suspended_assign_resume_and_each_handle_released_once(self):
         api = FakeAPI()
@@ -198,7 +198,7 @@ class OwnedProcessTests(unittest.TestCase):
         def create(exe, command, _ps, _ts, inherit, flags, _env, cwd, startup, result):
             self.assertTrue(inherit)
             self.assertEqual(flags, CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT)
-            self.assertEqual(exe, "C:/native.exe")
+            self.assertEqual(exe, "C:/example/native.exe")
             self.assertIn('"a b"', command.value)
             info = c.cast(startup, c.POINTER(StartupInfoEx)).contents
             self.assertEqual(info.startup.cb, c.sizeof(StartupInfoEx))
@@ -210,7 +210,7 @@ class OwnedProcessTests(unittest.TestCase):
         kernel.InitializeProcThreadAttributeList.side_effect = initialize
         kernel.UpdateProcThreadAttribute.side_effect = update
         kernel.CreateProcessW.side_effect = create
-        self.assertEqual(api.spawn("C:/native.exe", ["a b"], "C:/fixture", (14, 15, 16)),
+        self.assertEqual(api.spawn("C:/example/native.exe", ["a b"], "C:/example/fixture", (14, 15, 16)),
                          (0x123456789, 0x223456789, 123))
         self.assertEqual(inherited, [14, 15, 16])
         kernel.DeleteProcThreadAttributeList.assert_called_once()

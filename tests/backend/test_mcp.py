@@ -37,13 +37,14 @@ class MCPTests(unittest.TestCase):
             result = call_gateway("/api/sessions")
         self.assertEqual(result["reason"], "gateway_unavailable"); self.assertFalse(result["available"])
         self.assertNotIn("sessions", result)
+        self.assertIsNone(result["source"])
 
     def test_example_config_is_stdio_three_tools_and_correct_workspace(self):
         value = tomllib.loads(Path(".codex/config.toml.example").read_text(encoding="utf-8"))
         server = value["mcp_servers"]["remote_claude_sessions"]
         self.assertEqual(server["args"], ["-m", "session_panel.mcp_stdio"])
         self.assertEqual(set(server["enabled_tools"]), {"list_sessions", "get_session_status", "get_session_messages"})
-        self.assertEqual(server["cwd"], "C:/example/control-everything")
+        self.assertEqual(server["cwd"], "C:/example/session-panel")
 
     def test_initialize_list_and_calls_over_stdio_protocol(self):
         # Only synthetic results enter this child process; no gateway or SSH is used.

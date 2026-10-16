@@ -1,25 +1,71 @@
-"""Known local work entrances. The panel starts only these ids."""
+"""Explicit local work entrances, selected only by registered ids."""
 
+import copy
+import ctypes
+import ntpath
 import os
+import re
 import subprocess
+import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
-CATALOG = (
-    {"id": "workbench", "group": "desk", "name": "打开终端", "blurb": "接回 WezTerm、顶栏和平铺", "kind": "cmd", "target": r"C:/example/private-c3dbd7b5.cmd", "probe": "wezterm.exe"},
-    {"id": "grok-gateway", "group": "code", "name": "先开网关", "blurb": "Claude 走 Grok 之前，这个要在跑", "kind": "task", "target": "Claude-Grok-LiteLLM", "probe": "http://127.0.0.1:4001/health/liveliness"},
-    {"id": "claude-200k", "group": "code", "name": "短上下文", "blurb": "用 Grok 模型开 Claude，大约 20 万", "kind": "cmd", "target": r"C:/example/private-9079af5e.cmd", "probe": ""},
-    {"id": "claude-500k", "group": "code", "name": "长上下文", "blurb": "同样走 Grok，大约 50 万", "kind": "cmd", "target": r"C:/example/private-4399bfd8.cmd", "probe": ""},
-    {"id": "experiment-progress", "group": "lab", "name": "只看进度", "blurb": "打开实验网页，不会启动实验", "kind": "url", "target": "http://127.0.0.1:8768/", "probe": "http://127.0.0.1:8768/"},
-    {"id": "experiment-menu", "group": "lab", "name": "打开菜单", "blurb": "继续实验要在菜单里选，这里不会自动跑", "kind": "py", "target": r"C:/example/private-8d0c95e9.py", "probe": ""},
-    {"id": "campus", "group": "net", "name": "连学校", "blurb": "校园服务器，不是日常写代码", "kind": "cmd", "target": r"C:/example/private-97233da4.cmd", "probe": ""},
-)
-GROUPS = (
-    ("desk", "工作台", "你平时写代码的那套终端"),
-    ("code", "用 Grok 写", "网关开着之后，再选短或长上下文"),
-    ("lab", "原油实验", "看进度和打开菜单是两件事"),
-    ("net", "网络", "偶尔才用"),
-)
+
+def validate_launcher_target(kind, target):
+    """Validate syntax without reading files or executing a configured target."""
+    error = "unsafe_batch_path" if kind == "cmd" else "invalid_target"
+    if (not isinstance(target, str) or not 1 <= len(target) <= 2048
+            or any(ord(char) < 32 or ord(char) == 127 for char in target)):
+        raise ValueError(error)
+    if kind in {"cmd", "py"}:
+        value = target.replace("/", "\\")
+        if not re.match(r"^[A-Za-z]:\\", value):
+            raise ValueError(error)
+        parts = value[3:].split("\\")
+        forbidden = '"<>|?*:' + ("&^%!()" if kind == "cmd" else "")
+        if (any(char in value[2:] for char in forbidden)
+                or any(not part or part in {".", ".."} or part.endswith((".", " "))
+                       or re.fullmatch(r"(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", part)
+                       for part in parts)):
+            raise ValueError(error)
+        if ntpath.splitext(value)[1].lower() not in ({".cmd", ".bat"} if kind == "cmd" else {".py", ".pyw"}):
+            raise ValueError("unsupported_target_type")
+        return value
+    if kind == "task":
+        return target
+    if kind == "url":
+        try:
+            parsed = urlsplit(target)
+            if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                    or parsed.username is not None or parsed.password is not None
+                    or any(char.isspace() for char in target) or "\\" in target):
+                raise ValueError(error)
+            parsed.port
+        except ValueError:
+            raise ValueError(error) from None
+        return target
+    raise ValueError("unsupported_target_type")
+
+
+def system_directory():
+    """Use Windows' system directory, never PATH or an environment override."""
+    if os.name != "nt":
+        raise OSError("unsupported_platform")
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetSystemDirectoryW.argtypes = [wintypes.LPWSTR, wintypes.UINT]
+    kernel.GetSystemDirectoryW.restype = wintypes.UINT
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = kernel.GetSystemDirectoryW(buffer, len(buffer))
+    if not 0 < length < len(buffer):
+        raise OSError("system_directory_unavailable")
+    return Path(buffer.value)
+
+
+def batch_command_line(target, cmd_exe):
+    target = validate_launcher_target("cmd", target)
+    return f'"{cmd_exe}" /d /v:off /s /k ""{target}""'
 
 
 def reachable(url):
@@ -32,7 +78,8 @@ def reachable(url):
 
 def process_up(name):
     try:
-        completed = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {name}", "/NH"], capture_output=True, timeout=3)
+        completed = subprocess.run([str(system_directory() / "tasklist.exe"), "/FI", f"IMAGENAME eq {name}", "/NH"],
+                                   capture_output=True, timeout=3, shell=False)
     except (OSError, subprocess.TimeoutExpired):
         return False
     output = (completed.stdout or b"").decode("oem", "replace")
@@ -40,33 +87,76 @@ def process_up(name):
 
 
 def status_of(item):
-    target = item["target"]
-    if item["kind"] in {"cmd", "py"} and not Path(target).is_file():
+    if item["kind"] in {"cmd", "py"} and not Path(item["target"]).is_file():
         return "missing"
     probe = item["probe"]
-    if probe.startswith("http"):
+    if probe.startswith(("http://", "https://")):
         return "up" if reachable(probe) else "ready"
-    if probe.endswith(".exe"):
+    if probe.lower().endswith(".exe"):
         return "up" if process_up(probe) else "ready"
     return "ready"
 
 
+class LauncherCatalog:
+    def __init__(self, config=None):
+        self.config = copy.deepcopy(config) if config and config.get("enabled") else None
+        self.groups = copy.deepcopy(self.config["groups"]) if self.config else []
+        self.items = copy.deepcopy(self.config["items"]) if self.config else []
+        self.last_error = None
+
+    def catalog(self):
+        return [{**{key: item[key] for key in ("id", "group", "name", "blurb")}, "status": status_of(item)}
+                for item in self.items]
+
+    def start(self, launcher_id, spawn=subprocess.Popen):
+        self.last_error = None
+        item = next((entry for entry in self.items if entry["id"] == launcher_id), None)
+        if item is None:
+            self.last_error = "unknown_launcher" if self.config else "not_configured"
+            return False
+        try:
+            kind = item["kind"]
+            target = validate_launcher_target(kind, item["target"])
+            if kind in {"cmd", "task"} and os.name != "nt":
+                self.last_error = "unsupported_platform"
+                return False
+            if kind in {"cmd", "py"}:
+                path = Path(target)
+                if not path.is_file():
+                    self.last_error = "missing"
+                    return False
+                target = validate_launcher_target(kind, str(path.resolve(strict=True)))
+                if not Path(target).is_file():
+                    self.last_error = "missing"
+                    return False
+            if kind == "cmd":
+                cmd_exe = system_directory() / "cmd.exe"
+                spawn(batch_command_line(target, cmd_exe), executable=str(cmd_exe), shell=False,
+                      creationflags=subprocess.CREATE_NEW_CONSOLE, close_fds=True)
+            elif kind == "py":
+                spawn([str(Path(sys.executable).resolve(strict=True)), target], shell=False,
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif kind == "task":
+                spawn([str(system_directory() / "schtasks.exe"), "/Run", "/TN", target], shell=False,
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                os.startfile(target)
+            return True
+        except ValueError as error:
+            self.last_error = str(error)
+        except OSError:
+            self.last_error = "launch_failed"
+        return False
+
+
+# Legacy module callers have no implicit personal configuration.
+CATALOG = ()
+GROUPS = ()
+
+
 def catalog():
-    return [{"id": item["id"], "group": item["group"], "name": item["name"], "blurb": item["blurb"], "status": status_of(item)} for item in CATALOG]
+    return LauncherCatalog().catalog()
 
 
 def start(launcher_id, spawn=subprocess.Popen):
-    item = next((entry for entry in CATALOG if entry["id"] == launcher_id), None)
-    if item is None or status_of(item) == "missing":
-        return False
-    if item["kind"] == "cmd":
-        spawn(["cmd", "/c", "start", "", item["target"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    elif item["kind"] == "py":
-        spawn(["python", item["target"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    elif item["kind"] == "task":
-        spawn(["schtasks", "/Run", "/TN", item["target"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    elif item["kind"] == "url":
-        os.startfile(item["target"])
-    else:
-        return False
-    return True
+    return LauncherCatalog().start(launcher_id, spawn=spawn)

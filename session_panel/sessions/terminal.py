@@ -1,5 +1,6 @@
 """Strict current-pane matching and the single explicit focus action."""
 
+import copy
 import json
 import re
 import subprocess
@@ -8,7 +9,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from session_panel.sessions.source import (
-    SOURCE, ZELLIJ, ZELLIJ_SESSION, ZELLIJ_TAB, ZELLIJ_VERSION,
     TERMINAL_TIMEOUT, CACHE_SECONDS, canonical_uuid,
 )
 
@@ -19,18 +19,22 @@ def terminal_id(pane):
     return f"terminal_{pane['id']}"
 
 
-def parse_slot_command(pane):
-    if pane.get("tab_name") != ZELLIJ_TAB or not terminal_id(pane):
+def parse_slot_command(pane, terminal_config=None, remote_config=None):
+    if (not terminal_config or not terminal_config.get("enabled")
+            or not remote_config or not remote_config.get("enabled")
+            or pane.get("tab_name") != terminal_config["tab"] or not terminal_id(pane)):
         return None
     command = pane.get("terminal_command")
     if not isinstance(command, str):
         return None
-    match = re.fullmatch(
-        r"(?:ssh\.exe|C:\\Windows\\System32\\OpenSSH\\ssh\.exe) -t "
-        r"192\.0\.2\.10 bash ~/\.local/share/terminal-workbench/pane\.sh (main|dev|files)",
-        command,
-    )
-    return match.group(1) if match else None
+    for executable in terminal_config["ssh_executables"]:
+        forms = [executable] if not any(char.isspace() for char in executable) else []
+        forms.append(f'"{executable}"')
+        for slot in remote_config["slot_files"]:
+            suffix = f' -t {remote_config["source"]["host"]} bash {terminal_config["pane_script"]} {slot}'
+            if any(command == form + suffix for form in forms):
+                return slot
+    return None
 
 
 def parse_clients(text):
@@ -50,12 +54,12 @@ def parse_clients(text):
     return clients
 
 
-def _focus_candidates(panes, fresh):
+def _focus_candidates(panes, fresh, terminal_config=None, remote_config=None):
     target = [row for row in panes if terminal_id(row) == fresh["pane_id"]]
-    if len(target) != 1 or parse_slot_command(target[0]) != fresh["slot"]:
+    if len(target) != 1 or parse_slot_command(target[0], terminal_config, remote_config) != fresh["slot"]:
         return None
     tab_id = target[0].get("tab_id")
-    rows = [row for row in panes if row.get("tab_name") == ZELLIJ_TAB]
+    rows = [row for row in panes if row.get("tab_name") == terminal_config["tab"]]
     flags = ("is_plugin", "is_selectable", "is_floating", "is_suppressed", "is_fullscreen", "exited", "is_held")
     geometry = ("pane_x", "pane_y", "pane_rows", "pane_columns")
     if (type(tab_id) is not int or tab_id < 0 or target[0].get("is_held") is not False
@@ -66,7 +70,7 @@ def _focus_candidates(panes, fresh):
                    or row["pane_x"] < 0 or row["pane_y"] < 0 or row["pane_rows"] <= 0 or row["pane_columns"] <= 0
                    or row.get("terminal_command") is not None and not isinstance(row["terminal_command"], str)
                    for row in rows)
-            or any(row.get("tab_id") == tab_id and row.get("tab_name") != ZELLIJ_TAB for row in panes)
+            or any(row.get("tab_id") == tab_id and row.get("tab_name") != terminal_config["tab"] for row in panes)
             or any(row["is_floating"] or row["is_fullscreen"] for row in rows)
             or any(row["is_selectable"] and (row["is_plugin"] or row["is_suppressed"] or row["exited"]) for row in rows)):
         return None
@@ -82,16 +86,20 @@ def _focus_candidates(panes, fresh):
 
 
 class Terminal:
-    def __init__(self, runner=subprocess.run, clock=time.monotonic, workbench=None):
+    def __init__(self, runner=subprocess.run, clock=time.monotonic, workbench=None, *, config=None, remote_config=None):
         self.runner, self.clock = runner, clock
-        from session_panel.sessions.workbench import Workbench
-        self.workbench = workbench if workbench is not None else Workbench(runner=runner, clock=clock)
+        self.config = copy.deepcopy(config) if config and config.get("enabled") else None
+        self.remote_config = copy.deepcopy(remote_config) if remote_config and remote_config.get("enabled") else None
+        self.source = copy.deepcopy(self.remote_config["source"]) if self.remote_config else None
+        self.workbench = workbench
 
     def _run(self, arguments, timeout=TERMINAL_TIMEOUT):
-        return self.runner([ZELLIJ, *arguments], capture_output=True, text=True,
+        return self.runner([self.config["zellij"], *arguments], capture_output=True, text=True,
                            encoding="utf-8", errors="strict", timeout=timeout)
 
     def list_panes(self, deadline=None):
+        if not self.config or not self.remote_config:
+            return {"ok": False, "reason": "not_configured"}
         started = self.clock()
         deadline = min(deadline, started + TERMINAL_TIMEOUT) if deadline is not None else started + TERMINAL_TIMEOUT
         try:
@@ -101,20 +109,20 @@ class Terminal:
             version = self._run(["--version"], remaining)
             if version.returncode:
                 return {"ok": False, "reason": "terminal_version_mismatch", "exit_code": version.returncode}
-            if version.stdout.strip() != f"zellij {ZELLIJ_VERSION}":
+            if version.stdout.strip() != f"zellij {self.config['version']}":
                 return {"ok": False, "reason": "terminal_version_mismatch"}
             remaining = deadline - self.clock()
             if remaining <= 0:
                 return {"ok": False, "reason": "terminal_timeout"}
-            result = self._run(["--session", ZELLIJ_SESSION, "action", "list-panes", "--all", "--json"], remaining)
+            result = self._run(["--session", self.config["session"], "action", "list-panes", "--all", "--json"], remaining)
             if result.returncode:
                 return {"ok": False, "reason": "terminal_unavailable", "exit_code": result.returncode}
             inventory = json.loads(result.stdout)
             panes = inventory if isinstance(inventory, list) else inventory.get("panes")
             if not isinstance(panes, list) or not all(isinstance(pane, dict) for pane in panes):
                 raise ValueError("invalid pane inventory")
-            return {"ok": True, "panes": panes, "session": ZELLIJ_SESSION,
-                    "version": ZELLIJ_VERSION}
+            return {"ok": True, "panes": panes, "session": self.config["session"],
+                    "version": self.config["version"]}
         except subprocess.TimeoutExpired:
             return {"ok": False, "reason": "terminal_timeout"}
         except (OSError, ValueError, UnicodeError, AttributeError):
@@ -123,7 +131,11 @@ class Terminal:
     def focus_session(self, service, session_id):
         canonical_uuid(session_id)
         result = {"focused": False, "status": "unknown", "session_id": session_id,
-                  "source": SOURCE, "observed_at": datetime.now(timezone.utc).isoformat()}
+                  "source": self.source, "observed_at": datetime.now(timezone.utc).isoformat()}
+        if not self.config or not self.remote_config:
+            return {**result, "reason": "not_configured"}
+        if self.workbench is None:
+            return {**result, "reason": "capability_unavailable"}
         if not self.workbench.action_lock.acquire(blocking=False):
             return {**result, "reason": "terminal_action_busy"}
         try:
@@ -137,6 +149,9 @@ class Terminal:
             self.workbench.action_lock.release()
 
     def connect_workbench(self):
+        if not self.config or not self.remote_config or self.workbench is None:
+            return {"connected": False, "launched": False, "status": "unknown",
+                    "reason": "not_configured" if not self.config or not self.remote_config else "capability_unavailable"}
         return self.workbench.connect()
 
     def _focus_next(self, candidates, client_id, fresh, refresh_finished, deadline, current_pane_id):
@@ -159,13 +174,13 @@ class Terminal:
                          and max(x, geometry[identity][0]) < min(x + columns, geometry[identity][0] + geometry[identity][3])]
                 use_up = len(above) == 1 and above[0] == fresh["pane_id"]
                 arguments = ["move-focus", "up"] if use_up else ["focus-next-pane"]
-            action = self._run(["--session", ZELLIJ_SESSION, "action", *arguments], remaining)
+            action = self._run(["--session", self.config["session"], "action", *arguments], remaining)
             if action.returncode:
                 return action.returncode
             remaining = deadline - self.clock()
             if remaining <= 0 or fresh["age_ms"] + (self.clock() - refresh_finished) * 1000 > CACHE_SECONDS * 1000:
                 return None
-            clients = self._run(["--session", ZELLIJ_SESSION, "action", "list-clients"], remaining)
+            clients = self._run(["--session", self.config["session"], "action", "list-clients"], remaining)
             if clients.returncode:
                 return clients.returncode
             values = parse_clients(clients.stdout)
@@ -174,7 +189,7 @@ class Terminal:
             after = self.list_panes(deadline)
             if not after.get("ok") and after.get("exit_code"):
                 return after["exit_code"]
-            if (not after.get("ok") or _focus_candidates(after["panes"], fresh) != candidates
+            if (not after.get("ok") or _focus_candidates(after["panes"], fresh, self.config, self.remote_config) != candidates
                     or self.clock() >= deadline
                     or fresh["age_ms"] + (self.clock() - refresh_finished) * 1000 > CACHE_SECONDS * 1000):
                 return None
@@ -203,7 +218,7 @@ class Terminal:
                 or fresh.get("age_ms") is None or fresh["age_ms"] > CACHE_SECONDS * 1000
                 or any(not fresh.get(field) or fresh[field] != requested.get(field) for field in required)):
             return {**result, "reason": "binding_unknown"}
-        matches = [pane for pane in inventory.get("panes", []) if parse_slot_command(pane) == fresh["slot"]]
+        matches = [pane for pane in inventory.get("panes", []) if parse_slot_command(pane, self.config, self.remote_config) == fresh["slot"]]
         if not inventory.get("ok") or len(matches) != 1 or terminal_id(matches[0]) != fresh["pane_id"]:
             return {**result, "reason": "binding_unknown"}
         if fresh["age_ms"] + (self.clock() - refresh_finished) * 1000 > CACHE_SECONDS * 1000:
@@ -220,7 +235,7 @@ class Terminal:
         if remaining <= 0:
             return {**result, "reason": "workbench_timeout"}
         try:
-            candidates = _focus_candidates(inventory["panes"], fresh)
+            candidates = _focus_candidates(inventory["panes"], fresh, self.config, self.remote_config)
             if candidates is not None:
                 fallback_exit = self._focus_next(candidates, pre["_clients"][0]["client_id"], fresh, refresh_finished, deadline,
                                                  pre["_clients"][0]["pane_id"])
@@ -229,7 +244,7 @@ class Terminal:
                 if fallback_exit:
                     return {**result, "reason": "focus_failed", "exit_code": fallback_exit}
             else:
-                action = self._run(["--session", ZELLIJ_SESSION, "action", "focus-pane-id", fresh["pane_id"]], remaining)
+                action = self._run(["--session", self.config["session"], "action", "focus-pane-id", fresh["pane_id"]], remaining)
                 if action.returncode:
                     return {**result, "reason": "focus_failed", "exit_code": action.returncode}
             with ThreadPoolExecutor(max_workers=1) as executor:
@@ -238,12 +253,12 @@ class Terminal:
                 after = after_future.result()
             if candidates is not None and not after.get("ok") and after.get("exit_code"):
                 return {**result, "reason": "focus_failed", "exit_code": after["exit_code"]}
-            after_matches = [pane for pane in after.get("panes", []) if parse_slot_command(pane) == fresh["slot"]]
+            after_matches = [pane for pane in after.get("panes", []) if parse_slot_command(pane, self.config, self.remote_config) == fresh["slot"]]
             if (not post["can_focus"] or not same_association(pre, post)
                     or post["_clients"][0]["pane_id"] != fresh["pane_id"]
                     or not after.get("ok")
                     or len(after_matches) != 1 or terminal_id(after_matches[0]) != fresh["pane_id"]
-                    or candidates is not None and _focus_candidates(after["panes"], fresh) != candidates
+                    or candidates is not None and _focus_candidates(after["panes"], fresh, self.config, self.remote_config) != candidates
                     or self.clock() > deadline
                     or fresh["age_ms"] + (self.clock() - refresh_finished) * 1000 > CACHE_SECONDS * 1000):
                 return {**result, "reason": "focus_sent_unverified", "pane_id": fresh["pane_id"], "exit_code": 0}

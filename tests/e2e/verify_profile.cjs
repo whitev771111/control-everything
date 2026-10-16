@@ -48,12 +48,21 @@ async function http() {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
   const expectedPaths = new Set();
+  const optional = fixture.optional_capabilities || {};
+  report.optional_capabilities = optional;
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());
     if (url.origin !== base.origin) { report.blocked.push({ url: request.url(), reason: 'outside explicit origin' }); await route.abort(); return; }
     const item = { method: request.method(), url: request.url(), path: url.pathname, client: request.headers()['x-session-client'] };
     if (request.method() === 'POST') item.body = request.postDataJSON(); report.requests.push(item);
-    if (/^\/api\/(sessions|workbench|launch|garden)|^\/api\/workspace\/execution/.test(url.pathname)) { report.failures.push(`Forbidden profile request: ${url.pathname}`); await route.abort(); return; }
+    const optionalRoute = /^\/api\/(sessions|workbench|launch)(?:\/|$)/.test(url.pathname);
+    const permitted = url.pathname === '/api/launch' ? optional.personal_launchers === true
+      : url.pathname.startsWith('/api/workbench') ? optional.workbench === true
+      : url.pathname.endsWith('/focus') ? optional.terminal === true && optional.workbench === true
+      : optional.remote_sessions === true;
+    if (/^\/api\/garden|^\/api\/workspace\/execution/.test(url.pathname) || optionalRoute && !permitted) {
+      report.failures.push(`Forbidden profile request: ${url.pathname}`); await route.abort(); return;
+    }
     // Same-origin API and static resources are handled by the coordinator's own server.
     await route.continue();
   });
@@ -71,6 +80,28 @@ async function http() {
   try {
     await step('open explicit profile server', async () => { await page.goto(`${base.origin}/workspace`, { waitUntil: 'domcontentloaded' }); await settle(); check('profile path is explicit', (await page.locator('#profile-path').textContent()).includes('data-dir')); check('execution navigation hidden', await page.locator('[data-view=runs]').isHidden()); });
     const initial = await apiGet('/api/profile');
+    await step('optional integration summaries and registered launcher entry', async () => {
+      await page.locator('[data-view=settings]').click();
+      check('four optional integration summaries visible', await page.locator('#integration-statuses [data-integration]').count() === 4);
+      check('CLI import guidance includes selected data directory', (await page.locator('#integration-import-command').textContent()).includes(initial.data_dir));
+      check('restart state is readable', Boolean((await page.locator('#integration-restart').textContent()).trim()));
+      check('unconfigured launcher refresh is disabled', await page.locator('#refresh-launchers').isDisabled() === !optional.personal_launchers);
+      for (const [name, status] of Object.entries(fixture.integration_statuses || {})) {
+        check(`integration status ${name}`, initial.integrations[name].status === status);
+      }
+      if (fixture.launcher_id) {
+        assert.equal(optional.personal_launchers, true, 'A launcher click requires explicit synthetic launch capability.');
+        await page.waitForFunction(() => document.querySelector('#configured-launchers button'));
+        if (fixture.launcher_name) check('configured launcher name displayed', (await page.locator('#configured-launchers').textContent()).includes(fixture.launcher_name));
+        const response = page.waitForResponse(value => value.url() === `${base.origin}/api/launch` && value.request().method() === 'POST');
+        await page.locator('#configured-launchers button').first().click();
+        check('registered launcher reaches real HTTP handler', (await response).status() === 200);
+        const request = report.requests.find(item => item.path === '/api/launch' && item.method === 'POST');
+        check('launcher request contains only registered id', request && Object.keys(request.body).join() === 'id' && request.body.id === fixture.launcher_id);
+      }
+      check('advanced configuration targets and pins remain private', !JSON.stringify(initial).includes('reader_python') && !JSON.stringify(initial).includes('pins'));
+      await page.locator('[data-view=overview]').click();
+    });
     if (initial.can_import) {
       check('empty profile has all three entry points', await page.locator('#profile-empty').isVisible()); await screenshot('empty-workspace');
       await page.goto(`${base.origin}/progress`); await page.locator('.profile-info').waitFor(); check('empty progress stage hidden', await page.locator('#progress-stage').isHidden()); check('no personal launch buttons', await page.locator('#launch-zone button').count() === 0); await screenshot('empty-progress');
@@ -132,6 +163,21 @@ async function http() {
       await page.goto(`${base.origin}/progress`); await page.locator('.profile-info').waitFor(); await page.getByRole('button').filter({ hasText: name }).first().click(); await page.waitForFunction(value => document.querySelector('.hero h2').textContent === value, name); check('progress NULL is explicit', await page.locator('#progress-percent-enabled').isChecked() === false); await page.locator('#progress-note').fill('旧页只改说明'); await page.locator('#progress-manual-state').selectOption('在做'); await page.locator('#progress-manual-form button[type=submit]').click(); await page.waitForFunction(() => document.getElementById('progress-manual-feedback').textContent.includes('已保存')); check('note-only old-page edit keeps NULL', (await apiGet('/api/workspace')).projects.items.find(item => item.id === id).percent === null); check('no null% text', !(await page.locator('body').textContent()).includes('null%')); check('no personal launcher buttons', await page.locator('#launch-zone button').count() === 0); await screenshot('progress-final');
     });
     await step('new document load reads actual stored values', async () => { await page.goto(`${base.origin}/workspace`); await settle(); const project = (await apiGet('/api/workspace')).projects.items.find(item => item.id === id); check('stored identity, rebind and NULL survive page reload', project.directories[0].path === fixture.rebound_root && project.note === '旧页只改说明' && project.percent === null); report.persisted_project = project; });
+    await step('session page gates optional polling after bootstrap', async () => {
+      const start = report.requests.length;
+      if (!fixture.codex_db_path) expectedPaths.add('/api/codex/threads');
+      await page.goto(`${base.origin}/`);
+      await page.waitForFunction(() => document.getElementById('source').textContent !== '等待来源配置');
+      if (!optional.remote_sessions) {
+        check('unconfigured remote has a settings entry', await page.locator('#integration-notice a').getAttribute('href') === '/workspace#settings');
+        check('unconfigured remote emits no session request', !report.requests.slice(start).some(item => item.path.startsWith('/api/sessions')));
+        check('unconfigured remote refresh disabled', await page.locator('#refresh-sessions').isDisabled());
+      }
+      if (!optional.workbench) {
+        check('unconfigured workbench emits no query', !report.requests.slice(start).some(item => item.path.startsWith('/api/workbench')));
+        check('unconfigured connect disabled', await page.locator('#connect-workbench').isDisabled());
+      }
+    });
     check('quota cache and public news requests retained', report.requests.some(item => item.path === '/api/workspace/usage') && report.requests.some(item => item.path === '/api/workspace/news'));
     for (const error of report.console.filter(item => item.type === 'error')) { const expected = report.expected_failures.some(item => item.url === error.url && error.text.includes(`status of ${item.status}`)); if (!expected) report.failures.push(error); }
   } finally { await context.close(); await browser.close(); }

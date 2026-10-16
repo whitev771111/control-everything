@@ -6,6 +6,9 @@ __pycache__/
 node_modules/
 /work/
 
+# Private project documentation stays local
+/docs/
+
 # Local configuration and user data
 /.codex/*
 !/.codex/config.toml.example

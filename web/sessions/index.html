@@ -12,7 +12,6 @@
     <div><p class="eyebrow">DEVELOPMENT COMMAND ROOM</p><h1>开发会话指挥室</h1><p class="muted">真实会话身份 · 按证据连接项目与终端</p><p class="mapping-links"><a href="/workspace">工作台</a><a href="/progress">项目进度</a></p></div>
     <div class="connection"><span class="dot" id="connection-dot"></span><span id="connection-state">来源观察 · 准备采样</span></div>
   </header>
-  <nav id="garden-tabs" class="garden-tabs" aria-label="工作空间视图" hidden><button id="garden-view" aria-pressed="false">协作小院</button><button id="observation-view" aria-pressed="true">会话与终端观察</button></nav>
   <main>
     <section class="panel workbench-panel" aria-labelledby="workbench-heading">
       <div class="section-head"><div><h2 id="workbench-heading">WezTerm 工作台</h2><p id="workbench-state" class="small muted" role="status" aria-live="polite">workbench-v4 · 尚未观察</p></div>
@@ -47,15 +46,6 @@
           <p id="mapping-copy-notice" class="small muted" role="status" aria-live="polite"></p>
         </div>
       </div>
-    </section>
-    <section id="garden-panel" class="panel garden-panel" aria-labelledby="garden-heading" hidden>
-      <div class="section-head"><div><h2 id="garden-heading">伙伴工位</h2><p id="garden-counts" class="small muted"></p></div><button id="refresh-garden">刷新小院</button></div>
-      <div id="garden-peek" class="garden-peek"><span id="garden-peek-domain"></span><strong id="garden-peek-title"></strong><span id="garden-peek-summary"></span></div>
-      <div id="garden-scene-roster" class="garden-scene-roster" aria-label="本会话伙伴角色与当前事项"></div>
-      <details class="garden-domain"><summary>本主会话的小院 · 与其它会话隔离</summary><code id="garden-root-key" class="wrap"></code><p class="small">仅展示明确属于本主会话且已登记的子agent；相同项目目录也不会合并。</p></details>
-      <div id="garden-notice" role="status" aria-live="polite"></div>
-      <div id="garden-announcement" role="status" aria-live="polite"></div>
-      <div class="garden-layout"><div id="garden-actors" class="garden-actors" aria-label="本主会话伙伴"></div><div id="garden-detail" class="garden-detail" aria-label="所选伙伴的工位与收据"></div></div>
     </section>
     <section class="panel codex-panel" id="codex-panel" aria-labelledby="codex-heading">
       <div class="section-head"><div><h2 id="codex-heading">本机 Codex · 身份索引</h2><p id="codex-status" class="small muted" role="status">准备采样</p></div><button id="refresh-codex">刷新 Codex 索引</button></div>
@@ -93,6 +83,6 @@
       </div>
     </section>
   </main>
-  <footer><span class="observation-footer">页面可见时每 10 秒刷新元数据；隐藏时暂停。Codex 仅身份元数据；远端消息只在选择、刷新或翻页时读取。定位仅切换已有 Zellij pane。</span><span class="garden-footer">每 10 秒读取本会话交付记录；隐藏时暂停。任务状态来自真实产物与复核收据。复核请求等待本会话协调者派发。</span></footer>
+  <footer><span class="observation-footer">页面可见时每 10 秒刷新元数据；隐藏时暂停。Codex 仅身份元数据；远端消息只在选择、刷新或翻页时读取。定位仅切换已有 Zellij pane。</span></footer>
 </body>
 </html>

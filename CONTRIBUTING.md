@@ -12,13 +12,12 @@
 | `session_panel/sessions` | 会话观察、索引、终端与本机进程证据 |
 | `session_panel/workspace` | 项目、进度、管理存储与来源观察 |
 | `session_panel/execution` | 执行准入、执行记录与受控进程 |
-| `session_panel/garden` | 小院协作收据、原生关系与 MCP |
 | `session_panel/profiles` | 用户配置、导入备份与离线恢复 |
 | `session_panel/integrations` | 外部接入、固定启动器与旧只读 MCP |
 
-`session_panel/paths.py` 统一固定仓库根路径。根包的六个旧 CLI 文件只保留兼容入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
+`session_panel/paths.py` 统一固定仓库根路径。根包的四个旧 CLI 文件只保留兼容入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
 
-前端按 `web/sessions`、`web/progress`、`web/workspace`、`web/garden` 分组；执行界面属于工作台，放在 `web/workspace/execution.js`。新增页面资源放入所属功能目录，并在 HTTP 静态白名单中显式映射。物理路径与公开 URL 分开维护：搬文件不改变 `/workspace`、`/workspace.js` 等地址，也不改变普通脚本加载顺序。
+前端按 `web/sessions`、`web/progress`、`web/workspace` 分组；执行界面属于工作台，放在 `web/workspace/execution.js`。新增页面资源放入所属功能目录，并在 HTTP 静态白名单中显式映射。物理路径与公开 URL 分开维护：搬文件不改变 `/workspace`、`/workspace.js` 等地址，也不改变普通脚本加载顺序。
 
 测试按类型落位：Python 单元/合成接口测试在 `tests/backend`，纯 Node 源码与 DOM 合同在 `tests/frontend`，浏览器及协议 harness 在 `tests/e2e`，共享合成程序在 `tests/fixtures`。Python 发现入口仍是 `tests`；新增后端测试保持可递归发现。新增功能若横跨前后端，各自放入对应功能目录，并补充相应类型测试。
 
@@ -58,6 +57,8 @@ python scripts/check_repository.py changes --base <base-commit> --head <head-com
 安装命令只运行一次，安装器拒绝覆盖已有目录。后续复用已校验工具；若选其他 ignored 工具目录，检查命令加 `--gitleaks <该目录/gitleaks.exe>`。升级须重新核实官方版本和资产校验值。
 
 `changes` 检查 base..head 全部新增提交中逐提交新增行，个人路径或秘密先加入再删除也会阻断。普通提交对比父树；合并提交检查相对各父均新增的隐私命中，避免把同步 base 已有值当作新引入，侧支新值仍由其引入提交检查。Gitleaks 扫描同一完整区间，并显式使用 `--diff-merges=first-parent`，覆盖仅在合并解决冲突时加入的秘密。报告记录 base、head、merge_base 及每项隐私命中的 commit，兼容 PR 分支创建后 main 又前进的情况。未修改的旧个人值不阻断普通 PR；改名保持的旧内容不算新增。base/head 必须是真实提交；首次导入的全零 before、缺失 ref、无共同历史或空提交区间会失败，维护者须明确首次导入范围并运行完整候选检查，不能静默跳过。
+
+`docs/` 开发记录只留本地，两种模式均禁入；`videos/` 下已有 `.md`、`.json`、`.mjs` 文本仅在 `changes` 模式的原路径修改中进入完整扫描，仍受嵌套目录、私人文件、二进制和隐私/秘密检查约束，新增、改名或复制到该目录的内容及媒体仍禁入。
 
 未提交文件用严格的 `release` 模式，不虚构 changes 提交范围。手写一个 ignored JSON 清单，`files` 列出本次准备发布的全部相对文件路径，`excluded` 明确记录未纳入的路径（可为空）：
 

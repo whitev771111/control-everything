@@ -27,12 +27,12 @@ class ProfileHTTPTests(unittest.TestCase):
         self.quota.refresh.return_value = {"status": "fixture-refreshed"}
         self.news.get.return_value = {"status": "fixture-news"}
         self.workspace = WorkspaceService(profile=self.profile, quota_source=self.quota, news_source=self.news)
-        self.server = SimpleNamespace(profile=self.profile, workspace=self.workspace, service=None, garden=None, execution=None,
+        self.server = SimpleNamespace(profile=self.profile, workspace=self.workspace, service=None, execution=None,
                                       execution_reason=None, expected_host="127.0.0.1:1234", origin="http://127.0.0.1:1234", csrf_token="token")
 
     def test_default_routes_no_personal_or_execution_source(self):
         targets = ["session_panel.http.gateway.catalog", "session_panel.http.gateway.pulse", "session_panel.http.gateway.start",
-                   "session_panel.http.gateway.actor_from_environment", "session_panel.workspace.progress.codex_cwds", "session_panel.workspace.progress.grok_cwds",
+                   "session_panel.workspace.progress.codex_cwds", "session_panel.workspace.progress.grok_cwds",
                    "session_panel.http.gateway.list_codex_threads"]
         patches = [patch(target, side_effect=AssertionError("forbidden source")) for target in targets]
         for item in patches:
@@ -49,7 +49,6 @@ class ProfileHTTPTests(unittest.TestCase):
             self.assertEqual(desk["news"][0]["title"], "Public fixture")
             for route in ("/api/sessions", "/api/sessions/" + str(uuid4()), "/api/workbench", "/api/launch"):
                 self.assertEqual(self.request(route)[1]["reason"], "capability_unavailable")
-            self.assertEqual(self.request("/api/garden")[1]["reason"], "garden_unbound")
             self.assertEqual(self.request("/api/workspace/execution")[1]["reason"], "execution_unavailable")
             self.assertEqual(self.request("/api/codex/threads")[1]["status"], "not_configured")
             self.assertEqual(self.request("/api/workspace/usage")[1]["codex"]["status"], "fixture-quota")

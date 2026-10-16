@@ -85,14 +85,15 @@ class ExecutionHTTPTests(unittest.TestCase):
         path = "/api/workspace/execution/runs/" + str(uuid4()) + "/cancel"
         self.assertEqual(self.request(path, "POST", prompt)[0], 400)
         self.assertEqual(self.request("/api/workspace/execution/runs", "POST", b" " * 24577)[0], 400)
-        for data, headers in ((b"{}", {"Content-Type": "text/plain"}), (b"{}", {"Content-Length": ["2", "2"]}),
+        for data, headers in ((b"{}", {"Content-Type": "text/plain"}), (b"{}", {"Content-Type": []}),
+                              (b"{}", {"Content-Length": []}), (b"{}", {"Content-Length": ["2", "2"]}),
                               (b"{}", {"Transfer-Encoding": "chunked"}), (b"[]", {}), (b'{"x":NaN}', {}), (b"{", {})):
             self.assertEqual(self.request("/api/workspace/execution/runs", "POST", data, headers)[0], 400)
         handler = PanelHandler.__new__(PanelHandler)
         handler.headers = Message()
         handler.headers["Content-Length"], handler.headers["Content-Type"] = "4097", "application/json"
         with self.assertRaises(ValueError):
-            handler.garden_body()
+            handler.read_json_body()
 
     def test_fixed_error_matrix_never_exposes_exception_text(self):
         reasons = {400: ["invalid_request"], 404: ["task_not_found", "run_not_found", "approval_not_found", "request_not_found"],

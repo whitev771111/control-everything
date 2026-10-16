@@ -12,11 +12,11 @@ class ProfileStartupTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             fake = Mock()
             fake.server_address = ("127.0.0.1", 14401)
-            with patch.object(gateway, "PanelServer", return_value=fake), patch.object(gateway, "actor_from_environment", side_effect=AssertionError("actor")), patch.object(gateway, "GardenService", side_effect=AssertionError("garden")), patch("session_panel.sessions.service.SessionService", side_effect=AssertionError("ssh")), patch("session_panel.execution.service.ExecutionService", side_effect=AssertionError("owner")):
+            with patch.object(gateway, "PanelServer", return_value=fake), patch("session_panel.sessions.service.SessionService", side_effect=AssertionError("ssh")), patch("session_panel.execution.service.ExecutionService", side_effect=AssertionError("owner")):
                 server = gateway.build_profile_server(directory, 14401, quota_source=Mock(), news_source=Mock())
             self.assertIsNone(server.service)
             self.assertIsNone(server.execution)
-            self.assertIsNone(server.garden)
+            self.assertNotIn("garden", server.__dict__)
             self.assertEqual(server.profile.data_dir, Path(directory).resolve())
             self.assertEqual(set(path.name for path in Path(directory).iterdir()), {"profile.json", "workspace-state.sqlite3"})
 

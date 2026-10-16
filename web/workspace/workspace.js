@@ -657,7 +657,7 @@ async function saveSettings(event) {
 function renderImport(value) {
   const root = $('import-result'); root.replaceChildren(el('h3', '', '导入收据'));
   for (const [kind, count] of Object.entries(value.counts || {})) root.append(el('p', '', `${kind}：${count}`));
-  root.append(el('p', '', `未导入：${(value.excluded_domains || ['execution', 'approvals', 'events', 'garden', 'private_messages']).join('、')}`));
+  root.append(el('p', '', `未导入：${(value.excluded_domains || ['execution', 'approvals', 'events', 'private_messages']).join('、')}`));
   if (value.backup_path) root.append(el('p', '', `目的 profile 导入前备份：${value.backup_path}`), el('p', '', '恢复到另一个空目录，再另行启动切换；当前 profile 及导入后新记录仍保留。'), el('code', 'restore-command', `python -m session_panel.profile restore --backup "${value.backup_path}" --data-dir "<另一个空的绝对目录>"`));
 }
 async function importLegacy(event) {

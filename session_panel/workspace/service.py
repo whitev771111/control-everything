@@ -69,7 +69,7 @@ def observation_owner(cwd, projects):
 
 def discover_providers():
     definitions = (
-        ("codex", "Codex", ("codex",), "/", "会话与小院", "本机身份元数据；活动和任务完成状态未知"),
+        ("codex", "Codex", ("codex",), "/", "会话", "本机身份元数据；活动和任务完成状态未知"),
         ("claude", "Claude Code", ("claude",), "/", "原会话页", "原会话页远端观察，当前连接需在那里核验"),
         ("grok", "Grok", ("grok",), "https://grok.com/", "Grok 原服务", "结构化会话观察未接入；订阅、CLI、API 分开记录"),
         ("dsh", "DSH", ("dsh", "dsh-tui", "dst"), "https://github.com/deepseek-ai/deepseek-harness", "官方文档", "结构化会话观察与执行未接入"),
@@ -224,7 +224,7 @@ class WorkspaceService:
         return {"status": "ok", "sampled_at": datetime.now(timezone.utc).isoformat(), "today": today(),
                 "projects": projects, "todos": todos, "tasks": tasks, "providers": discover_providers(),
                 "sessions": sessions, "entrypoints": [
-                    {"id": "sessions", "label": "会话与小院", "href": "/"},
+                    {"id": "sessions", "label": "会话", "href": "/"},
                     {"id": "progress", "label": "原进度、待办与启动器", "href": "/progress"},
                     {"id": "grok", "label": "Grok 原服务", "href": "https://grok.com/"}]}
 

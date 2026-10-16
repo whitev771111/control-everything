@@ -305,6 +305,7 @@ async function openPage(options = {}) {
     }
     caseRecord.expected_http_errors = [...(caseRecord.expected_http_errors || []), ...expectedHttpErrors];
     caseRecord.http_failures = [...(caseRecord.http_failures || []), ...httpFailures];
+    check('retired collaboration UI stays absent', await page.locator('[id^=garden-],[class*=garden-],#observation-view').count() === 0);
     check('no retired canvas, characters or controls', await page.locator('canvas,.garden-bot,#robot-stage,#robot-motion-toggle,[id^=robot-mode-]').count() === 0);
     check('no unexpected page errors', caseRecord.page_errors.length === 0, caseRecord.page_errors);
     check('no unexpected console errors', caseRecord.console_errors.length === 0, caseRecord.console_errors);
@@ -764,11 +765,17 @@ async function main() {
     report.syntax.push({ filename, exit_code: result.status, stdout: result.stdout, stderr: result.stderr });
     if (result.status !== 0) throw new Error(`${filename} syntax check failed`);
   }
-  for (const filename of ['web/sessions/index.html', 'web/sessions/style.css', 'web/sessions/app.js', 'web/garden/garden.js']) {
+  for (const filename of ['web/sessions/index.html', 'web/sessions/style.css', 'web/sessions/app.js']) {
     report.hashes[filename] = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, filename))).digest('hex');
   }
   fixture = await startFixture();
   browser = await chromium.launch({ channel: 'msedge', headless: true });
+  await scenario('retired collaboration bootstrap field is ignored', async () => {
+    const session = await openPage({ fault: { path: '/api/bootstrap', body: { csrf_token: 'fixture', garden_root: ids[0] } } });
+    try {
+      check('session observation still renders', await session.page.locator('#sessions button[data-session-id]').count() > 0);
+    } finally { await session.close(); }
+  });
   await scenario('reader / 45 boundary / focus fixtures', basicBehavior);
   await scenario('dynamic 0/1/2/4/7/13 categories / old API / missing selection', classification);
   await scenario('late selection epoch response', epoch);
@@ -791,6 +798,7 @@ async function main() {
       check(`${resource} HTTP200 correct MIME CSP nosniff`, response && (resource.endsWith('.js') ? /javascript/ : /css/).test(response.mime) && response.nosniff === 'nosniff' && response.csp.includes("default-src 'self'") && response.csp.includes("img-src 'none'"), response);
     }
     check('retired rendering resources are never requested', report.requests.every(item => !/^\/(?:cockpit\.js|robot3d\.js|vendor\/three-)/.test(item.path)));
+    check('retired collaboration resources are never requested', report.requests.every(item => !/^\/(?:garden\.js|api\/garden(?:\/|$))/.test(item.path)));
     check('all API requests carry existing client header', report.requests.every(item => item.client_header_valid));
     check('no external or production requests escaped network guard', report.blocked_requests.length === 0, report.blocked_requests);
   });

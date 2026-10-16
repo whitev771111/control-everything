@@ -134,13 +134,11 @@ class RepositoryPathsTests(unittest.TestCase):
     def test_data_and_resource_paths_stay_at_repository_root(self):
         from session_panel.paths import REPOSITORY_ROOT
         from session_panel.http.gateway import WEB
-        from session_panel.garden.service import WORKSPACE
         from session_panel.workspace.progress import MANUAL, TODOS
         from session_panel.workspace.service import DEFAULT_DB
 
         root = Path(__file__).resolve().parents[2]
         self.assertEqual(REPOSITORY_ROOT, root)
-        self.assertEqual(WORKSPACE, root)
         self.assertEqual(WEB, root / "web")
         self.assertEqual(REGISTRY, root / "progress-registry.json")
         self.assertEqual(MANUAL, root / "progress-manual.json")

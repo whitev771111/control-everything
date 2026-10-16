@@ -12,6 +12,8 @@ from unittest.mock import patch
 SPEC = importlib.util.spec_from_file_location("repository_checks", Path(__file__).parents[2] / "scripts/check_repository.py")
 CHECKS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKS)
+REAL_SCAN_GITLEAKS = CHECKS.scan_gitleaks
+GITLEAKS = Path(__file__).parents[2] / "work/tools/gitleaks-8.30.1/gitleaks.exe"
 
 
 class RepositoryChecksTests(unittest.TestCase):
@@ -108,6 +110,99 @@ class RepositoryChecksTests(unittest.TestCase):
                 code, report = self.release([name])
                 self.assertEqual(code, 1)
                 self.assertTrue(report["blocked"])
+
+    def test_existing_video_text_modifications_reach_full_interval_scanner(self):
+        self.save(".gitignore", "/work/\n")
+        names = ["videos/demo/STORYBOARD.md", "videos/demo/manifest.json", "videos/demo/capture.mjs"]
+        for name in names:
+            self.save(name, "old source\n")
+        base = self.commit()
+        for name in names:
+            self.save(name, "remaining source\n")
+        head = self.commit()
+        code, report = self.check("changes", "--base", base, "--head", head)
+        self.assertEqual(code, 0)
+        self.assertEqual({item["path"] for item in report["included"]}, set(names))
+        self.scanner.assert_called_once()
+        self.assertEqual(self.scanner.call_args.args[-1], base + ".." + head)
+        self.assertEqual(self.release([names[0]])[0], 1)
+
+    def test_new_renamed_and_copied_video_sources_are_still_blocked(self):
+        self.save(".gitignore", "/work/\n")
+        self.save("videos/demo/original.md", "existing source\n")
+        base = self.commit()
+        self.save("videos/demo/new.md", "new source\n")
+        self.git("mv", "videos/demo/original.md", "videos/demo/renamed.md")
+        self.save("videos/demo/copied.md", "existing source\n")
+        code, report = self.check("changes", "--base", base, "--head", self.commit())
+        self.assertEqual(code, 1)
+        self.assertTrue(report["blocked"])
+        self.assertEqual(report["included"], [])
+        self.scanner.assert_not_called()
+
+    def test_modified_video_media_nested_and_private_paths_remain_blocked(self):
+        self.save(".gitignore", "/work/\n")
+        names = ["videos/demo/image.png", "videos/demo/work/notes.md", "videos/demo/node_modules/source.mjs",
+                 "videos/demo/.codex/config.json", "videos/demo/.env.json", "videos/demo/data.sqlite3",
+                 "videos/demo/config.toml", "videos/demo/docs/notes.md", "assets/videos/demo.md"]
+        for name in names:
+            self.save(name, "old\n")
+        base = self.commit()
+        for name in names:
+            self.save(name, "changed\n")
+        code, report = self.check("changes", "--base", base, "--head", self.commit())
+        self.assertEqual(code, 1)
+        self.assertEqual({item["path"] for item in report["blocked"]}, set(names))
+        self.scanner.assert_not_called()
+
+    def test_modified_video_text_cannot_hide_binary_or_new_personal_values(self):
+        self.save(".gitignore", "/work/\n")
+        self.save("videos/demo/source.md", "old\n")
+        base = self.commit()
+        self.save("videos/demo/source.md", self.personal_path() + "\n")
+        head = self.commit()
+        code, report = self.check("changes", "--base", base, "--head", head)
+        self.assertEqual(code, 1)
+        self.assertEqual(report["findings"][0]["rule"], "absolute-windows-path")
+        self.scanner.assert_called_once()
+        self.scanner.reset_mock()
+        (self.root / "videos/demo/source.md").write_bytes(b"changed\x00binary")
+        code, report = self.check("changes", "--base", head, "--head", self.commit())
+        self.assertEqual(code, 1)
+        self.assertEqual(report["blocked"], [{"path": "videos/demo/source.md", "reason": "binary-candidate"}])
+        self.scanner.assert_not_called()
+
+    def test_docs_are_local_only_in_release_and_changes(self):
+        self.save(".gitignore", "/work/\n")
+        self.save("docs/current/record.md", "local record\n")
+        base = self.commit()
+        self.assertEqual(self.release(["docs/current/record.md"])[0], 1)
+        self.save("docs/current/record.md", "updated local record\n")
+        self.save("nested/docs/new.md", "nested local record\n")
+        code, report = self.check("changes", "--base", base, "--head", self.commit())
+        self.assertEqual(code, 1)
+        self.assertEqual({item["path"] for item in report["blocked"]}, {"docs/current/record.md", "nested/docs/new.md"})
+        self.scanner.assert_not_called()
+
+    @unittest.skipUnless(GITLEAKS.is_file(), "Pinned local Gitleaks is installed separately")
+    def test_video_modification_uses_real_gitleaks_and_rejects_new_secret(self):
+        self.save(".gitignore", "/work/\n")
+        self.save("videos/demo/capture.mjs", "const source = 'old';\n")
+        base = self.commit()
+        self.save("videos/demo/capture.mjs", "const source = 'cleaned';\n")
+        head = self.commit()
+        with patch.object(CHECKS, "scan_gitleaks", wraps=REAL_SCAN_GITLEAKS) as actual:
+            code, report = self.check("changes", "--base", base, "--head", head, "--gitleaks", str(GITLEAKS.resolve()))
+            self.assertEqual(code, 0)
+            self.assertEqual(report["gitleaks"]["exit_code"], 0)
+            actual.assert_called_once()
+            secret = "ghp_" + "aB3dE6gH9jK2mN5pQ8sT1vW4yZ7cF0iL3oR6"
+            self.save("videos/demo/capture.mjs", 'const token = "' + secret + '";\n')
+            code, report = self.check("changes", "--base", head, "--head", self.commit(), "--gitleaks", str(GITLEAKS.resolve()))
+            self.assertEqual(code, 1)
+            self.assertEqual(report["gitleaks"]["exit_code"], 1)
+            self.assertTrue(report["gitleaks"]["findings"])
+            self.assertNotIn(secret, json.dumps(report))
 
     def test_empty_outside_missing_and_binary_fail_closed(self):
         self.assertEqual(self.release([])[0], 1)

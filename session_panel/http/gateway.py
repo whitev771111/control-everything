@@ -19,9 +19,6 @@ from session_panel.sessions.codex_index import list_threads as list_codex_thread
 from session_panel.workspace.progress import MANUAL, REGISTRY, TODOS, add_todo, board, set_progress, toggle_todo, load_todos
 from session_panel.integrations.launchers import catalog, start
 from session_panel.integrations.desk import headlines, pulse
-from session_panel.garden.service import GardenService
-from session_panel.garden.native import GardenError, actor_from_environment
-from session_panel.garden.public import read_public_messages
 from session_panel.workspace.service import WorkspaceService
 from session_panel.workspace.store import WorkspaceError
 from session_panel.profiles.profile import Profile, ProfileError, strict_json
@@ -29,16 +26,11 @@ from session_panel.profiles.profile import Profile, ProfileError, strict_json
 APP = "remote-claude-session-panel"
 WEB = REPOSITORY_ROOT / "web"
 SESSION_ROUTE = re.compile(r"/api/sessions/([^/]+)(?:/(messages|focus))?\Z")
-GARDEN_PUBLIC_ROUTE = re.compile(r"/api/garden/actors/([^/]+)/public-messages\Z")
 EXECUTION_RUN_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)\Z")
 EXECUTION_ACTION_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)/(cancel|approvals/([^/]+))\Z")
-GARDEN_POST = {
-    "/api/garden/request-review": ("request_review", {"task_id", "version", "artifact_sha256", "reviewer_id"}),
-    "/api/garden/accept": ("accept_artifact", {"task_id", "version", "artifact_sha256", "summary"}),
-}
 PROFILE_POST = {"/api/profile/settings", "/api/profile/import", "/api/workspace/projects/save",
                 "/api/workspace/projects/restore", "/api/workspace/progress"}
-PROFILE_CAPABILITIES = {"profile": True, "project_management": True, "execution": False, "garden": False,
+PROFILE_CAPABILITIES = {"profile": True, "project_management": True, "execution": False,
                         "personal_launchers": False, "remote_sessions": False, "quota": True, "news": True}
 
 
@@ -191,7 +183,6 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/": ("sessions/index.html", "text/html; charset=utf-8"),
             "/app.js": ("sessions/app.js", "text/javascript; charset=utf-8"),
             "/style.css": ("sessions/style.css", "text/css; charset=utf-8"),
-            "/garden.js": ("garden/garden.js", "text/javascript; charset=utf-8"),
             "/progress": ("progress/progress.html", "text/html; charset=utf-8"),
             "/progress.js": ("progress/progress.js", "text/javascript; charset=utf-8"),
             "/progress.css": ("progress/progress.css", "text/css; charset=utf-8"),
@@ -225,21 +216,11 @@ class PanelHandler(BaseHTTPRequestHandler):
                 if path.query:
                     raise ValueError("invalid_query")
                 return self.reply(200, {"launchers": catalog(), "pulse": pulse(), "news": headlines(), "todos": load_todos(TODOS)})
-            if path.path == "/api/garden":
-                if path.query:
-                    raise ValueError("invalid_query")
-                return self.garden_reply()
-            if match := GARDEN_PUBLIC_ROUTE.fullmatch(path.path):
-                if path.query:
-                    raise ValueError("invalid_query")
-                return self.garden_public_reply(canonical_uuid(match[1]))
             if path.path == "/api/codex/threads":
                 result = list_codex_threads(codex_offset(path.query))
                 return self.reply(200 if result["available"] else 503, result)
             if path.path == "/api/bootstrap" and not path.query:
                 value = {"csrf_token": self.server.csrf_token, "app": APP}
-                if getattr(self.server, "garden", None):
-                    value["garden_root"] = self.server.garden.context.root_thread_id
                 return self.reply(200, value)
             if path.path == "/api/sessions" and not path.query:
                 result = self.server.service.list_sessions()
@@ -280,7 +261,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.query:
                 return self.reject(400, "invalid_request")
             try:
-                body = self.garden_body(max_bytes=24576 if path.path == "/api/workspace/execution/runs" else 4096)
+                body = self.read_json_body(max_bytes=24576 if path.path == "/api/workspace/execution/runs" else 4096)
             except (ValueError, UnicodeDecodeError, OSError):
                 return self.reject(400, "invalid_request")
             return self.execution_reply(path.path, body)
@@ -291,7 +272,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             if self.server.workspace is None:
                 return self.reject(503, "workspace_unavailable")
             try:
-                body = self.garden_body()
+                body = self.read_json_body()
             except (ValueError, UnicodeDecodeError, OSError):
                 return self.reject(400, "invalid_request")
             return self.workspace_reply(path.path, body)
@@ -299,7 +280,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.query:
                 return self.reject(400, "invalid_request")
             try:
-                body = self.garden_body()
+                body = self.read_json_body()
                 if set(body) != {"project_id", "state", "note", "percent"}:
                     raise ValueError("invalid_body")
                 if not set_progress(body["project_id"], body["state"], body["note"], body["percent"], REGISTRY, MANUAL):
@@ -311,7 +292,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.query:
                 return self.reject(400, "invalid_request")
             try:
-                body = self.garden_body()
+                body = self.read_json_body()
                 if set(body) != {"id"} or not isinstance(body["id"], str) or not start(body["id"]):
                     raise ValueError("invalid_body")
             except (ValueError, UnicodeDecodeError, OSError):
@@ -321,7 +302,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.query:
                 return self.reject(400, "invalid_request")
             try:
-                body = self.garden_body()
+                body = self.read_json_body()
                 if path.path == "/api/todos":
                     if set(body) != {"text", "project_id"}:
                         raise ValueError("invalid_body")
@@ -335,17 +316,6 @@ class PanelHandler(BaseHTTPRequestHandler):
             except (ValueError, UnicodeDecodeError, OSError):
                 return self.reject(400, "invalid_request")
             return self.reply(200, {"todos": items})
-        if path.path in GARDEN_POST:
-            if path.query:
-                return self.reject(400, "invalid_request")
-            try:
-                body = self.garden_body()
-                method, fields = GARDEN_POST[path.path]
-                if set(body) != fields:
-                    raise ValueError("invalid_body")
-                return self.garden_reply(method, body)
-            except (ValueError, UnicodeDecodeError, OSError):
-                return self.reject(400, "invalid_request")
         match = SESSION_ROUTE.fullmatch(path.path)
         connect = path.path == "/api/workbench/connect"
         if (not connect and (not match or match[2] != "focus")) or path.query:
@@ -455,7 +425,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             # A disconnected client does not change an already committed receipt.
             return None
 
-    def garden_body(self, max_bytes=4096, *, strict=False):
+    def read_json_body(self, max_bytes=4096, *, strict=False):
         lengths = self.headers.get_all("Content-Length", [])
         if (self.headers.get_all("Transfer-Encoding", []) or len(lengths) != 1
                 or not re.fullmatch(r"[0-9]{1,10}", lengths[0])
@@ -564,7 +534,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.reject(400, "invalid_request")
             return True
         try:
-            body = self.garden_body(max_bytes=16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
+            body = self.read_json_body(max_bytes=16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
             if route == "/api/profile/settings":
                 value = profile.settings(body)
             elif route == "/api/profile/import":
@@ -589,36 +559,6 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.reject(400, "invalid_request")
         return True
 
-    def garden_reply(self, operation=None, body=None):
-        garden = getattr(self.server, "garden", None)
-        if garden is None:
-            return self.reply(503, {"available": False, "reason": "garden_unbound", "root_thread_id": None})
-        try:
-            if garden.context.actor_id != garden.context.root_thread_id:
-                raise GardenError("garden_unbound")
-            value = (getattr(garden, operation)(**body, source="panel_web") if operation else garden.snapshot())
-            return self.reply(200, value)
-        except GardenError as error:
-            reason = str(error)
-            status = 503 if reason.startswith(("native_", "ledger_", "garden_unbound", "parent_")) else 409
-            return self.reply(status, {"available": False, "reason": reason, "root_thread_id": garden.context.root_thread_id})
-        except (ValueError, TypeError):
-            return self.reply(400, {"available": False, "reason": "invalid_request", "root_thread_id": garden.context.root_thread_id})
-        except Exception:
-            return self.reply(503, {"available": False, "reason": "garden_unavailable", "root_thread_id": garden.context.root_thread_id})
-
-    def garden_public_reply(self, actor_id):
-        garden = getattr(self.server, "garden", None)
-        if garden is None or garden.context.actor_id != garden.context.root_thread_id:
-            return self.reply(503, {"available": False, "reason": "garden_unbound", "root_thread_id": None, "actor_id": actor_id})
-        try:
-            return self.reply(200, read_public_messages(garden, actor_id))
-        except GardenError as error:
-            reason = str(error)
-            status = 404 if reason == "actor_not_in_domain" else 503
-            return self.reply(status, {"available": False, "reason": reason,
-                                       "root_thread_id": garden.context.root_thread_id, "actor_id": actor_id})
-
 
 class PanelServer(ThreadingHTTPServer):
     def server_close(self):
@@ -638,7 +578,7 @@ class PanelServer(ThreadingHTTPServer):
         super().server_bind()
 
 
-def make_server(service, address=(HOST, PORT), *, garden=None, workspace=None, execution=None, profile=None):
+def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None, profile=None):
     # The address injection exists for temporary fixture tests. Production is fixed.
     if address[0] != HOST:
         raise ValueError("loopback_only")
@@ -650,7 +590,6 @@ def make_server(service, address=(HOST, PORT), *, garden=None, workspace=None, e
         raise
     server.daemon_threads = True
     server.service = service
-    server.garden = garden
     server.workspace = workspace
     server.execution = execution
     server.execution_reason = None

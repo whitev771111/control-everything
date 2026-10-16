@@ -53,7 +53,7 @@ def forbidden(value):
     path = relative_path(value)
     parts = tuple(part.lower() for part in path.parts)
     name = parts[-1]
-    if any(part in {".git", "work", ".venv", ".exe", "node_modules", "__pycache__", "videos"} for part in parts):
+    if any(part in {".git", "docs", "work", ".venv", ".exe", "node_modules", "__pycache__", "videos"} for part in parts):
         return "excluded-directory"
     if path.suffix.lower() in MEDIA:
         return "media"
@@ -206,6 +206,10 @@ def added_findings(root, parent, current, report):
         rejected = False
         for name in names:
             reason = forbidden(name)
+            path = relative_path(name)
+            if status == "M" and path.parts[0] == "videos" and path.suffix.lower() in {".md", ".json", ".mjs"}:
+                # Existing video source edits still pass every other path and content guard.
+                reason = forbidden(PurePosixPath(*path.parts[1:]).as_posix())
             if reason:
                 report["blocked"].append({"path": name, "reason": reason})
                 rejected = True

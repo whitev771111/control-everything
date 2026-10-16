@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 from email.message import Message
 
-from session_panel.http.gateway import WEB, PanelHandler, make_server
+from session_panel.http.gateway import WEB, PanelHandler, build_profile_server, make_server
 from session_panel.sessions.source import SOURCE
 
 SESSION_ID = "b7ed3430-9064-4153-894d-d295a388a572"
@@ -225,12 +225,12 @@ class GatewayTests(unittest.TestCase):
         self.service.list_sessions.assert_not_called()
 
     def test_business_static_routes_preserve_bytes_mime_and_security_headers(self):
-        routes = ["app.js", "garden.js", "style.css"]
+        routes = ["app.js", "style.css"]
         for filename in routes:
             with self.subTest(filename=filename):
                 status, headers, body = self.request('/' + filename)
                 self.assertEqual(status, 200)
-                self.assertEqual(body, (WEB / ("garden" if filename == "garden.js" else "sessions") / filename).read_bytes())
+                self.assertEqual(body, (WEB / "sessions" / filename).read_bytes())
                 self.assertEqual(headers["Content-Type"], "text/css; charset=utf-8" if filename.endswith(".css")
                                  else "text/javascript; charset=utf-8")
                 self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
@@ -239,6 +239,39 @@ class GatewayTests(unittest.TestCase):
         self.service.list_sessions.assert_not_called()
         self.service.get_session_messages.assert_not_called()
         self.service.terminal.focus_session.assert_not_called()
+
+    def test_retired_garden_routes_are_404_for_legacy_and_profile_servers(self):
+        # Retirement coverage uses valid security headers, so 403 cannot hide a live route.
+        legacy_server = self.server
+        with TemporaryDirectory() as directory:
+            profile_server = build_profile_server(directory, 0, quota_source=Mock(), news_source=Mock())
+            profile_thread = threading.Thread(target=profile_server.serve_forever, daemon=True)
+            profile_thread.start()
+            try:
+                for mode, server in (("legacy", legacy_server), ("profile", profile_server)):
+                    self.server = server
+                    with self.subTest(mode=mode):
+                        self.assertNotIn("garden", server.__dict__)
+                        routes = ["/api/garden", f"/api/garden/actors/{SESSION_ID}/public-messages", "/garden.js"]
+                        for route in routes:
+                            with self.subTest(route=route):
+                                status, headers, result = self.request(route)
+                                self.assertEqual((status, result["reason"]), (404, "route_not_found"))
+                                self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+                        for route in ("/api/garden/request-review", "/api/garden/accept"):
+                            with self.subTest(route=route):
+                                status, _, result = self.request(route, "POST", self.focus_headers(), "{}")
+                                self.assertEqual((status, result["reason"]), (404, "route_not_found"))
+                        status, _, bootstrap = self.request("/api/bootstrap")
+                        self.assertEqual(status, 200)
+                        self.assertNotIn("garden_root", bootstrap)
+                        self.assertNotIn("garden", bootstrap.get("capabilities", {}))
+            finally:
+                self.server = legacy_server
+                profile_server.shutdown()
+                profile_server.server_close()
+                profile_thread.join()
+        self.assertEqual(self.service.mock_calls, [])
 
     def test_retired_rendering_routes_are_404_without_business_calls(self):
         routes = ["/cockpit.js", "/robot3d.js", "/vendor/three-0.186.0/three.module.js",
@@ -255,7 +288,7 @@ class GatewayTests(unittest.TestCase):
 
     def test_business_static_missing_file_is_explicit_404(self):
         with TemporaryDirectory() as directory, patch("session_panel.http.gateway.WEB", Path(directory)):
-            for path in ("/app.js", "/garden.js", "/style.css"):
+            for path in ("/app.js", "/style.css"):
                 status, headers, body = self.request(path)
                 self.assertEqual((status, body["reason"]), (404, "route_not_found"))
                 self.assertEqual(headers["X-Content-Type-Options"], "nosniff")

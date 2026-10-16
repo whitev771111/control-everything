@@ -23,7 +23,7 @@ JSON_FILE_LIMIT = 16 * 1024 * 1024
 JSON_TOTAL_LIMIT = 32 * 1024 * 1024
 DECODED_LIMIT = 64 * 1024 * 1024
 ROW_LIMITS = {"projects": 1000, "manual": 10000, "todos": 100000, "tasks": 100000, "manual_records": 100000}
-EXCLUDED = ["execution", "approvals", "events", "garden", "private_messages", "personal_settings"]
+EXCLUDED = ["execution", "approvals", "events", "private_messages", "personal_settings"]
 BACKUP_FILES = {"management.sqlite3", "profile.json"}
 ABSENT = object()
 

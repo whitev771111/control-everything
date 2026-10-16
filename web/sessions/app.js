@@ -3,7 +3,6 @@ const $ = id => document.getElementById(id);
 const state = { records: [], selected: null, page: null, pageOld: false, csrf: '', epoch: 0, reading: false, focusing: false, refreshing: false, connected: false, received: 0, coverage: {}, snapshotAge: null, sourceReason: null,
   workbench: null, workbenchReceived: 0, workbenchCurrent: false, workbenchReason: null, workbenchError: '', refreshingWorkbench: false, connecting: false, workbenchBlocked: false, workbenchNotice: '' };
 const codexState = { items: [], offset: 0, nextOffset: null, total: null, coverage: {}, selected: null, available: false, received: 0, sampledAt: null, refreshing: false, error: '' };
-let garden = null;
 const reasons = {
   reader_empty_unverified: '读取结果未验证：有效空历史与查找或读取失败暂时无法区分',
   reader_scope_unverified: '读取范围未验证：官方 reader 的目录映射无法确认',
@@ -183,7 +182,6 @@ function expireCodexThreads() {
 }
 function selectCodexThread(key) {
   if (!codexFresh() || !codexState.items.some(item => item.session_key === key)) return;
-  garden?.observeDomain(key);
   codexState.selected = key;
   state.epoch++; state.selected = null; state.page = null; state.pageOld = false; state.reading = false;
   $('messages').replaceChildren();
@@ -353,7 +351,6 @@ async function refreshSessions() {
 }
 function selectSession(sessionId) {
   if (!state.records.some(record => record.session_id === sessionId) || state.selected === sessionId) return;
-  garden?.observeDomain(sessionId);
   codexState.selected = null; renderCodexThreads();
   state.epoch++; state.selected = sessionId; state.page = null; state.pageOld = false; state.reading = false;
   $('messages').replaceChildren(); $('read-time').textContent = ''; $('message-notice').textContent = ''; $('action-notice').textContent = ''; updatePaging(); renderSessions(); renderSelection();
@@ -443,14 +440,10 @@ $('copy-mapping-key').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(key); $('mapping-copy-notice').textContent = '完整身份键已复制'; }
   catch { $('mapping-copy-notice').textContent = '复制不可用，请手动选择上方完整身份键'; }
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshObservations(); garden?.refresh(); } });
-setInterval(() => { if (!document.hidden) { refreshObservations(); garden?.refresh(); } }, 10000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshObservations(); } });
+setInterval(() => { if (!document.hidden) { refreshObservations(); } }, 10000);
 setInterval(() => { if (!document.hidden) { renderWorkbench(); renderSelection(); renderCoverage(); expireCodexThreads(); if (state.records.some(record => age(record) > 30000)) renderSessions(); } }, 1000);
-query('/api/bootstrap').then(async result => {
+query('/api/bootstrap').then(result => {
   state.csrf = result.csrf_token; renderWorkbench(); renderSelection();
-  if (typeof result.garden_root === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(result.garden_root)) {
-    try { const module = await import('/garden.js'); garden = module.mount({ root: result.garden_root, query, csrf: () => state.csrf }); }
-    catch { $('garden-notice').textContent = '小院模块暂未接入，可继续使用会话观察。'; }
-  }
 }).catch(error => { $('list-notice').textContent = error.message; });
 refreshObservations();

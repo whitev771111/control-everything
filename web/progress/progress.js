@@ -380,7 +380,7 @@ function paintSide(desk) {
   todoZone.append(form, list);
   if (profileMode) {
     todoZone.append(pageControls(desk.todos_total || 0, todoOffset, 20, async value => { todoOffset = value; await refreshDesk(); }));
-    launchZone.replaceChildren(); const note = document.createElement('p'); note.textContent = '当前 profile 不提供个人启动器、SSH、小院或执行入口。'; launchZone.append(note);
+    launchZone.replaceChildren(); const note = document.createElement('p'); note.textContent = '当前 profile 不提供个人启动器、SSH 或执行入口。'; launchZone.append(note);
     document.querySelector('#launch-heading h2').textContent = '当前能力'; document.querySelector('#launch-heading p').textContent = '项目、人工记录与任务可直接使用。'; return;
   }
   launchZone.replaceChildren();

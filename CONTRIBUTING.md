@@ -27,14 +27,43 @@
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m pip check
-python -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs
 ```
 
-浏览器 harness 另需 Playwright 和 Edge，部分旧脚本还有本机安装路径；上述命令和 CI 不证明浏览器端验收。测试失败、警告、缺环境都应保留，不能把旧通过记录当作当前结果。
+基础测试使用合成配置、临时文件和 mock，不需要作者服务器或个人工具。首次完整测试涉及固定 Gitleaks 检查时，先按下文安装已核验工具；不能把缺工具跳过称为完整检查通过。本机 requirements 固定 MCP 1.30.0，远端新 reader 环境另用 requirements-reader.txt，不能把两套环境混为一次升级。
+
+从干净检出验收正常开发时，在上述安装和测试之后，用独立目录验证初始化与示例校验：
+
+```powershell
+$checkData = Join-Path (Get-Location) 'work/new-member-profile'
+.\.venv\Scripts\python.exe -m session_panel.profile init --data-dir $checkData
+.\.venv\Scripts\python.exe -m session_panel.profile validate-settings --file (Resolve-Path integration-settings.example.json).Path
+.\.venv\Scripts\python.exe -m session_panel.profile import-settings --file (Resolve-Path integration-settings.example.json).Path --data-dir $checkData
+.\.venv\Scripts\python.exe -m session_panel.profile status --data-dir $checkData
+.\.venv\Scripts\python.exe -m session_panel.gateway --data-dir $checkData --port 14401
+```
+
+页面验收负责人打开本机 14401/workspace，登记自己创建的测试项目目录，确认任务/人工记录可保存、四项高级接入显示未配置；需要 Codex 时只登记自己的库或独立合成库。停止该实例再启动同目录，确认数据保留。启动服务和浏览器人工验收分别留证，不以单元测试替代。
+
+浏览器 harness 另需已安装 Microsoft Edge，使用 Playwright Library。仅将 npm 依赖装入 ignored work/browser，根目录不增加 npm 构建层：
+
+```powershell
+npm install --prefix work/browser playwright
+$env:NODE_PATH = (Resolve-Path work/browser/node_modules).Path
+node -e "console.log(require.resolve('playwright'))"
+node tests/e2e/verify_session_panel.cjs --fixture
+node tests/e2e/verify_execution.cjs --fixture
+node tests/e2e/verify_workspace.cjs --fixture
+```
+
+三个脚本均使用普通 require('playwright') 和 Edge 的 msedge channel，合成模式不会访问私人会话或真实执行 API。verify_profile.cjs 的 protocol/http 两种模式另需独立合成数据与临时 loopback 服务，由验收负责人按其参数配置。上述测试和 CI 不证明私人环境可用；失败、警告、跳过和缺环境都应保留。
+
+采用 [Playwright Library](https://playwright.dev/docs/library) 的已有脚本入口；不为这次迁移另建测试框架。npm 的 [prefix 安装](https://docs.npmjs.com/cli/v11/commands/npm-install/) 将依赖留在工作目录，Node 的 [NODE_PATH 查找](https://nodejs.org/api/modules.html#loading-from-the-global-folders) 仅在当前验证进程环境中设置。
+
+清理时先列明本轮新建的临时目录和进程；仅移除已确认归属的一次性产物，保留验证日志、迁移备份和用户数据。不得递归清空整个 work/、docs/ 或 videos/，也不得清理其他任务内容。
 
 ## 协作和交接
 
@@ -43,7 +72,7 @@ node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui
 3. PR 写明目的、范围、验证命令和退出码、风险与遗留，并指定一名未参与实施的审查人。后续修改后重新验证并请审查最终 diff。
 4. 按任务授权提交和推送。使用显式文件清单暂存并检查 staged diff，推送前检查上游和完整 outgoing commit 区间。不要将别人的未提交改动混入自己的提交。
 
-当前规则准备任务要求全部保持未提交；这不是所有任务的永久禁提规则。不提交图片视频，也不为清理范围删除其他会话的媒体草稿。没有选定仓库许可证前，不自行添加许可证或宣称任意再分发许可。
+提交和推送遵循当前任务授权。不提交图片视频，也不为清理范围删除其他会话的媒体草稿。没有选定仓库许可证前，不自行添加许可证或宣称任意再分发许可。
 
 ## 内容和秘密检查
 
@@ -58,7 +87,7 @@ python scripts/check_repository.py changes --base <base-commit> --head <head-com
 
 `changes` 检查 base..head 全部新增提交中逐提交新增行，个人路径或秘密先加入再删除也会阻断。普通提交对比父树；合并提交检查相对各父均新增的隐私命中，避免把同步 base 已有值当作新引入，侧支新值仍由其引入提交检查。Gitleaks 扫描同一完整区间，并显式使用 `--diff-merges=first-parent`，覆盖仅在合并解决冲突时加入的秘密。报告记录 base、head、merge_base 及每项隐私命中的 commit，兼容 PR 分支创建后 main 又前进的情况。未修改的旧个人值不阻断普通 PR；改名保持的旧内容不算新增。base/head 必须是真实提交；首次导入的全零 before、缺失 ref、无共同历史或空提交区间会失败，维护者须明确首次导入范围并运行完整候选检查，不能静默跳过。
 
-`docs/` 开发记录只留本地，两种模式均禁入；`videos/` 下已有 `.md`、`.json`、`.mjs` 文本仅在 `changes` 模式的原路径修改中进入完整扫描，仍受嵌套目录、私人文件、二进制和隐私/秘密检查约束，新增、改名或复制到该目录的内容及媒体仍禁入。
+`docs/` 开发记录和 `videos/` 制作资料只留本地；.gitignore 不会自动取消旧文件跟踪，发布负责人须核对最终跟踪清单且保留本机原件。`docs/` 在两种扫描模式均禁入；`videos/` 下已有 `.md`、`.json`、`.mjs` 文本仅在 `changes` 模式的原路径修改中进入完整扫描，仍受嵌套目录、私人文件、二进制和隐私/秘密检查约束，新增、改名或复制到该目录的内容及媒体仍禁入。
 
 未提交文件用严格的 `release` 模式，不虚构 changes 提交范围。手写一个 ignored JSON 清单，`files` 列出本次准备发布的全部相对文件路径，`excluded` 明确记录未纳入的路径（可为空）：
 

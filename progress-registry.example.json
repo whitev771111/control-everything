@@ -1,5 +1,5 @@
 {
   "projects": [
-    {"id": "mianban-develop", "name": "工作面板", "root": "C:/example/control-everything"}
+    {"id": "example-project", "name": "示例项目", "root": "C:/example/project"}
   ]
 }

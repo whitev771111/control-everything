@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from session_panel.sessions import native_processes as native
 from session_panel.sessions import workbench
+from tests.fixtures.integration_config import integration_config
 
 TICKS = 134040096001304547
 
@@ -50,7 +51,7 @@ class FakeApi:
 
     def image(self, handle, flags, buffer, size):
         name = next(name for pid, parent, name in self.entries if pid == handle - 1000)
-        buffer.value = self.image_override or "D:/unknown/" + name
+        buffer.value = self.image_override or "C:/example/unknown/" + name
         size._obj.value = len(buffer.value)
         return self.image_ok
 
@@ -66,7 +67,7 @@ class FakeApi:
             pointer.parent = next(parent for pid, parent, name in self.entries if pid == handle - 1000) + self.parent_change
             returned._obj.value = self.basic_length
             return self.basic_status
-        raw = self.raw if self.raw is not None else '"D:/unknown/zellij.exe" --server marker'.encode("utf-16-le")
+        raw = self.raw if self.raw is not None else '"C:/example/unknown/zellij.exe" --server marker'.encode("utf-16-le")
         required = C.sizeof(native.UnicodeString) + len(raw) + 2
         if buffer is None:
             returned._obj.value = required if self.required_override is None else self.required_override
@@ -97,7 +98,7 @@ class NativeCensusTests(unittest.TestCase):
         rows = self.census()
         self.assertEqual({row["Name"] for row in rows}, native.NAMES)
         self.assertTrue(all(set(row) == {"ProcessId", "ParentProcessId", "Name", "ExecutablePath", "CommandLine", "CreatedUtc"} for row in rows))
-        self.assertTrue(all(row["ExecutablePath"].startswith("D:/unknown/") for row in rows))
+        self.assertTrue(all(row["ExecutablePath"].startswith("C:/example/unknown/") for row in rows))
         self.assertEqual(self.fake.kernel.OpenProcess.call_count, 4)
         self.assertEqual(self.fake.kernel.CloseHandle.call_count, 5)
         self.assertTrue(rows[0]["CreatedUtc"].endswith(".1304547Z"))
@@ -142,7 +143,7 @@ class NativeCensusTests(unittest.TestCase):
 
     def test_pid_parent_size_image_and_birth_guards(self):
         for attribute, value in [("pid_change", 1), ("parent_change", 1), ("basic_length", 0),
-                                 ("image_override", "D:/elsewhere/other.exe"), ("ticks", TICKS + 11), ("ticks", 0)]:
+                                 ("image_override", "C:/example/elsewhere/other.exe"), ("ticks", TICKS + 11), ("ticks", 0)]:
             with self.subTest(attribute=attribute):
                 self.fake = FakeApi(); setattr(self.fake, attribute, value)
                 with self.assertRaisesRegex(ValueError, "invalid_identity"):
@@ -337,19 +338,21 @@ class NativeBufferTests(unittest.TestCase):
 class NativeRunnerTests(unittest.TestCase):
     def setUp(self):
         self.runner = Mock(return_value=subprocess.CompletedProcess([], 0, "[]", ""))
-        self.workbench = workbench.Workbench(runner=self.runner, clock=lambda: 1)
+        config = integration_config()["integrations"]
+        self.workbench = workbench.Workbench(runner=self.runner, clock=lambda: 1,
+                                             config=config["workbench"], terminal_config=config["terminal"])
 
     def test_fixed_validated_base_argv_cwd_and_remaining_timeout(self):
-        with patch.object(workbench, "_native_interpreter", return_value="C:/fixed/python.exe"):
+        with patch.object(workbench, "_native_interpreter", return_value="C:/example/fixed/python.exe"):
             self.assertEqual(self.workbench._processes(3), [])
         argv = self.runner.call_args.args[0]; options = self.runner.call_args.kwargs
-        self.assertEqual(argv, ["C:/fixed/python.exe", "-X", "utf8", "-B", "-m", "session_panel.native_processes"])
+        self.assertEqual(argv, ["C:/example/fixed/python.exe", "-X", "utf8", "-B", "-m", "session_panel.native_processes"])
         self.assertEqual(options["cwd"], str(Path(__file__).resolve().parents[2]))
         self.assertEqual(options["timeout"], 2); self.assertFalse(options["shell"])
         self.assertEqual(options["creationflags"], subprocess.CREATE_NO_WINDOW)
 
     def test_expired_deadline_and_bad_interpreter_never_run(self):
-        with patch.object(workbench, "_native_interpreter", return_value="C:/fixed/python.exe"):
+        with patch.object(workbench, "_native_interpreter", return_value="C:/example/fixed/python.exe"):
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.workbench._processes(1)
         self.runner.assert_not_called()
@@ -361,23 +364,24 @@ class NativeRunnerTests(unittest.TestCase):
     def test_parent_nonzero_bad_json_and_timeout_stay_unknown(self):
         for result in [subprocess.CompletedProcess([], 1, "private", "private"), subprocess.CompletedProcess([], 0, "invalid-json", "")]:
             self.runner.return_value = result
-            with patch.object(workbench, "_native_interpreter", return_value="C:/fixed/python.exe"), self.assertRaises(ValueError):
+            with patch.object(workbench, "_native_interpreter", return_value="C:/example/fixed/python.exe"), self.assertRaises(ValueError):
                 self.workbench._processes(3)
         self.runner.side_effect = subprocess.TimeoutExpired("private", 2)
-        with patch.object(workbench, "_native_interpreter", return_value="C:/fixed/python.exe"), self.assertRaises(subprocess.TimeoutExpired):
+        with patch.object(workbench, "_native_interpreter", return_value="C:/example/fixed/python.exe"), self.assertRaises(subprocess.TimeoutExpired):
             self.workbench._processes(3)
         for failure in (subprocess.CompletedProcess([], 1, "private", "private"),
                         subprocess.CompletedProcess([], 0, "invalid-json", ""), subprocess.TimeoutExpired("private", 2)):
             def run(argv, **options):
-                if argv[0] == workbench.ZELLIJ:
-                    text = "zellij 0.45.1" if argv[-1] == "--version" else "workbench-v4 [Created 1s ago]"
+                if argv[0] == self.workbench.zellij:
+                    text = "zellij 0.45.1" if argv[-1] == "--version" else f"{self.workbench.session} [Created 1s ago]"
                     return subprocess.CompletedProcess(argv, 0, text, "")
                 if isinstance(failure, Exception):
                     raise failure
                 return failure
             self.workbench.runner = run
-            with patch.object(workbench, "_native_interpreter", return_value="C:/fixed/python.exe"), patch.object(self.workbench, "_marker_pid", return_value=10):
+            with patch.object(workbench, "_native_interpreter", return_value="C:/example/fixed/python.exe"), patch.object(self.workbench, "_marker_pid", return_value=10):
                 state = self.workbench.public_status()
+            self.assertEqual(state["reason"], "workbench_timeout" if isinstance(failure, Exception) else "workbench_observation_unknown")
             self.assertIsNone(state["gui_count"]); self.assertIsNone(state["interactive_client_count"])
             self.assertIsNone(state["unmanaged_mux_count"]); self.assertFalse(state["can_connect"]); self.assertFalse(state["can_focus"])
             self.assertNotIn("private", str(state))
@@ -394,12 +398,12 @@ class NativeRunnerTests(unittest.TestCase):
             with patch.object(workbench.sys, "_base_executable", base), patch.object(workbench, "kernel32") as api, self.assertRaises(ValueError):
                 workbench._native_interpreter()
             api.assert_not_called()
-        for image, length in [("C:/fixed/python.exe", 0), ("C:/fixed/python.exe", 32768), ("C:/fixed/python.exe", 1),
-                              ("relative.exe", None), ("C:/other/python.exe", None)]:
-            with patch.object(workbench.sys, "_base_executable", "C:/fixed/python.exe"), patch.object(workbench, "kernel32", return_value=kernel(image, length)), self.assertRaises(ValueError):
+        for image, length in [("C:/example/fixed/python.exe", 0), ("C:/example/fixed/python.exe", 32768), ("C:/example/fixed/python.exe", 1),
+                              ("relative.exe", None), ("C:/example/other/python.exe", None)]:
+            with patch.object(workbench.sys, "_base_executable", "C:/example/fixed/python.exe"), patch.object(workbench, "kernel32", return_value=kernel(image, length)), self.assertRaises(ValueError):
                 workbench._native_interpreter()
-        with patch.object(workbench.sys, "_base_executable", "C:/FIXED/python.exe"), patch.object(workbench, "kernel32", return_value=kernel("c:\\fixed\\python.exe")):
-            self.assertEqual(workbench._native_interpreter(), "C:/FIXED/python.exe")
+        with patch.object(workbench.sys, "_base_executable", "C:/example/FIXED/python.exe"), patch.object(workbench, "kernel32", return_value=kernel(r"c:\example\fixed\python.exe")):
+            self.assertEqual(workbench._native_interpreter(), "C:/example/FIXED/python.exe")
 
 
 

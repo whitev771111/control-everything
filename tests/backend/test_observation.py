@@ -1,4 +1,5 @@
 import copy
+from functools import partial
 import json
 import subprocess
 import threading
@@ -8,9 +9,21 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 from session_panel.sessions.remote_probe import read_registration
-from session_panel.sessions.service import RemoteClient, SessionService, merge_observation
-from session_panel.sessions.source import SOURCE
+from session_panel.sessions.service import RemoteClient, SessionService as RealSessionService, merge_observation as real_merge_observation
+from session_panel.sessions.source import validate_remote_payload
+from tests.fixtures.integration_config import integration_config
 from session_panel.sessions.terminal import parse_slot_command
+
+
+CONFIG = integration_config()["integrations"]
+REMOTE, TERMINAL = CONFIG["remote"], CONFIG["terminal"]
+SOURCE = REMOTE["source"]
+merge_observation = partial(real_merge_observation, source=SOURCE, terminal_config=TERMINAL, remote_config=REMOTE)
+
+
+def configured_service(remote, terminal, **kwargs):
+    remote.source, remote.config, terminal.config = copy.deepcopy(SOURCE), copy.deepcopy(REMOTE), copy.deepcopy(TERMINAL)
+    return RealSessionService(remote, terminal, source=SOURCE, **kwargs)
 
 
 MAIN = "b7ed3430-9064-4153-894d-d295a388a572"
@@ -24,8 +37,8 @@ def registration(session_id=MAIN, slot="main", pid=123, ticks="100"):
 
 
 def pane(slot="main", pane_id=2, **extra):
-    return {"id": pane_id, "is_plugin": False, "tab_name": "Work-for-Linux",
-            "terminal_command": "ssh.exe -t 192.0.2.10 bash ~/.local/share/terminal-workbench/pane.sh " + slot,
+    return {"id": pane_id, "is_plugin": False, "tab_name": TERMINAL["tab"],
+            "terminal_command": f"ssh.exe -t {SOURCE['host']} bash {TERMINAL['pane_script']} " + slot,
             **extra}
 
 
@@ -87,11 +100,11 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(third["sessions"][0]["terminal_binding"], "confirmed")
 
     def test_exact_command_only_null_plugin_and_extra_arguments_rejected(self):
-        self.assertEqual(parse_slot_command(pane()), "main")
+        self.assertEqual(parse_slot_command(pane(), TERMINAL, REMOTE), "main")
         for candidate in (pane(terminal_command=None), pane(is_plugin=True), pane(tab_name="Elsewhere"),
                           pane(terminal_command=pane()["terminal_command"] + " --resume x"),
-                          pane(terminal_command=pane()["terminal_command"].replace("192.0.2.10", "evil.example"))):
-            self.assertIsNone(parse_slot_command(candidate))
+                          pane(terminal_command=pane()["terminal_command"].replace(SOURCE["host"], "evil.example"))):
+            self.assertIsNone(parse_slot_command(candidate, TERMINAL, REMOTE))
 
     def test_source_or_terminal_failure_revokes_current_binding(self):
         first = self.merge([registration()])
@@ -162,7 +175,7 @@ class ObservationTests(unittest.TestCase):
         source, terminal = Mock(), Mock()
         source.observe_source.return_value = remote(registration())
         terminal.list_panes.return_value = {"ok": True, "panes": [pane()]}
-        service = SessionService(source, terminal, clock=clock, utc_now=lambda: "sample")
+        service = configured_service(source, terminal, clock=clock, utc_now=lambda: "sample")
         service.list_sessions()
         original = copy.deepcopy(service._snapshot)
         clock.return_value = 31
@@ -177,7 +190,7 @@ class ObservationTests(unittest.TestCase):
         terminal = Mock()
         source.observe_source.return_value = remote(registration())
         terminal.list_panes.return_value = {"ok": True, "panes": [pane()]}
-        service = SessionService(source, terminal, clock=clock, utc_now=lambda: "now")
+        service = configured_service(source, terminal, clock=clock, utc_now=lambda: "now")
         service.list_sessions()
         clock.return_value = 4
         self.assertEqual(service.list_sessions()["age_ms"], 4000)
@@ -199,16 +212,16 @@ class ObservationTests(unittest.TestCase):
             return remote(registration())
         source.observe_source.side_effect = observe
         terminal.list_panes.return_value = {"ok": True, "panes": [pane()]}
-        service = SessionService(source, terminal, clock=lambda: now[0])
+        service = configured_service(source, terminal, clock=lambda: now[0])
         self.assertEqual(service.refresh_observation()["age_ms"], 8000)
 
     def test_private_force_returns_exact_merge_inventory_and_keeps_public_cache(self):
         clock = Mock(return_value=0.0); source, terminal = Mock(), Mock()
         source.observe_source.return_value = remote(registration())
-        first = {"ok": True, "panes": [pane()], "version": "0.45.1", "session": "workbench-v4"}
+        first = {"ok": True, "panes": [pane()], "version": "0.45.1", "session": TERMINAL["session"]}
         second = {**first, "panes": [pane(pane_id=19)]}
         terminal.list_panes.side_effect = [first, second]
-        service = SessionService(source, terminal, clock=clock, utc_now=lambda: "sample")
+        service = configured_service(source, terminal, clock=clock, utc_now=lambda: "sample")
         public = service.refresh_observation(force=True)
         clock.return_value = 1
         view, inventory = service.refresh_observation(force=True, _include_inventory=True)
@@ -237,12 +250,12 @@ class ObservationTests(unittest.TestCase):
         def inventory():
             inventory_started.set()
             return {"ok": True, "panes": [pane()]}
-        def merge(*args):
+        def merge(*args, **kwargs):
             alive_at_merge.append(any(worker.is_alive() for worker in workers))
-            return merge_observation(*args)
+            return merge_observation(*args, **kwargs)
         source.observe_source.side_effect = observe
         terminal.list_panes.side_effect = inventory
-        service = SessionService(source, terminal, clock=lambda: 0, utc_now=lambda: "sample")
+        service = configured_service(source, terminal, clock=lambda: 0, utc_now=lambda: "sample")
         with patch("session_panel.sessions.service.merge_observation", side_effect=merge):
             view, panes = service.refresh_observation(force=True, _include_inventory=True)
         self.assertEqual(overlap, [True], "private reads must overlap")
@@ -262,7 +275,7 @@ class ObservationTests(unittest.TestCase):
             return remote(registration())
         source.observe_source.side_effect = observe
         terminal.list_panes.return_value = {"ok": True, "panes": [pane()]}
-        service = SessionService(source, terminal, clock=lambda: 0)
+        service = configured_service(source, terminal, clock=lambda: 0)
         def refresh():
             try: results.append(service.refresh_observation(force=True, _include_inventory=True))
             except Exception as error: errors.append(error)
@@ -289,7 +302,7 @@ class ObservationTests(unittest.TestCase):
                 source, terminal = Mock(), Mock()
                 source.observe_source.return_value = remote(registration())
                 terminal.list_panes.return_value = {"ok": True, "panes": [pane()]}
-                service = SessionService(source, terminal, clock=lambda: now[0])
+                service = configured_service(source, terminal, clock=lambda: now[0])
                 service.refresh_observation(force=True)
                 def observe():
                     workers.append(threading.current_thread()); started.set()
@@ -304,9 +317,9 @@ class ObservationTests(unittest.TestCase):
                         if mode == "inventory": raise OSError("inventory failed")
                         return {"ok": True, "panes": [pane()]}
                     finally: release.set()
-                def merge(*args):
+                def merge(*args, **kwargs):
                     alive_at_merge.append(any(worker.is_alive() for worker in workers))
-                    return merge_observation(*args)
+                    return merge_observation(*args, **kwargs)
                 source.observe_source.side_effect = observe; terminal.list_panes.side_effect = inventory
                 with patch("session_panel.sessions.service.merge_observation", side_effect=merge):
                     view, panes = service.refresh_observation(force=True, _include_inventory=True)
@@ -324,7 +337,7 @@ class ObservationTests(unittest.TestCase):
         source, terminal = Mock(), Mock()
         source.observe_source.return_value = remote(registration())
         terminal.list_panes.return_value = {"ok":True, "panes":[pane()]}
-        service = SessionService(source, terminal, clock=lambda: 1, utc_now=lambda: "sample")
+        service = configured_service(source, terminal, clock=lambda: 1, utc_now=lambda: "sample")
         service.refresh_observation()
         with self.assertRaisesRegex(ValueError, "fresh inventory requires force"):
             service.refresh_observation(_include_inventory=True)
@@ -337,7 +350,7 @@ class ObservationTests(unittest.TestCase):
         good = {"ok":True,"panes":[pane()]}
         failure = {"ok":False,"reason":"terminal_version_mismatch","exit_code":9}
         terminal.list_panes.side_effect = [good, failure]
-        service = SessionService(source, terminal, clock=lambda: 1, utc_now=lambda: "sample")
+        service = configured_service(source, terminal, clock=lambda: 1, utc_now=lambda: "sample")
         service.refresh_observation(force=True)
         view, inventory = service.refresh_observation(force=True, _include_inventory=True)
         self.assertIs(inventory, failure); self.assertEqual(inventory["exit_code"], 9)
@@ -352,7 +365,7 @@ class ObservationTests(unittest.TestCase):
                 source, terminal = Mock(), Mock()
                 source.observe_source.return_value = remote(registration())
                 terminal.list_panes.return_value = {"ok":True,"panes":[pane()]}
-                service = SessionService(source, terminal, clock=lambda: 1, utc_now=lambda: "sample")
+                service = configured_service(source, terminal, clock=lambda: 1, utc_now=lambda: "sample")
                 service.refresh_observation(force=True)
                 target = source.observe_source if failed=="remote" else terminal.list_panes
                 target.side_effect = RuntimeError("unavailable")
@@ -369,7 +382,7 @@ class ObservationTests(unittest.TestCase):
         def observe(): now[0] += .781; return remote(registration())
         def inventory(): now[0] += .423; return {"ok":True,"panes":[pane()]}
         source.observe_source.side_effect = observe; terminal.list_panes.side_effect = inventory
-        service = SessionService(source, terminal, clock=lambda:now[0], utc_now=lambda:"sample")
+        service = configured_service(source, terminal, clock=lambda:now[0], utc_now=lambda:"sample")
         view, panes = service.refresh_observation(force=True, _include_inventory=True)
         self.assertTrue(panes["ok"])
         self.assertGreaterEqual(view["age_ms"], 1203); self.assertLessEqual(view["age_ms"], 1204)
@@ -379,12 +392,12 @@ class ObservationTests(unittest.TestCase):
 
     def test_ssh_argv_bootstrap_and_filtered_failures(self):
         runner = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps(remote(registration())), ""))
-        client = RemoteClient(runner)
+        client = RemoteClient(runner, config=REMOTE)
         self.assertTrue(client.observe_source()["ok"])
         argv = runner.call_args.args[0]
         self.assertIn("StrictHostKeyChecking=yes", argv)
         self.assertIn("BatchMode=yes", argv)
-        self.assertEqual(argv[-2:], [SOURCE["host"], "python3 - observe"])
+        self.assertEqual(argv[-2:], [SOURCE["host"], "python3 -"])
         compile(runner.call_args.kwargs["input"], "stdin-probe", "exec")
         runner.return_value = subprocess.CompletedProcess([], 255, "", "private error")
         self.assertNotIn("private", json.dumps(client.observe_source()))
@@ -405,24 +418,85 @@ class RemoteSourceLayoutTests(unittest.TestCase):
         import sys
 
         runner = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps({"source": SOURCE}), ""))
-        RemoteClient(runner).observe_source()
+        RemoteClient(runner, config=REMOTE).observe_source()
         script = runner.call_args.kwargs["input"]
-        namespace = {"__name__": "offline_probe"}
-        with patch.dict(sys.modules):
-            for name in list(sys.modules):
-                if name == "session_panel" or name.startswith("session_panel."):
-                    del sys.modules[name]
-            exec(compile(script, "offline-probe", "exec"), namespace)
-            package = sys.modules["session_panel"]
-            sessions = sys.modules["session_panel.sessions"]
-            source = sys.modules["session_panel.sessions.source"]
-            self.assertIs(package.sessions, sessions)
-            self.assertIs(sessions.source, source)
-            self.assertEqual(package.__path__, [])
-            self.assertEqual(sessions.__path__, [])
-            self.assertIs(namespace["SOURCE"], source.SOURCE)
-            self.assertTrue(callable(namespace["observe_source"]))
+        prefix, entry = script.rsplit("\nimport base64\n", 1)
+        # A fresh interpreter has no importable local package; the bootstrap supplies it.
+        fixture = "\nobserve_source = lambda: {'ok': True, 'source': SOURCE}\n"
+        result = subprocess.run([sys.executable, "-I", "-X", "utf8", "-c", prefix + fixture + "\nimport base64\n" + entry],
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"ok": True, "source": SOURCE})
+        self.assertNotIn("session_panel.profiles", script)
         runner.assert_called_once()
+
+    def test_unconfigured_and_disabled_client_never_runs(self):
+        runner = Mock()
+        for config in (None, {**REMOTE, "enabled": False}):
+            client = RemoteClient(runner, config=config)
+            self.assertEqual(client.observe_source()["reason"], "not_configured")
+            self.assertEqual(client.read_messages(MAIN)["reason"], "not_configured")
+        runner.assert_not_called()
+
+    def test_two_client_sources_are_isolated_and_copied(self):
+        one, two = copy.deepcopy(REMOTE), copy.deepcopy(REMOTE)
+        two["source"].update(id="second-source", host="other.invalid")
+        runners = [Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps({"source": cfg["source"]}), ""))
+                   for cfg in (one, two)]
+        first, second = [RemoteClient(run, config=cfg) for run, cfg in zip(runners, (one, two))]
+        one["source"]["host"] = "mutated.invalid"
+        self.assertEqual(first.observe_source()["source"], SOURCE)
+        self.assertEqual(second.observe_source()["source"], two["source"])
+        self.assertEqual(runners[0].call_args.args[0][-2], SOURCE["host"])
+        self.assertEqual(runners[1].call_args.args[0][-2], "other.invalid")
+        first_service, second_service = RealSessionService(first), RealSessionService(second)
+        self.assertNotEqual(first_service.source, second_service.source)
+        self.assertIsNot(first_service.source, first.source)
+
+    def test_invalid_host_path_version_and_transport_shape_are_rejected(self):
+        payload = RemoteClient(config=REMOTE)._payload("observe", None)
+        cases = []
+        for host in ("-option", "host;echo", "host name", "host\nname", "中文"):
+            candidate = copy.deepcopy(payload); candidate["source"]["host"] = host; cases.append(candidate)
+        for path in ("relative", "/home/example/../other", "/home/example/./other", "//home/example"):
+            candidate = copy.deepcopy(payload); candidate["home"] = path; cases.append(candidate)
+        for version in ("bad", None, True):
+            candidate = copy.deepcopy(payload); candidate["reader_mcp_version"] = version; cases.append(candidate)
+        cases += [{}, {**payload, "extra": 1}, {**payload, "mode": "exec"}, {**payload, "request": {}}]
+        for candidate in cases:
+            with self.subTest(candidate=candidate), self.assertRaises(ValueError):
+                validate_remote_payload(candidate)
+
+    def test_opaque_unicode_and_quotes_remain_encoded_data(self):
+        import sys
+        config = copy.deepcopy(REMOTE)
+        config["source"]["id"] = "名字@source:/path/quote'\";__import__('os')"
+        config["home"] = "/home/名字'quoted"
+        config["reader_python"] = "/home/example/reader folder/python'quoted"
+        runner = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps({"source": config["source"]}), ""))
+        client = RemoteClient(runner, config=config)
+        client.observe_source()
+        script = runner.call_args.kwargs["input"]
+        prefix, entry = script.rsplit("\nimport base64\n", 1)
+        fixture = "\nobserve_source = lambda: {'ok': True, 'source': SOURCE, 'home': HOME}\n"
+        result = subprocess.run([sys.executable, "-I", "-X", "utf8", "-c", prefix + fixture + "\nimport base64\n" + entry],
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["home"], config["home"])
+        self.assertNotIn(config["source"]["id"], script)
+        client.read_messages(MAIN)
+        self.assertEqual(runner.call_args.args[0][-1], __import__("shlex").quote(config["reader_python"]) + " -")
+
+    def test_mismatched_source_is_not_accepted(self):
+        runner = Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps({"source": {**SOURCE, "user": "other"}}), ""))
+        self.assertEqual(RemoteClient(runner, config=REMOTE).observe_source()["reason"], "source_unavailable")
+
+    def test_merge_does_not_reuse_another_source_snapshot(self):
+        previous = merge_observation(remote(registration()), {"ok": True, "panes": [pane()]}, {}, "first")
+        other = {**SOURCE, "id": "other-source"}
+        result = real_merge_observation({"ok": False, "reason": "source_unavailable"}, {"ok": False},
+                                        previous, "later", source=other)
+        self.assertEqual(result["sessions"], [])
 
 
 if __name__ == "__main__":

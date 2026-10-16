@@ -1,6 +1,7 @@
 """Loopback HTTP surface for one shared SessionService."""
 
 import json
+import copy
 import argparse
 import re
 import secrets
@@ -14,10 +15,10 @@ from pathlib import Path
 from session_panel.paths import REPOSITORY_ROOT
 from urllib.parse import parse_qs, urlsplit
 
-from session_panel.sessions.source import HOST, PORT, SOURCE, canonical_uuid
+from session_panel.sessions.source import HOST, PORT, canonical_uuid
 from session_panel.sessions.codex_index import list_threads as list_codex_threads
 from session_panel.workspace.progress import MANUAL, REGISTRY, TODOS, add_todo, board, set_progress, toggle_todo, load_todos
-from session_panel.integrations.launchers import catalog, start
+from session_panel.integrations.launchers import LauncherCatalog, catalog, start
 from session_panel.integrations.desk import headlines, pulse
 from session_panel.workspace.service import WorkspaceService
 from session_panel.workspace.store import WorkspaceError
@@ -31,7 +32,25 @@ EXECUTION_ACTION_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)/(can
 PROFILE_POST = {"/api/profile/settings", "/api/profile/import", "/api/workspace/projects/save",
                 "/api/workspace/projects/restore", "/api/workspace/progress"}
 PROFILE_CAPABILITIES = {"profile": True, "project_management": True, "execution": False,
-                        "personal_launchers": False, "remote_sessions": False, "quota": True, "news": True}
+                        "personal_launchers": False, "remote_sessions": False, "terminal": False, "workbench": False,
+                        "quota": True, "news": True}
+
+
+def optional_capabilities(route, method):
+    """Map only published optional routes; unknown paths remain ordinary 404s."""
+    if route == "/api/launch":
+        return ("personal_launchers",)
+    if method == "GET" and route == "/api/sessions":
+        return ("remote_sessions",)
+    if method == "GET" and route == "/api/workbench" or method == "POST" and route == "/api/workbench/connect":
+        return ("workbench",)
+    match = SESSION_ROUTE.fullmatch(route)
+    if match:
+        if method == "POST" and match[2] == "focus":
+            return ("terminal", "workbench")
+        if method == "GET" and match[2] in (None, "messages"):
+            return ("remote_sessions",)
+    return None
 
 
 class BodyTooLarge(ValueError):
@@ -124,7 +143,7 @@ class PanelHandler(BaseHTTPRequestHandler):
 
     def reject(self, status, reason):
         self._discard_rejected_post_body()
-        self.reply(status, {"status": "unknown", "reason": reason, "source": SOURCE,
+        self.reply(status, {"status": "unknown", "reason": reason, "source": self.server.__dict__.get("source"),
                             "observed_at": datetime.now(timezone.utc).isoformat()})
 
     def _discard_rejected_post_body(self):
@@ -215,7 +234,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.path == "/api/desk":
                 if path.query:
                     raise ValueError("invalid_query")
-                return self.reply(200, {"launchers": catalog(), "pulse": pulse(), "news": headlines(), "todos": load_todos(TODOS)})
+                return self.reply(200, {"launchers": self.server.launchers.catalog() if self.server.launchers is not None else catalog(), "pulse": pulse(), "news": headlines(), "todos": load_todos(TODOS)})
             if path.path == "/api/codex/threads":
                 result = list_codex_threads(codex_offset(path.query))
                 return self.reply(200 if result["available"] else 503, result)
@@ -293,11 +312,17 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return self.reject(400, "invalid_request")
             try:
                 body = self.read_json_body()
-                if set(body) != {"id"} or not isinstance(body["id"], str) or not start(body["id"]):
+                if set(body) != {"id"} or not isinstance(body["id"], str):
                     raise ValueError("invalid_body")
+                launched = self.server.launchers.start(body["id"]) if self.server.launchers is not None else start(body["id"])
+                if not launched:
+                    reason = self.server.launchers.last_error if self.server.launchers is not None else None
+                    known = {"unknown_launcher", "not_configured", "unsupported_platform", "missing", "launch_failed",
+                             "unsafe_batch_path", "unsupported_target_type", "invalid_target"}
+                    return self.reject(400, reason if reason in known else "invalid_request")
             except (ValueError, UnicodeDecodeError, OSError):
                 return self.reject(400, "invalid_request")
-            return self.reply(200, {"launchers": catalog()})
+            return self.reply(200, {"launchers": self.server.launchers.catalog() if self.server.launchers is not None else catalog()})
         if path.path in {"/api/todos", "/api/todos/toggle"}:
             if path.query:
                 return self.reject(400, "invalid_request")
@@ -466,7 +491,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             reason = reason if reason in {"store_busy", "storage_error"} else "storage_error"
             extra = {}
         self._discard_rejected_post_body()
-        self.reply(status, {"status": "unknown", "reason": reason, "source": SOURCE,
+        self.reply(status, {"status": "unknown", "reason": reason, "source": self.server.__dict__.get("source"),
                             "observed_at": datetime.now(timezone.utc).isoformat(), **extra})
 
     def profile_get(self, path):
@@ -475,11 +500,11 @@ class PanelHandler(BaseHTTPRequestHandler):
         if route == "/api/bootstrap":
             if path.query:
                 raise ValueError("invalid_query")
-            self.reply(200, {"csrf_token": self.server.csrf_token, "app": APP, "capabilities": PROFILE_CAPABILITIES})
+            self.reply(200, {"csrf_token": self.server.csrf_token, "app": APP, "capabilities": self.server.capabilities})
         elif route == "/api/profile":
             if path.query:
                 raise ValueError("invalid_query")
-            self.reply(200, profile.public())
+            self.reply(200, profile.public(startup_integrations=self.server.startup_integrations))
         elif route == "/api/progress":
             if path.query:
                 raise ValueError("invalid_query")
@@ -488,7 +513,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.query:
                 raise ValueError("invalid_query")
             todos = profile.store.list_todos()
-            self.reply(200, {"launchers": [], "pulse": [], "personal_launchers_unavailable": True,
+            self.reply(200, {"launchers": self.server.launchers.catalog() if self.server.launchers is not None else [],
+                             "pulse": [], "personal_launchers_unavailable": not self.server.capabilities["personal_launchers"],
                              "pulse_unavailable": True, "news": headlines(), "todos": todos["items"], "todos_total": todos["total"]})
         elif route == "/api/codex/threads":
             value = profile.codex_threads(codex_offset(path.query))
@@ -515,7 +541,9 @@ class PanelHandler(BaseHTTPRequestHandler):
             if params.get("kind", "projects") not in ("projects", "manual", "todos"):
                 raise ValueError("invalid_query")
             self.reply(200, profile.store.compatibility(**params))
-        elif route.startswith("/api/sessions") or route.startswith("/api/workbench") or route == "/api/launch":
+        elif optional_capabilities(route, "GET") is not None:
+            if all(self.server.capabilities[name] for name in optional_capabilities(route, "GET")):
+                return False
             self.reject(503, "capability_unavailable")
         else:
             return False
@@ -523,8 +551,10 @@ class PanelHandler(BaseHTTPRequestHandler):
 
     def profile_post(self, path):
         route, profile = path.path, self.profile()
-        disabled = route.startswith("/api/sessions") or route.startswith("/api/workbench") or route == "/api/launch"
-        if disabled:
+        required = optional_capabilities(route, "POST")
+        if required is not None:
+            if all(self.server.capabilities[name] for name in required):
+                return False
             self.reject(503, "capability_unavailable")
             return True
         legacy = route in ("/api/progress/set", "/api/todos", "/api/todos/toggle")
@@ -537,6 +567,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             body = self.read_json_body(max_bytes=16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
             if route == "/api/profile/settings":
                 value = profile.settings(body)
+                value["restart_required"] = self.server.startup_integrations is not None and profile.integrations() != self.server.startup_integrations
             elif route == "/api/profile/import":
                 if set(body) != {"source_dir"}:
                     raise ProfileError("invalid_import", "source_dir")
@@ -578,7 +609,8 @@ class PanelServer(ThreadingHTTPServer):
         super().server_bind()
 
 
-def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None, profile=None):
+def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None, profile=None,
+                launchers=None, capabilities=None, startup_integrations=None, source=None):
     # The address injection exists for temporary fixture tests. Production is fixed.
     if address[0] != HOST:
         raise ValueError("loopback_only")
@@ -594,6 +626,11 @@ def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None
     server.execution = execution
     server.execution_reason = None
     server.profile = profile
+    server.launchers = launchers
+    server.capabilities = copy.deepcopy(capabilities if capabilities is not None else PROFILE_CAPABILITIES if profile is not None else None)
+    server.startup_integrations = copy.deepcopy(startup_integrations)
+    service_source = getattr(service, "source", None)
+    server.source = copy.deepcopy(source if source is not None else service_source if isinstance(service_source, dict) else None)
     server.expected_host = f"{HOST}:{server.server_address[1]}"
     server.origin = f"http://{server.expected_host}"
     server.csrf_token = secrets.token_urlsafe(32)
@@ -603,7 +640,24 @@ def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None
 def build_profile_server(data_dir=None, port=8766, *, quota_source=None, news_source=None):
     profile = Profile.open(data_dir)
     workspace = WorkspaceService(profile=profile, quota_source=quota_source, news_source=news_source)
-    return make_server(None, (HOST, port), workspace=workspace, profile=profile)
+    integrations = profile.integrations()
+    enabled = {name: value is not None and value["enabled"] for name, value in integrations.items()}
+    service, launchers = None, None
+    if enabled["remote"]:
+        from session_panel.sessions.service import RemoteClient, SessionService
+        from session_panel.sessions.terminal import Terminal
+        from session_panel.sessions.workbench import Workbench
+        workbench = Workbench(config=integrations["workbench"], terminal_config=integrations["terminal"]) if enabled["workbench"] else None
+        terminal = Terminal(config=integrations["terminal"], remote_config=integrations["remote"], workbench=workbench)
+        remote = RemoteClient(config=integrations["remote"])
+        service = SessionService(remote=remote, terminal=terminal)
+    if enabled["launchers"]:
+        launchers = LauncherCatalog(integrations["launchers"])
+    capabilities = {**PROFILE_CAPABILITIES, "remote_sessions": enabled["remote"],
+                    "terminal": enabled["terminal"], "workbench": enabled["workbench"],
+                    "personal_launchers": enabled["launchers"]}
+    return make_server(service, (HOST, port), workspace=workspace, profile=profile,
+                       launchers=launchers, capabilities=capabilities, startup_integrations=integrations)
 
 
 def serve(data_dir=None, port=8766):

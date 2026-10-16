@@ -9,15 +9,15 @@ from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHand
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from session_panel.sessions.source import SOURCE, canonical_uuid
+from session_panel.sessions.source import canonical_uuid
 
 GATEWAY = "http://127.0.0.1:8766"
-INSTRUCTIONS = "固定查询 " + SOURCE["user"] + "@" + SOURCE["host"] + " 的 Claude 会话，与网页共用一个索引。unknown 表示证据不足，不表示完成。消息仅按明确选中的 UUID 读取私人对话，最多50条、512KiB；不会发送、审批、resume、终止或定位终端。网关须单独运行。"
+INSTRUCTIONS = "查询当前网关已配置的 Claude 会话来源，与网页共用索引。unknown 表示证据不足，不表示完成。消息仅按明确选中的 UUID 读取私人对话，最多50条、512KiB；不会发送、审批、resume、终止或定位终端。网关须单独运行。"
 
 
 def unavailable(reason):
     return {"status": "unknown", "available": False, "reason": reason,
-            "source": SOURCE, "observed_at": datetime.now(timezone.utc).isoformat()}
+            "source": None, "observed_at": datetime.now(timezone.utc).isoformat()}
 
 
 class NoRedirect(HTTPRedirectHandler):

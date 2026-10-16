@@ -1,4 +1,4 @@
-"""Fixed local Codex identity metadata, never transcript or live task status."""
+"""Explicit local Codex identity metadata, never transcript or live task status."""
 
 import sqlite3
 from datetime import datetime, timezone
@@ -6,7 +6,6 @@ from pathlib import Path
 
 from session_panel.sessions.source import canonical_uuid
 
-CODEX_DB = Path("C:/example/private-69202ba3.sqlite")
 LIMIT = 12
 KINDS = ("cli", "exec", "vscode")
 COVERAGE_KEYS = ("total_count", "archived_count", "excluded_subagent_count", "excluded_other_source_count")
@@ -24,10 +23,12 @@ def utc_timestamp(value):
     return datetime.fromtimestamp(value, timezone.utc).isoformat()
 
 
-def list_threads(offset=0, db_path=CODEX_DB):
-    # Profiles pass their explicit path; legacy fixtures retain the old default.
+def list_threads(offset=0, db_path=None):
+    # An absent source must never inspect an author-specific database.
     if type(offset) is not int or not 0 <= offset <= 999999999:
         raise ValueError("invalid_offset")
+    if db_path is None:
+        return unavailable(offset)
     try:
         path = Path(db_path).resolve()
         if not path.is_file():

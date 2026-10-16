@@ -18,7 +18,7 @@ class ProfileStartupTests(unittest.TestCase):
             self.assertIsNone(server.execution)
             self.assertNotIn("garden", server.__dict__)
             self.assertEqual(server.profile.data_dir, Path(directory).resolve())
-            self.assertEqual(set(path.name for path in Path(directory).iterdir()), {"profile.json", "workspace-state.sqlite3"})
+            self.assertEqual(set(path.name for path in Path(directory).iterdir()), {"profile.json", "workspace-state.sqlite3", ".profile.lock"})
 
     def test_cli_exact_port_and_data_arguments(self):
         with patch.object(gateway, "serve", return_value=0) as serve:

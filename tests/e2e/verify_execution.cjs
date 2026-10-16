@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { chromium } = require('C:/example/user/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const { chromium } = require('playwright');
 if (process.argv.length !== 3 || process.argv[2] !== '--fixture') throw new Error('Explicit --fixture is required; no real API is supported.');
 const root = path.resolve(__dirname, '../..'), outputDir = path.join(root, 'work/agent-execution-20261013');
 assert.ok(outputDir.startsWith(path.join(root, 'work', 'agent-execution-20261013')));
@@ -14,7 +14,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
 const report = { command: `${process.execPath} ${process.argv.slice(1).join(' ')}`, owner: 'root/coordinator executing harness', started_at: new Date().toISOString(), fixture_only: true, real_api_used: false, scope: 'Synthetic browser behavior, not actual Agent execution', cases: [], failures: [], requests: [], blocked: [], screenshots: [] };
 let browser;
 function makeRun(overrides = {}) {
-  return { id: randomUUID(), request_id: randomUUID(), task_id: taskId, task_title: 'Fixture · Codex 任务', project_id: 'alpha', project_name: 'Fixture · Alpha', cwd: 'E:\\fixture\\alpha', mode: 'workspace-write', state: 'running', reason: null, thread_id: 'native-thread-fixture', turn_id: 'native-turn-fixture', model: 'fixture-model', cancel_requested: false, cleanup_state: 'pending', token_usage: null, token_observed_at: null, created_at: now, updated_at: now, ended_at: null, prompt: 'Fixture prompt', effective_policy: { mode: 'workspace-write', network_access: false }, ...overrides };
+  return { id: randomUUID(), request_id: randomUUID(), task_id: taskId, task_title: 'Fixture · Codex 任务', project_id: 'alpha', project_name: 'Fixture · Alpha', cwd: 'C:/example/fixture\\alpha', mode: 'workspace-write', state: 'running', reason: null, thread_id: 'native-thread-fixture', turn_id: 'native-turn-fixture', model: 'fixture-model', cancel_requested: false, cleanup_state: 'pending', token_usage: null, token_observed_at: null, created_at: now, updated_at: now, ended_at: null, prompt: 'Fixture prompt', effective_policy: { mode: 'workspace-write', network_access: false }, ...overrides };
 }
 function fixtures() {
   const tasks = [{ id: taskId, title: 'Fixture · 检查工作目录', project_id: 'alpha', provider_id: 'codex', state: 'todo', session_key: null }, { id: randomUUID(), title: 'Fixture · 其他工具任务', project_id: 'beta', provider_id: 'claude', state: 'todo', session_key: null }];
@@ -22,7 +22,7 @@ function fixtures() {
     snapshot: { status: 'ok', today: '2026-10-13', sampled_at: now, projects: { status: 'available', items: [{ id: 'alpha', name: 'Fixture · Alpha', percent: null, manual_recorded: false, records: [], records_available: true }, { id: 'beta', name: 'Fixture · Beta', percent: null, manual_recorded: false, records: [], records_available: true }] }, tasks: { status: 'available', items: tasks, total: 2, limit: 500 }, todos: { status: 'available', items: [] }, providers: ['codex', 'claude'].map(id => ({ id, name: id === 'codex' ? 'Codex' : 'Claude Code', discovery: { status: 'found' }, capabilities: { observe_sessions: true, read_quota: id === 'codex' }, observation_note: 'Fixture capability', entrypoints: [] })), sessions: { available: true, items: [], total_visible: 0, limit: 12, sampled_at: now } },
     usage: { status: 'ok', codex: { status: 'not_checked', buckets: [], reason: null }, manual_records: [], manual_status: 'available', manual_total: 0, manual_limit: 100 }, news: { status: 'available', items: [], sources: [], sampled_at: now },
     capability: { implemented: true, available: true, reason: null, is_owner: true, max_active: 2 },
-    context: { task: { id: taskId, title: 'Fixture · 检查工作目录' }, project: { id: 'alpha', name: 'Fixture · Alpha', cwd: 'E:\\fixture\\alpha\\真实规范目录' }, context_hash: 'fixture-hash-1', policy: { mode: 'workspace-write', approval_policy: 'on-request', approvals_reviewer: 'user', network_access: false, writable_roots: [], inheritance_note: '本机独立 MCP 与 managed 设置可能继承；外部工具有独立权限边界。' } },
+    context: { task: { id: taskId, title: 'Fixture · 检查工作目录' }, project: { id: 'alpha', name: 'Fixture · Alpha', cwd: 'C:/example/fixture\\alpha\\真实规范目录' }, context_hash: 'fixture-hash-1', policy: { mode: 'workspace-write', approval_policy: 'on-request', approvals_reviewer: 'user', network_access: false, writable_roots: [], inheritance_note: '本机独立 MCP 与 managed 设置可能继承；外部工具有独立权限边界。' } },
     runs: [], approvals: {}, events: {}, postMode: 'success', lookupMode: 'normal', contextMode: 'normal', gap: false, holdPost: null, holdDetail: null, heldId: null, contextCalls: 0, listFail: false, actionFail: false,
   };
 }
@@ -176,8 +176,8 @@ async function main() {
     check('reload has no automatic POST or original-body retry', posts(result).length === 1 && await page.locator('#execution-retry').isHidden());
   });
   for (const width of [1440, 390, 360]) await scenario(`two runs, approvals and text safety ${width}`, async (page, fixture, check, result) => {
-    const a = makeRun({ state: 'waiting_approval', task_title: 'Fixture · Alpha 等待审批', cwd: 'E:\\fixture\\' + '长目录'.repeat(60), token_usage: { total: { input_tokens: 120, output_tokens: 30, total_tokens: 150 }, last: null, source: 'codex_app_server' }, token_observed_at: now });
-    const b = makeRun({ task_title: 'Fixture · Beta 独立运行', project_id: 'beta', project_name: 'Beta', cwd: 'E:\\fixture\\beta' });
+    const a = makeRun({ state: 'waiting_approval', task_title: 'Fixture · Alpha 等待审批', cwd: 'C:/example/fixture\\' + '长目录'.repeat(60), token_usage: { total: { input_tokens: 120, output_tokens: 30, total_tokens: 150 }, last: null, source: 'codex_app_server' }, token_observed_at: now });
+    const b = makeRun({ task_title: 'Fixture · Beta 独立运行', project_id: 'beta', project_name: 'Beta', cwd: 'C:/example/fixture\\beta' });
     fixture.runs = [a, b];
     const complete = { id: randomUUID(), kind: 'command', detail: { command: 'echo <img src=x onerror=alert(1)>', cwd: a.cwd, reason: 'Fixture', scope_verified: true }, detail_complete: true, status: 'pending', decision: null, can_accept: true };
     const incomplete = { id: randomUUID(), kind: 'file_change', detail: { changes: [{ path: 'very-long.txt', diff: '+ ' + 'x'.repeat(2000) }] }, detail_complete: false, status: 'pending', decision: null, can_accept: false };

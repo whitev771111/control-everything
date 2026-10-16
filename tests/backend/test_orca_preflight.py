@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import importlib.util
+import ipaddress
 import io
 import json
 import os
@@ -22,7 +23,7 @@ SPEC.loader.exec_module(preflight)
 
 
 def candidate():
-    root = "C:\\orca-p1-fixture"
+    root = "C:/example/orca-p1-fixture"
     return {
         "target": "win32-x64", "route": "direct-node-entry",
         "argv": ["--bind", "127.0.0.1", "--port", "0", "--json", "--no-pairing"],
@@ -256,8 +257,8 @@ class OrcaPreflightTests(unittest.TestCase):
         for argv in ([], ["--materials"], ["--unknown", "secret"],
                      ["--materials", str(self.root), "--materials", str(self.root)],
                      ["--materials", "relative"], ["--materials", "C:relative"],
-                     ["--materials", "\\\\server\\share"], ["--materials", "\\\\?\\C:\\fixture"],
-                     ["--materials", "\\\\.\\C:\\fixture"], ["--materials", "//server/share"],
+                     ["--materials", "\\\\server\\share"], ["--materials", r"\\?\C:\example\fixture"],
+                     ["--materials", r"\\.\C:\example\fixture"], ["--materials", "//server/share"],
                      ["--materials", "bad\0path"], ["--materials", str(self.root / "absent")]):
             with self.subTest(argv=argv), patch.object(Path, "open", side_effect=AssertionError("no materials")):
                 code, report, _, _ = self.run_main(argv)
@@ -361,7 +362,8 @@ class OrcaPreflightTests(unittest.TestCase):
         invalid += [["--bind", "--port", "0", "--json", "--no-pairing"],
                     ["--bind=127.0.0.1", "--port", "0", "--json", "--no-pairing"],
                     good + ["--help"], ["orca", "serve"], [" ".join(good)]]
-        for address in ("0.0.0.0", "localhost", "::1", "127.0.0.1 "):
+        # Keep the all-interfaces bind rejection distinct from other invalid hosts.
+        for address in (str(ipaddress.IPv4Address(0)), "localhost", "::1", "127.0.0.1 "):
             changed = good.copy()
             changed[1] = address
             invalid.append(changed)
@@ -399,31 +401,31 @@ class OrcaPreflightTests(unittest.TestCase):
             value["environment"]["values"][key] = "secret"
             with self.assertRaises(preflight.InputInvalid):
                 preflight.parse_candidate(json.dumps(value).encode())
-        for bad in ("\\\\host\\share\\profile", "\\\\?\\C:\\fixture", "C:relative", "profile",
-                    "C:\\orca-p1-fixture\\p:stream", "C:\\orca-p1-fixture\\NUL.txt",
-                    "C:\\orca-p1-fixture\\COM1", "C:\\orca-p1-fixture\\..\\p",
-                    "C:\\orca-p1-fixture\\.\\p", "C:\\orca-p1-fixture\\profile.",
-                    "C:\\orca-p1-fixture\\profile ", "C:\\orca-p1-fixture-other\\profile",
-                    "C:\\orca-p1-fixture\\%TOKEN%", "C:\\orca-p1-fixture\\$TOKEN",
-                    "C:\\orca-p1-fixture\\p\0", "C:\\orca-p1-fixture\\p\n", "C:\\orca-p1-fixture"):
+        for bad in ("\\\\host\\share\\profile", r"\\?\C:\example\fixture", "C:relative", "profile",
+                    "C:/example/orca-p1-fixture\\p:stream", "C:/example/orca-p1-fixture\\NUL.txt",
+                    "C:/example/orca-p1-fixture\\COM1", "C:/example/orca-p1-fixture\\..\\p",
+                    "C:/example/orca-p1-fixture\\.\\p", "C:/example/orca-p1-fixture\\profile.",
+                    "C:/example/orca-p1-fixture\\profile ", "C:/example/orca-p1-fixture-other\\profile",
+                    "C:/example/orca-p1-fixture\\%TOKEN%", "C:/example/orca-p1-fixture\\$TOKEN",
+                    "C:/example/orca-p1-fixture\\p\0", "C:/example/orca-p1-fixture\\p\n", "C:/example/orca-p1-fixture"):
             with self.subTest(path=bad):
                 value = candidate()
                 value["environment"]["values"]["ORCA_USER_DATA"] = bad
                 self.assertEqual(preflight.check_candidate(value)[1]["status"], "mismatch")
-        for key, new in (("inherit", True), ("source", "host"), ("root", "C:\\")):
+        for key, new in (("inherit", True), ("source", "host"), ("root", "C:/")):
             value = candidate()
             value["environment"][key] = new
             self.assertEqual(preflight.check_candidate(value)[1]["status"], "mismatch")
-        for key, new in (("HOME", "C:\\orca-p1-fixture\\different"),
-                         ("TMP", "C:\\orca-p1-fixture\\different"),
-                         ("ORCA_USER_DATA", "C:\\orca-p1-fixture\\home"),
-                         ("ORCA_USER_DATA", "C:\\orca-p1-fixture\\home\\nested")):
+        for key, new in (("HOME", "C:/example/orca-p1-fixture\\different"),
+                         ("TMP", "C:/example/orca-p1-fixture\\different"),
+                         ("ORCA_USER_DATA", "C:/example/orca-p1-fixture\\home"),
+                         ("ORCA_USER_DATA", "C:/example/orca-p1-fixture\\home\\nested")):
             value = candidate()
             value["environment"]["values"][key] = new
             self.assertEqual(preflight.check_candidate(value)[1]["status"], "mismatch")
         value = candidate()
-        value["environment"]["root"] = "c:/合成 工作台"
-        value["environment"]["values"] = {key: path.replace("C:\\orca-p1-fixture", "C:\\合成 工作台")
+        value["environment"]["root"] = "c:/example/合成 工作台"
+        value["environment"]["values"] = {key: path.replace("C:/example/orca-p1-fixture", "C:/example/合成 工作台")
                                                    for key, path in value["environment"]["values"].items()}
         self.assertEqual(preflight.check_candidate(value)[1]["status"], "matched")
 

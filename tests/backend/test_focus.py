@@ -5,16 +5,22 @@ import threading
 import unittest
 from unittest.mock import Mock
 
-from session_panel.sessions.source import ZELLIJ, ZELLIJ_SESSION
+from tests.fixtures.integration_config import integration_config
 from session_panel.sessions.service import SessionService
-from session_panel.sessions.terminal import Terminal, _focus_candidates, parse_clients
+from session_panel.sessions.terminal import Terminal, _focus_candidates, parse_clients, parse_slot_command
 from tests.backend.test_gateway import SESSION_ID
 from tests.backend.test_observation import registration, remote
 
 
+CONFIG = integration_config()["integrations"]
+TERMINAL = CONFIG["terminal"]
+REMOTE = CONFIG["remote"]
+ZELLIJ, ZELLIJ_SESSION = TERMINAL["zellij"], TERMINAL["session"]
+
+
 def pane(pane_id=2, slot="main", **changes):
-    return {"id": pane_id, "is_plugin": False, "tab_name": "Work-for-Linux",
-            "terminal_command": f"ssh.exe -t 192.0.2.10 bash ~/.local/share/terminal-workbench/pane.sh {slot}", **changes}
+    return {"id": pane_id, "is_plugin": False, "tab_name": TERMINAL["tab"],
+            "terminal_command": f"ssh.exe -t {REMOTE['source']['host']} bash {TERMINAL['pane_script']} {slot}", **changes}
 
 
 class FakeWorkbench:
@@ -54,7 +60,7 @@ class FocusTests(unittest.TestCase):
             return value
         self.service.refresh_observation.side_effect = refresh
         self.workbench = FakeWorkbench(self)
-        self.terminal = Terminal(runner=self.run_command, clock=lambda: self.now, workbench=self.workbench)
+        self.terminal = Terminal(runner=self.run_command, clock=lambda: self.now, workbench=self.workbench, config=TERMINAL, remote_config=REMOTE)
 
     def run_command(self, argv, **kwargs):
         self.calls.append(argv)
@@ -346,6 +352,8 @@ class FocusFallbackTests(unittest.TestCase):
                     self.now += .922 if self.workbench.observations == 0 else (.734 if self.workbench.observations == 1 else .657)
                     return original_observe(deadline)
                 source = Mock()
+                source.source = copy.deepcopy(REMOTE["source"])
+                source.config = copy.deepcopy(REMOTE)
                 def source_observe():
                     self.now += .781
                     return remote(registration(SESSION_ID, "dev"))
@@ -464,11 +472,11 @@ class FocusFallbackTests(unittest.TestCase):
                     self.setUp()
                     if value == "missing": self.panes[1].pop(field)
                     else: self.panes[1][field] = value
-                    self.assertIsNone(_focus_candidates(self.panes, self.fresh))
+                    self.assertIsNone(_focus_candidates(self.panes, self.fresh, TERMINAL, REMOTE))
                     self.terminal.focus_session(self.service, SESSION_ID)
                     self.assertEqual(self.actions(), [["focus-pane-id", "terminal_3"]])
         self.setUp(); self.panes[2].update(pane_x=48, pane_y=1)
-        self.assertIsNone(_focus_candidates(self.panes, self.fresh))
+        self.assertIsNone(_focus_candidates(self.panes, self.fresh, TERMINAL, REMOTE))
         self.terminal.focus_session(self.service, SESSION_ID)
         self.assertEqual(self.actions(), [["focus-pane-id", "terminal_3"]])
 
@@ -677,6 +685,46 @@ class FocusFallbackTests(unittest.TestCase):
                 self.workbench.observe = changed
                 self.assertEqual(self.terminal.focus_session(self.service, SESSION_ID)["reason"], "focus_sent_unverified")
                 self.assertEqual(self.actions(), [["go-to-tab-by-id", "1"], ["focus-next-pane"]])
+
+
+class TerminalConfigurationTests(unittest.TestCase):
+    def test_unconfigured_and_disabled_never_probe_or_construct_workbench(self):
+        for config in (None, {**TERMINAL, "enabled": False}):
+            runner = Mock()
+            terminal = Terminal(runner=runner, config=config, remote_config=REMOTE)
+            self.assertIsNone(terminal.workbench)
+            self.assertEqual(terminal.list_panes()["reason"], "not_configured")
+            self.assertEqual(terminal.focus_session(Mock(), SESSION_ID)["reason"], "not_configured")
+            self.assertEqual(terminal.connect_workbench()["reason"], "not_configured")
+            runner.assert_not_called()
+
+    def test_observation_without_workbench_and_two_snapshots(self):
+        config, remote_config = copy.deepcopy(TERMINAL), copy.deepcopy(REMOTE)
+        runner = Mock(side_effect=[subprocess.CompletedProcess([], 0, "zellij 0.45.1", ""),
+                                  subprocess.CompletedProcess([], 0, "[]", "")])
+        first = Terminal(runner=runner, config=config, remote_config=remote_config)
+        config["session"] = "second-session"
+        remote_config["source"]["host"] = "second.invalid"
+        second = Terminal(config=config, remote_config=remote_config)
+        self.assertTrue(first.list_panes()["ok"])
+        self.assertEqual(runner.call_args.args[0][2], TERMINAL["session"])
+        self.assertNotEqual(first.source, second.source)
+        self.assertEqual(first.focus_session(Mock(), SESSION_ID)["reason"], "capability_unavailable")
+        self.assertEqual(first.connect_workbench()["reason"], "capability_unavailable")
+        self.assertEqual(parse_slot_command(pane(), first.config, first.remote_config), "main")
+        self.assertIsNone(parse_slot_command(pane(), second.config, second.remote_config))
+
+    def test_slot_matching_uses_exact_registered_literals(self):
+        for change in ({"tab_name": "wrong"}, {"terminal_command": pane()["terminal_command"] + " extra"},
+                       {"terminal_command": pane()["terminal_command"].replace("main", "unknown")},
+                       {"terminal_command": pane()["terminal_command"].replace("example.invalid", "exampleXinvalid")}):
+            self.assertIsNone(parse_slot_command(pane(**change), TERMINAL, REMOTE))
+        config = copy.deepcopy(TERMINAL)
+        config["ssh_executables"] = ["C:/example/工具 目录/ssh.exe"]
+        suffix = f" -t {REMOTE['source']['host']} bash {config['pane_script']} main"
+        command = '"' + config["ssh_executables"][0] + '"' + suffix
+        self.assertEqual(parse_slot_command(pane(terminal_command=command), config, REMOTE), "main")
+        self.assertIsNone(parse_slot_command(pane(terminal_command=command.replace('"', '')), config, REMOTE))
 
 
 if __name__ == "__main__":

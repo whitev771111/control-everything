@@ -1,5 +1,6 @@
 """Conservative local evidence and an explicit attach to the existing workbench."""
 
+import copy
 import ctypes
 import hashlib
 import json
@@ -17,26 +18,8 @@ from pathlib import Path
 
 from session_panel.paths import REPOSITORY_ROOT
 
-from session_panel.sessions.source import ZELLIJ, ZELLIJ_SESSION, ZELLIJ_VERSION, TERMINAL_TIMEOUT
+from session_panel.sessions.source import TERMINAL_TIMEOUT
 
-WEZTERM_GUI = "C:/example/private-b8770e3d.exe"
-WEZTERM_LUA = "C:/example/private-7b710b3b.lua"
-ZELLIJ_CONFIG = "C:/example/private-963cf4c8.kdl"
-WORKDIR = "C:/example/private-42891d5a"
-UNMANAGED_MUX = "C:/example/private-9951d165.exe"
-MARKER = str(Path(tempfile.gettempdir()) / "zellij/contract_version_1" / ZELLIJ_SESSION)
-NEW_GUI = [WEZTERM_GUI, "--config-file", WEZTERM_LUA, "start", "--always-new-process",
-           "--no-auto-connect", "--cwd", WORKDIR, "--", ZELLIJ, "attach"]
-LEGACY_GUI = [WEZTERM_GUI, "--config-file", WEZTERM_LUA, "start", "--always-new-process",
-              "--cwd", WORKDIR, "--", ZELLIJ, "attach", ZELLIJ_SESSION,
-              "--create", "--force-run-commands"]
-OBSERVED_GUI = [WEZTERM_GUI, "--config-file", WEZTERM_LUA, "start", "--always-new-process",
-                "--cwd", WORKDIR, "--", ZELLIJ, "attach", ZELLIJ_SESSION]
-OBSERVED_ATTACH = [ZELLIJ, "attach", ZELLIJ_SESSION]
-PINS = {ZELLIJ: "7C34F38921E6884873A9922BFDD4907F4D68FD0A2DD930CE357E4C7CB23F6F42",
-        WEZTERM_GUI: "4D3B70097031209C7C19792197DEFEC6BC84E7B996B155A2A4478266562FE9FC",
-        WEZTERM_LUA: "8E045225A327BC658A59791609CCF2086A7CC5BDEA3B366C4DBB65F9966E7CC4",
-        ZELLIJ_CONFIG: "E93805981FD949779F481E6682A7AC152213B4741287ECE1719BAE2C47FE0981"}
 PUBLIC = ("session", "status", "server_state", "gui_state", "gui_count",
           "interactive_client_count", "unmanaged_mux_count", "client_scope", "watcher_count",
           "gui_visibility", "association_state", "observed_at", "age_ms", "can_connect",
@@ -133,12 +116,27 @@ def process_times(handle):
 
 
 class Workbench:
-    def __init__(self, runner=subprocess.run, clock=time.monotonic, provider=None, popen=subprocess.Popen):
+    def __init__(self, runner=subprocess.run, clock=time.monotonic, provider=None, popen=subprocess.Popen, *, config=None, terminal_config=None):
         self.runner, self.clock, self.popen = runner, clock, popen
         self.provider = provider if provider is not None else self._processes
         self.action_lock = threading.Lock()
         self.cleanup_latch = False
         self._owned_gui = None
+        self.config = copy.deepcopy(config) if config and config.get("enabled") else None
+        self.terminal_config = copy.deepcopy(terminal_config) if terminal_config and terminal_config.get("enabled") else None
+        self.session = self.terminal_config["session"] if self.terminal_config else None
+        if self.config and self.terminal_config:
+            self.zellij = self.terminal_config["zellij"]
+            self.version = self.terminal_config["version"]
+            for name in ("wezterm_gui", "wezterm_lua", "zellij_config", "workdir", "unmanaged_mux"):
+                setattr(self, name, self.config[name])
+            self.marker = str(Path(tempfile.gettempdir()) / "zellij/contract_version_1" / self.session)
+            base = [self.wezterm_gui, "--config-file", self.wezterm_lua, "start", "--always-new-process"]
+            self.new_gui = [*base, "--no-auto-connect", "--cwd", self.workdir, "--", self.zellij, "attach"]
+            self.observed_gui = [*base, "--cwd", self.workdir, "--", self.zellij, "attach", self.session]
+            self.legacy_gui = [*self.observed_gui, "--create", "--force-run-commands"]
+            self.observed_attach = [self.zellij, "attach", self.session]
+            self.pins = copy.deepcopy(self.config["pins"])
 
     def remaining(self, deadline):
         value = deadline - self.clock()
@@ -147,7 +145,7 @@ class Workbench:
         return value
 
     def _run(self, arguments, deadline):
-        result = self.runner([ZELLIJ, *arguments], capture_output=True, text=True,
+        result = self.runner([self.zellij, *arguments], capture_output=True, text=True,
                              encoding="utf-8", errors="strict", timeout=self.remaining(deadline),
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if result.returncode:
@@ -186,19 +184,19 @@ class Workbench:
 
     def _classify(self, rows):
         servers, guis, attaches, mux = [], [], [], []
-        probes = [[ZELLIJ, "--version"], [ZELLIJ, "list-sessions", "--no-formatting"],
-                  [ZELLIJ, "--session", ZELLIJ_SESSION, "action", "list-panes", "--all", "--json"],
-                  [ZELLIJ, "--session", ZELLIJ_SESSION, "action", "list-clients"]]
+        probes = [[self.zellij, "--version"], [self.zellij, "list-sessions", "--no-formatting"],
+                  [self.zellij, "--session", self.session, "action", "list-panes", "--all", "--json"],
+                  [self.zellij, "--session", self.session, "action", "list-clients"]]
         for row in rows:
             argv, exe, name = row["argv"], row["ExecutablePath"], row["Name"]
-            if name == "wezterm-mux-server.exe" and exe == normalized(UNMANAGED_MUX) and profile(argv, [UNMANAGED_MUX]):
+            if name == "wezterm-mux-server.exe" and exe == normalized(self.unmanaged_mux) and profile(argv, [self.unmanaged_mux]):
                 mux.append(row)
-            elif name == "wezterm-gui.exe" and exe == normalized(WEZTERM_GUI) and (profile(argv, NEW_GUI) or profile(argv, LEGACY_GUI) or profile(argv, OBSERVED_GUI)):
+            elif name == "wezterm-gui.exe" and exe == normalized(self.wezterm_gui) and (profile(argv, self.new_gui) or profile(argv, self.legacy_gui) or profile(argv, self.observed_gui)):
                 guis.append(row)
-            elif name == "zellij.exe" and exe == normalized(ZELLIJ):
-                if profile(argv, [ZELLIJ, "--server", MARKER]):
+            elif name == "zellij.exe" and exe == normalized(self.zellij):
+                if profile(argv, [self.zellij, "--server", self.marker]):
                     servers.append(row)
-                elif profile(argv, [ZELLIJ, "attach"]) or profile(argv, [ZELLIJ, "attach", ZELLIJ_SESSION, "--create", "--force-run-commands"]) or profile(argv, OBSERVED_ATTACH):
+                elif profile(argv, [self.zellij, "attach"]) or profile(argv, [self.zellij, "attach", self.session, "--create", "--force-run-commands"]) or profile(argv, self.observed_attach):
                     attaches.append(row)
                 elif not any(profile(argv, probe) for probe in probes):
                     raise ValueError("unaccepted zellij process")
@@ -207,14 +205,14 @@ class Workbench:
         return servers, guis, attaches, mux
 
     def _marker_pid(self):
-        text = Path(MARKER).read_text(encoding="ascii").strip()
+        text = Path(self.marker).read_text(encoding="ascii").strip()
         if not re.fullmatch(r"[0-9]{1,10}", text) or not 0 < int(text) <= 0xffffffff:
             raise ValueError("unknown marker")
         return int(text)
 
     def _state(self, started, observed_at, reason="workbench_observation_unknown", **fields):
         age = max(0, int((self.clock() - started) * 1000))
-        return {"session": ZELLIJ_SESSION, "status": "unknown", "server_state": "unknown",
+        return {"session": self.session, "status": "unknown", "server_state": "unknown",
                 "gui_state": "unknown", "gui_count": None, "interactive_client_count": None,
                 "unmanaged_mux_count": None, "client_scope": "interactive_only", "watcher_count": None,
                 "gui_visibility": "unverified", "association_state": "unknown", "observed_at": observed_at,
@@ -227,21 +225,23 @@ class Workbench:
 
     def observe(self, deadline=None):
         started, observed_at = self.clock(), datetime.now(timezone.utc).isoformat()
+        if not self.config or not self.terminal_config:
+            return self._state(started, observed_at, "not_configured")
         deadline = min(deadline, started + TERMINAL_TIMEOUT) if deadline is not None else started + TERMINAL_TIMEOUT
         try:
-            if self._run(["--version"], deadline).strip() != f"zellij {ZELLIJ_VERSION}":
+            if self._run(["--version"], deadline).strip() != f"zellij {self.version}":
                 raise ValueError("version mismatch")
             sessions = parse_sessions(self._run(["list-sessions", "--no-formatting"], deadline))
             if sessions is None:
                 raise ValueError("unknown sessions")
-            server_state = sessions.get(ZELLIJ_SESSION, "missing")
+            server_state = sessions.get(self.session, "missing")
             if server_state != "running":
                 return self._state(started, observed_at, "workbench_not_running", server_state=server_state)
-            if [name for name, status in sessions.items() if status == "running"] != [ZELLIJ_SESSION]:
+            if [name for name, status in sessions.items() if status == "running"] != [self.session]:
                 return self._state(started, observed_at, "workbench_multiple_sessions", server_state="running")
             marker_before, before = self._marker_pid(), self._classify(self._rows(deadline))
             from session_panel.sessions.terminal import parse_clients
-            clients = parse_clients(self._run(["--session", ZELLIJ_SESSION, "action", "list-clients"], deadline))
+            clients = parse_clients(self._run(["--session", self.session, "action", "list-clients"], deadline))
             marker_after, after = self._marker_pid(), self._classify(self._rows(deadline))
             fingerprints = lambda values: tuple(tuple(sorted(process_identity(row) for row in group)) for group in values)
             before_ids, after_ids = fingerprints(before), fingerprints(after)
@@ -257,12 +257,12 @@ class Workbench:
             unique = len(guis) == len(attaches) == len(clients) == 1
             if unique:
                 gui, client = guis[0], attaches[0]
-                if profile(gui["argv"], NEW_GUI):
-                    expected = [ZELLIJ, "attach"]
-                elif profile(gui["argv"], OBSERVED_GUI):
-                    expected = OBSERVED_ATTACH
+                if profile(gui["argv"], self.new_gui):
+                    expected = [self.zellij, "attach"]
+                elif profile(gui["argv"], self.observed_gui):
+                    expected = self.observed_attach
                 else:
-                    expected = [ZELLIJ, "attach", ZELLIJ_SESSION, "--create", "--force-run-commands"]
+                    expected = [self.zellij, "attach", self.session, "--create", "--force-run-commands"]
                 unique = (client["ParentProcessId"] == gui["ProcessId"] and client["_ticks"] >= gui["_ticks"]
                           and profile(client["argv"], expected))
             state = self._state(started, observed_at, "workbench_association_unknown", status="observed",
@@ -292,13 +292,20 @@ class Workbench:
             self.action_lock.release()
 
     def integrity(self, deadline):
+        if not self.config or not self.terminal_config:
+            return False
+        roles = {"zellij", "wezterm_gui", "wezterm_lua", "zellij_config"}
+        if set(self.pins) != roles or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value)
+                                         for value in self.pins.values()):
+            return False
         try:
-            for path, wanted in PINS.items():
+            for role, wanted in self.pins.items():
+                path = getattr(self, role)
                 digest = hashlib.sha256()
                 with open(path, "rb") as stream:
                     for block in iter(lambda: stream.read(1024 * 1024), b""):
                         self.remaining(deadline); digest.update(block)
-                if digest.hexdigest().upper() != wanted:
+                if digest.hexdigest().upper() != wanted.upper():
                     return False
             return True
         except (OSError, subprocess.TimeoutExpired):
@@ -315,9 +322,9 @@ class Workbench:
             guis, attaches = state["_rows"][1:3]
             owned_association = (len(guis) == 1 and guis[0]["ProcessId"] == expected_gui
                                  and guis[0]["_ticks"] // 10 == self._owned_gui["created"] // 10
-                                 and profile(guis[0]["argv"], NEW_GUI)
+                                 and profile(guis[0]["argv"], self.new_gui)
                                  and all(row["ParentProcessId"] == expected_gui and row["_ticks"] >= guis[0]["_ticks"]
-                                         and profile(row["argv"], [ZELLIJ, "attach"]) for row in attaches))
+                                         and profile(row["argv"], [self.zellij, "attach"]) for row in attaches))
             if state["can_focus"]:
                 if owned_association:
                     return state
@@ -362,12 +369,12 @@ class Workbench:
             self._classify(rows)
             for row in rows:
                 if row["ParentProcessId"] != process.pid:
-                    if (created is not None and row["Name"] == "zellij.exe" and profile(row["argv"], [ZELLIJ, "attach"])
+                    if (created is not None and row["Name"] == "zellij.exe" and profile(row["argv"], [self.zellij, "attach"])
                             and row["_ticks"] >= created // 10 * 10 and (exited is None or row["_ticks"] <= exited)):
                         raise ValueError("attach ownership unknown")
                     continue
-                if (created is None or row["Name"] != "zellij.exe" or row["ExecutablePath"] != normalized(ZELLIJ)
-                        or not profile(row["argv"], [ZELLIJ, "attach"]) or row["_ticks"] < created // 10 * 10
+                if (created is None or row["Name"] != "zellij.exe" or row["ExecutablePath"] != normalized(self.zellij)
+                        or not profile(row["argv"], [self.zellij, "attach"]) or row["_ticks"] < created // 10 * 10
                         or (exited is not None and row["_ticks"] > exited)):
                     raise ValueError("owned child identity unknown")
                 row.update(_gui_created=created, _gui_exited=exited)
@@ -396,6 +403,9 @@ class Workbench:
         state = self._state(self.clock(), datetime.now(timezone.utc).isoformat(), "terminal_action_busy")
         result = {"connected": False, "launched": False, "status": "unknown", "reason": state["reason"],
                   "workbench": self.public(state), "cleanup": "not_needed"}
+        if not self.config or not self.terminal_config:
+            state = self._state(self.clock(), datetime.now(timezone.utc).isoformat(), "not_configured")
+            return {**result, "reason": "not_configured", "workbench": self.public(state)}
         if not self.action_lock.acquire(blocking=False):
             return result
         try:
@@ -413,9 +423,9 @@ class Workbench:
             env = os.environ.copy()
             for name in ("WEZTERM_UNIX_SOCKET", "WEZTERM_PANE", "ZELLIJ", "ZELLIJ_SESSION_NAME", "ZELLIJ_SOCKET_DIR"):
                 env.pop(name, None)
-            env.update(WEZTERM_CONFIG_FILE=WEZTERM_LUA, ZELLIJ_CONFIG_DIR=str(Path(ZELLIJ_CONFIG).parent))
+            env.update(WEZTERM_CONFIG_FILE=self.wezterm_lua, ZELLIJ_CONFIG_DIR=str(Path(self.zellij_config).parent))
             try:
-                process = self.popen(NEW_GUI, shell=False, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                process = self.popen(self.new_gui, shell=False, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except OSError:
                 return {**result, "reason": "workbench_launch_failed"}
             owned = self._owned_gui = {"process": process, "created": None}
@@ -426,7 +436,7 @@ class Workbench:
                 result.update(workbench=self.public(after), reason=after["reason"] or "workbench_connect_unverified")
                 if (after["can_focus"] and after.get("_server") == before["_server"] and after.get("_mux") == before["_mux"]
                         and after["_guis"][0][0] == process.pid and after["_guis"][0][2] // 10 == owned["created"] // 10
-                        and profile(after["_rows"][1][0]["argv"], NEW_GUI)):
+                        and profile(after["_rows"][1][0]["argv"], self.new_gui)):
                     return {**result, "connected": True, "status": "unique_observed", "reason": None}
             except (OSError, ValueError, UnicodeError, TypeError, KeyError, AttributeError, subprocess.TimeoutExpired):
                 result["reason"] = "workbench_connect_unverified"

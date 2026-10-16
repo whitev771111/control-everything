@@ -1,14 +1,22 @@
 import copy
+import hashlib
 import io
 import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
-from session_panel.sessions.source import ZELLIJ, ZELLIJ_SESSION
+from tests.fixtures.integration_config import integration_config
 from session_panel.sessions.terminal import parse_clients
-from session_panel.sessions.workbench import (Workbench, MARKER, NEW_GUI, LEGACY_GUI, UNMANAGED_MUX,
-                                     WEZTERM_GUI, WEZTERM_LUA, WORKDIR, PINS, same_association,
-                                     command_line_argv, created_ticks, parse_sessions)
+from session_panel.sessions.workbench import (Workbench, same_association,
+                                             command_line_argv, created_ticks, parse_sessions)
+
+CONFIG = integration_config()["integrations"]
+TERMINAL, WORKBENCH = CONFIG["terminal"], CONFIG["workbench"]
+ZELLIJ, ZELLIJ_SESSION = TERMINAL["zellij"], TERMINAL["session"]
+CONFIGURED = Workbench(config=WORKBENCH, terminal_config=TERMINAL)
+MARKER, NEW_GUI, LEGACY_GUI = CONFIGURED.marker, CONFIGURED.new_gui, CONFIGURED.legacy_gui
+WEZTERM_GUI, WEZTERM_LUA = WORKBENCH["wezterm_gui"], WORKBENCH["wezterm_lua"]
+WORKDIR, UNMANAGED_MUX, PINS = WORKBENCH["workdir"], WORKBENCH["unmanaged_mux"], WORKBENCH["pins"]
 
 HEADER = "CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n"
 TIME = "2026-10-04T00:00:00.0000000Z"
@@ -25,13 +33,13 @@ class WorkbenchTests(unittest.TestCase):
     def setUp(self):
         self.now = 0.0
         self.rows = [process(10, 1, [ZELLIJ, "--server", MARKER]), process(40, 2, [UNMANAGED_MUX])]
-        self.sessions = "workbench-v4 [Created 1day 2h 3m 4s ago]\nold [Created 2days ago] (EXITED - attach to resurrect)\n"
+        self.sessions = "fixture-session [Created 1day 2h 3m 4s ago]\nold [Created 2days ago] (EXITED - attach to resurrect)\n"
         self.clients = HEADER
         self.calls = []
         self.gui = Mock(pid=20, _handle=999)
         self.gui.poll.return_value = None
         self.popen = Mock(side_effect=self.launch)
-        self.workbench = Workbench(self.run_command, lambda: self.now, lambda deadline: copy.deepcopy(self.rows), self.popen)
+        self.workbench = Workbench(self.run_command, lambda: self.now, lambda deadline: copy.deepcopy(self.rows), self.popen, config=WORKBENCH, terminal_config=TERMINAL)
         self.marker = patch.object(self.workbench, "_marker_pid", return_value=10); self.marker.start(); self.addCleanup(self.marker.stop)
         self.integrity = patch.object(self.workbench, "integrity", return_value=True); self.integrity.start(); self.addCleanup(self.integrity.stop)
         self.times = patch("session_panel.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), 0))
@@ -100,11 +108,11 @@ class WorkbenchTests(unittest.TestCase):
         self.attach_named(); original = copy.deepcopy(self.rows)
         gui_argv = [WEZTERM_GUI, "--config-file", WEZTERM_LUA, "start", "--always-new-process",
                     "--cwd", WORKDIR, "--", ZELLIJ, "attach", ZELLIJ_SESSION]
-        config = gui_argv.copy(); config[2] = "D:/elsewhere/wezterm.lua"
-        cwd = gui_argv.copy(); cwd[6] = "D:/elsewhere"
+        config = gui_argv.copy(); config[2] = "C:/example/elsewhere/wezterm.lua"
+        cwd = gui_argv.copy(); cwd[6] = "C:/example/elsewhere"
         session = gui_argv.copy(); session[-1] = "other-session"
-        changes = [(-2, "ExecutablePath", "D:/elsewhere/wezterm-gui.exe"), (-2, "Name", "wezterm.exe"),
-                   (-1, "ExecutablePath", "D:/elsewhere/zellij.exe"), (-2, "ParentProcessId", None),
+        changes = [(-2, "ExecutablePath", "C:/example/elsewhere/wezterm-gui.exe"), (-2, "Name", "wezterm.exe"),
+                   (-1, "ExecutablePath", "C:/example/elsewhere/zellij.exe"), (-2, "ParentProcessId", None),
                    (-2, "CommandLine", subprocess.list2cmdline([WEZTERM_GUI, "start"]))]
         changes += [(-2, "CommandLine", subprocess.list2cmdline(argv))
                     for argv in (config, cwd, session, gui_argv + ["--extra"], gui_argv[:-1])]
@@ -172,8 +180,7 @@ class WorkbenchTests(unittest.TestCase):
         self.assertFalse(state["can_focus"]); self.assertFalse(state["can_connect"])
         self.popen.assert_not_called()
 
-    def test_studied_lua_pin_is_exact_and_any_full_pin_mismatch_refuses(self):
-        self.assertEqual(PINS[WEZTERM_LUA], "8E045225A327BC658A59791609CCF2086A7CC5BDEA3B366C4DBB65F9966E7CC4")
+    def test_all_configured_pins_are_checked_and_any_mismatch_refuses(self):
         self.attach_named()
         real_integrity = Workbench.integrity.__get__(self.workbench)
         for mismatch in [None, *PINS]:
@@ -230,9 +237,9 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_missing_exited_zero_bad_and_multiple_sessions_never_launch(self):
         for text, state in [("old [Created 1s ago]", "missing"),
-                            ("workbench-v4 [Created 1s ago] (EXITED - attach to resurrect)", "exited"),
-                            ("", "unknown"), ("workbench-v4 invalid", "unknown"),
-                            ("workbench-v4 [Created 1s ago]\nextra [Created 1s ago]", "running")]:
+                            ("fixture-session [Created 1s ago] (EXITED - attach to resurrect)", "exited"),
+                            ("", "unknown"), ("fixture-session invalid", "unknown"),
+                            ("fixture-session [Created 1s ago]\nextra [Created 1s ago]", "running")]:
             with self.subTest(text=text):
                 self.sessions = text
                 self.assertEqual(self.workbench.connect()["workbench"]["server_state"], state)
@@ -253,7 +260,7 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_extra_mux_flags_foreign_gui_watch_and_unknown_probe_refuse(self):
         original = copy.deepcopy(self.rows)
-        candidates = [process(41, 2, [UNMANAGED_MUX, "--extra"]), process(41, 2, ["D:/elsewhere/wezterm-mux-server.exe"]),
+        candidates = [process(41, 2, [UNMANAGED_MUX, "--extra"]), process(41, 2, ["C:/example/elsewhere/wezterm-mux-server.exe"]),
                       process(41, 2, [NEW_GUI[0], "start"]), process(41, 2, [ZELLIJ, "watch", ZELLIJ_SESSION]),
                       process(41, 2, [ZELLIJ, "action", "unknown"])]
         for row in candidates:
@@ -431,13 +438,64 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(terminated, [30])
 
 
+class WorkbenchConfigurationTests(unittest.TestCase):
+    def test_pin_case_does_not_change_digest_and_roles_map_to_actual_paths(self):
+        config = copy.deepcopy(WORKBENCH)
+        digest = hashlib.sha256(b"synthetic-file").hexdigest()
+        for role in config["pins"]:
+            config["pins"][role] = digest.upper() if role == "wezterm_lua" else digest
+        workbench = Workbench(config=config, terminal_config=TERMINAL)
+        with patch("builtins.open", side_effect=lambda path, mode: io.BytesIO(b"synthetic-file")) as read:
+            self.assertTrue(workbench.integrity(workbench.clock() + 5))
+        self.assertEqual({call.args[0] for call in read.call_args_list},
+                         {TERMINAL["zellij"], WORKBENCH["wezterm_gui"], WORKBENCH["wezterm_lua"], WORKBENCH["zellij_config"]})
+
+    def test_missing_or_disabled_configuration_has_zero_tool_or_file_probes(self):
+        for config, terminal in ((None, None), ({**WORKBENCH, "enabled": False}, TERMINAL), (WORKBENCH, None)):
+            runner, provider, popen = Mock(), Mock(), Mock()
+            workbench = Workbench(runner=runner, provider=provider, popen=popen, config=config, terminal_config=terminal)
+            with patch("builtins.open") as read:
+                self.assertEqual(workbench.observe()["reason"], "not_configured")
+                self.assertEqual(workbench.connect()["reason"], "not_configured")
+                self.assertFalse(workbench.integrity(10))
+                read.assert_not_called()
+            runner.assert_not_called(); provider.assert_not_called(); popen.assert_not_called()
+
+    def test_all_four_pin_roles_required_before_file_access(self):
+        for missing in (None, *PINS):
+            config = copy.deepcopy(WORKBENCH)
+            if missing is None:
+                config["pins"] = {}
+            else:
+                del config["pins"][missing]
+            workbench = Workbench(config=config, terminal_config=TERMINAL)
+            with patch("builtins.open") as read:
+                self.assertFalse(workbench.integrity(10))
+                read.assert_not_called()
+
+    def test_independent_snapshots_reject_other_session_processes(self):
+        config, terminal = copy.deepcopy(WORKBENCH), copy.deepcopy(TERMINAL)
+        first = Workbench(config=config, terminal_config=terminal)
+        terminal["session"] = "second-session"
+        config["wezterm_gui"] = "C:/example/second/wezterm-gui.exe"
+        second = Workbench(config=config, terminal_config=terminal)
+        self.assertNotEqual(first.marker, second.marker)
+        self.assertNotEqual(first.new_gui, second.new_gui)
+        raw = process(10, 1, [ZELLIJ, "--server", first.marker])
+        first.provider = lambda deadline: [raw]
+        rows = first._rows(first.clock() + 5)
+        self.assertEqual(len(first._classify(rows)[0]), 1)
+        with self.assertRaises(ValueError):
+            second._classify(rows)
+
+
 class WorkbenchParserTests(unittest.TestCase):
     def test_windows_argv_quotes_unicode_and_exact_profiles(self):
-        argv = ["C:/example/private-9951d165.exe", "a b", 'a"b']
+        argv = ["C:/example/软件/wezterm/wezterm-mux-server.exe", "a b", 'a"b']
         self.assertEqual(command_line_argv(subprocess.list2cmdline(argv)), argv)
 
     def test_sessions_reject_duplicate_bad_age_ansi_and_empty(self):
-        for text in ("", "workbench-v4 [Created yesterday ago]", "x [Created 1s ago]\nx [Created 2s ago]", "\x1b[32mx [Created 1s ago]"):
+        for text in ("", "fixture-session [Created yesterday ago]", "x [Created 1s ago]\nx [Created 2s ago]", "\x1b[32mx [Created 1s ago]"):
             self.assertIsNone(parse_sessions(text))
 
     def test_clients_zero_is_distinct_from_invalid_duplicate_and_out_of_range(self):

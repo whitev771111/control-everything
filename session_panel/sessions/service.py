@@ -1,5 +1,6 @@
 """One metadata index shared by the HTTP page and the stdio queries."""
 
+import base64
 import copy
 import hashlib
 import json
@@ -12,9 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from session_panel.sessions.source import (
-    SOURCE, SSH, READER_PYTHON, OBSERVE_TIMEOUT, MESSAGE_TIMEOUT,
+    OBSERVE_TIMEOUT, MESSAGE_TIMEOUT,
     MAX_RESPONSE_BYTES, CACHE_SECONDS, STALE_SECONDS, COVERAGE_WARNINGS,
-    READER_VERSION, canonical_uuid, message_arguments,
+    READER_VERSION, canonical_uuid, message_arguments, validate_remote_payload,
 )
 
 
@@ -23,14 +24,28 @@ def utc_now():
 
 
 class RemoteClient:
-    def __init__(self, runner=subprocess.run):
+    def __init__(self, runner=subprocess.run, *, config=None):
         self.runner = runner
+        self.config = copy.deepcopy(config) if config is not None and config.get("enabled") else None
+        self.source = copy.deepcopy(self.config["source"]) if self.config is not None else None
+        if self.config is not None:
+            validate_remote_payload(self._payload("observe", None))
+
+    def _payload(self, mode, request):
+        return {"source": copy.deepcopy(self.source), "home": self.config["home"],
+                "slot_files": copy.deepcopy(self.config["slot_files"]),
+                "reader_mcp_version": self.config["reader_mcp_version"],
+                "mode": mode, "request": request}
 
     def _call(self, mode, request=None):
-        # The helper imports this exact local source module without deploying files.
+        if self.config is None:
+            return {"ok": False, "available": False, "reason": "not_configured", "source": None}
+        payload = validate_remote_payload(self._payload(mode, request))
+        encoded = base64.b64encode(json.dumps(payload, allow_nan=False).encode("utf-8")).decode("ascii")
+        # Only pure code is compiled; configuration travels as JSON data.
         directory = Path(__file__).parent
         source_text = (directory / "source.py").read_text(encoding="utf-8")
-        probe_text = (directory / "remote_probe.py").read_text(encoding="utf-8")
+        probe_text = (directory / "remote_probe.py").read_text(encoding="utf-8").split('if __name__ == "__main__":')[0]
         script = ("import sys, types\n"
                   "package = types.ModuleType('session_panel'); package.__path__ = []\n"
                   "sys.modules['session_panel'] = package\n"
@@ -40,13 +55,12 @@ class RemoteClient:
                   "sys.modules['session_panel.sessions.source'] = source; sessions.source = source\n"
                   f"exec(compile({source_text!r}, 'source.py', 'exec'), source.__dict__)\n"
                   + probe_text)
-        python = "python3" if mode == "observe" else READER_PYTHON
-        command = f"{python} - {mode}"
-        if request is not None:
-            command += " " + shlex.quote(json.dumps(request, separators=(",", ":")))
-        argv = [SSH, "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o",
+        script += "\nimport base64\nmain(json.loads(base64.b64decode('" + encoded + "')))\n"
+        python = "python3" if mode == "observe" else shlex.quote(self.config["reader_python"])
+        command = f"{python} -"
+        argv = [self.config["ssh"], "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o",
                 "ServerAliveInterval=10", "-o", "StrictHostKeyChecking=yes",
-                SOURCE["host"], command]
+                self.source["host"], command]
         try:
             result = self.runner(argv, input=script, capture_output=True, text=True,
                                  encoding="utf-8", errors="strict",
@@ -54,18 +68,18 @@ class RemoteClient:
             if result.returncode:
                 reason = "source_unavailable" if mode == "observe" else "sdk_unavailable"
                 return {"ok": False, "available": False, "reason": reason,
-                        "exit_code": result.returncode, "source": SOURCE}
+                        "exit_code": result.returncode, "source": copy.deepcopy(self.source)}
             if len(result.stdout.encode("utf-8")) > MAX_RESPONSE_BYTES:
-                return {"ok": False, "available": False, "reason": "response_too_large", "source": SOURCE}
+                return {"ok": False, "available": False, "reason": "response_too_large", "source": copy.deepcopy(self.source)}
             response = json.loads(result.stdout)
-            if not isinstance(response, dict) or response.get("source") != SOURCE:
+            if not isinstance(response, dict) or response.get("source") != self.source:
                 raise ValueError("invalid helper source")
             return response
         except subprocess.TimeoutExpired:
             return {"ok": False, "available": False, "reason": "observe_timeout"
-                    if mode == "observe" else "reader_timeout", "source": SOURCE}
+                    if mode == "observe" else "reader_timeout", "source": copy.deepcopy(self.source)}
         except (OSError, ValueError, UnicodeError):
-            return {"ok": False, "available": False, "reason": "source_unavailable", "source": SOURCE}
+            return {"ok": False, "available": False, "reason": "source_unavailable", "source": copy.deepcopy(self.source)}
 
     def observe_source(self):
         return self._call("observe")
@@ -81,10 +95,10 @@ class RemoteClient:
         return result
 
 
-def instance_key(record):
-    if not all(record.get(field) is not None for field in ("boot_id", "pid", "process_start_ticks")):
+def instance_key(record, *, source=None):
+    if source is None or not all(record.get(field) is not None for field in ("boot_id", "pid", "process_start_ticks")):
         return None
-    return f"{SOURCE['id']}:{record['boot_id']}:{record['pid']}:{record['process_start_ticks']}"
+    return f"{source['id']}:{record['boot_id']}:{record['pid']}:{record['process_start_ticks']}"
 
 
 def mark_unknown(record, reason):
@@ -96,13 +110,14 @@ def mark_unknown(record, reason):
     return record
 
 
-def merge_observation(remote, inventory, previous, observed_at):
+def merge_observation(remote, inventory, previous, observed_at, *, source=None, terminal_config=None, remote_config=None):
     """Merge immutable candidates; no directory, title or timestamp identity guesses."""
     from session_panel.sessions.terminal import parse_slot_command, terminal_id
 
-    source_ok = remote.get("ok") is True and remote.get("source") == SOURCE
+    source_ok = source is not None and remote.get("ok") is True and remote.get("source") == source
     terminal_ok = inventory.get("ok") is True
-    old = {row["session_id"]: row for row in previous.get("sessions", [])}
+    old = {row["session_id"]: row for row in previous.get("sessions", [])
+           if row.get("source") == source}
     grouped, invalid = {}, []
     for raw in remote.get("registrations", []):
         try:
@@ -119,7 +134,7 @@ def merge_observation(remote, inventory, previous, observed_at):
     pane_slots = {}
     if terminal_ok:
         for pane in inventory.get("panes", []):
-            slot = parse_slot_command(pane)
+            slot = parse_slot_command(pane, terminal_config, remote_config)
             if slot and terminal_id(pane):
                 pane_slots.setdefault(slot, []).append(pane)
     records = []
@@ -128,14 +143,14 @@ def merge_observation(remote, inventory, previous, observed_at):
         raw = candidates[0] if candidates else old[session_id]
         record = {field: copy.deepcopy(raw.get(field)) for field in (
             "cwd", "pid", "process_start_ticks", "registered_started_at", "slot", "boot_id")}
-        record.update(session_id=session_id, source=copy.deepcopy(SOURCE), observed_at=observed_at,
+        record.update(session_id=session_id, source=copy.deepcopy(source), observed_at=observed_at,
                       reason_codes=list(dict.fromkeys(raw.get("reason_codes", []))) if source_ok and candidates else [],
                       registration_state=("present" if candidates else "missing") if source_ok else "unknown",
                       coverage_warnings=list(COVERAGE_WARNINGS),
                       provenance={"registrations": copy.deepcopy(candidates),
                                   "terminal_source": "Zellij current list-panes"},
                       activity_state="unknown", task_completion="unknown", pane_id=None,
-                      terminal_binding="unknown", instance_key=instance_key(raw))
+                      terminal_binding="unknown", instance_key=instance_key(raw, source=source))
         prior = old.get(session_id)
         if prior:
             record["last_evidence"] = {key: copy.deepcopy(prior.get(key)) for key in (
@@ -162,7 +177,7 @@ def merge_observation(remote, inventory, previous, observed_at):
                 record["reason_codes"].append("binding_unknown")
         records.append(record)
     complete = source_ok and terminal_ok
-    return {"source": copy.deepcopy(SOURCE), "status": "observed" if complete else "unknown",
+    return {"source": copy.deepcopy(source), "status": "observed" if complete else "unknown",
             "reason": None if complete else remote.get("reason") or inventory.get("reason") or "source_unavailable",
             "sessions": records, "observed_at": observed_at,
             "coverage": {"registration_count": remote.get("registration_count"),
@@ -172,13 +187,15 @@ def merge_observation(remote, inventory, previous, observed_at):
 
 
 class SessionService:
-    def __init__(self, remote=None, terminal=None, clock=time.monotonic, utc_now=utc_now):
+    def __init__(self, remote=None, terminal=None, clock=time.monotonic, utc_now=utc_now, *, source=None):
         from session_panel.sessions.terminal import Terminal
         self.remote = remote if remote is not None else RemoteClient()
         self.terminal = terminal if terminal is not None else Terminal()
+        remote_source = getattr(self.remote, "source", None)
+        self.source = copy.deepcopy(source if source is not None else remote_source if isinstance(remote_source, dict) else None)
         self.clock, self.utc_now = clock, utc_now
         self._observation_lock, self._message_lock = threading.Lock(), threading.Lock()
-        self._snapshot = {"sessions": [], "source": SOURCE, "status": "unknown"}
+        self._snapshot = {"sessions": [], "source": copy.deepcopy(self.source), "status": "unknown"}
         self._started = None
         self._last_success_at = None
 
@@ -209,7 +226,9 @@ class SessionService:
                     inventory = self.terminal.list_panes()
                 except Exception:
                     inventory = {"ok": False, "reason": "terminal_unavailable"}
-            snapshot = merge_observation(remote, inventory, self._snapshot, observed_at)
+            snapshot = merge_observation(remote, inventory, self._snapshot, observed_at, source=self.source,
+                                         terminal_config=getattr(self.terminal, "config", None),
+                                         remote_config=getattr(self.remote, "config", None))
             if snapshot["status"] == "observed":
                 self._last_success_at = self.utc_now()
             snapshot["last_success_at"] = self._last_success_at
@@ -244,7 +263,7 @@ class SessionService:
         snapshot = self.list_sessions()
         return next((row for row in snapshot["sessions"] if row["session_id"] == session_id),
                     {"status": "unknown", "reason": "not_found", "reason_codes": ["not_found"],
-                     "session_id": session_id, "source": copy.deepcopy(SOURCE),
+                     "session_id": session_id, "source": copy.deepcopy(self.source),
                      "observed_at": snapshot.get("observed_at"), "age_ms": snapshot.get("age_ms"),
                      "terminal_binding": "unknown", "identity_state": "unknown", "process_state": "unknown"})
 
@@ -255,6 +274,6 @@ class SessionService:
                 return self.remote.read_messages(session_id, offset=offset, limit=limit, revision=revision)
             except Exception:
                 return {"available": False, "status": "unknown", "reason": "reader_failed",
-                        "session_id": session_id, "source": copy.deepcopy(SOURCE), "items": [],
+                        "session_id": session_id, "source": copy.deepcopy(self.source), "items": [],
                         "total_visible": None, "next_offset": None, "reader_version": READER_VERSION,
                         "read_at": self.utc_now()}

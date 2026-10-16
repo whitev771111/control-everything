@@ -130,6 +130,31 @@ class ProgressBoardTests(unittest.TestCase):
 
 
 
+class ExplicitCodexProgressTests(unittest.TestCase):
+    def test_absent_codex_path_never_probes_database(self):
+        from session_panel.workspace.progress import codex_cwds
+        with patch("session_panel.workspace.progress.sqlite3.connect") as connect, patch.object(Path, "resolve") as resolve:
+            self.assertEqual(codex_cwds(), [])
+        connect.assert_not_called(); resolve.assert_not_called()
+
+    def test_explicit_synthetic_codex_path_reaches_board(self):
+        import sqlite3
+        from contextlib import closing
+        from session_panel.workspace.progress import codex_cwds
+        with TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            db = root / "codex.sqlite"
+            with closing(sqlite3.connect(db)) as connection, connection:
+                connection.execute("CREATE TABLE threads(id,cwd,archived,updated_at)")
+                connection.execute("INSERT INTO threads VALUES(?,?,0,1)", ("fixture-thread", str(root)))
+            self.assertEqual(codex_cwds(db), [{"thread_id": "fixture-thread", "cwd": str(root)}])
+            registry = root / "registry.json"
+            registry.write_text(json.dumps({"projects": [{"id": "example", "name": "Example", "root": str(root)}]}), encoding="utf-8")
+            with patch("session_panel.workspace.progress.grok_cwds", return_value=[]):
+                result = board(registry, root / "manual.json", codex_db_path=db)
+            self.assertEqual(result[0]["sessions"][0]["tool"], "Codex")
+
+
 class RepositoryPathsTests(unittest.TestCase):
     def test_data_and_resource_paths_stay_at_repository_root(self):
         from session_panel.paths import REPOSITORY_ROOT

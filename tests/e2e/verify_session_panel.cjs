@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const readline = require('node:readline');
 const { spawn, spawnSync } = require('node:child_process');
-const { chromium } = require('C:/example/user/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '../..');
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -121,7 +121,7 @@ function snapshot(count = 4, options = {}) {
       process_count: count + 2, confirmed_binding_count: records.filter(row => row.terminal_binding === 'confirmed').length, warnings: [] } };
 }
 function workbench(overrides = {}) {
-  return { session: 'workbench-v4', status: 'observed', server_state: 'running', gui_state: 'observed', gui_count: 1,
+  return { session: 'fixture-session', status: 'observed', server_state: 'running', gui_state: 'observed', gui_count: 1,
     interactive_client_count: 1, unmanaged_mux_count: 0, client_scope: 'interactive_only', watcher_count: null, gui_visibility: 'unverified',
     association_state: 'unique_observed', observed_at: new Date().toISOString(), age_ms: 0, can_connect: false, can_focus: true,
     reason: null, actions_blocked: false, ...overrides };

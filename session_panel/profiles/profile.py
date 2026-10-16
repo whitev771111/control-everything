@@ -1,19 +1,24 @@
 """Per-user management profile and explicit metadata configuration."""
 
 import argparse
+import copy
 import json
 import math
 import os
 import sys
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from session_panel.sessions import codex_index
 from session_panel.workspace.store import WorkspaceStore
+from session_panel.profiles.integration_settings import (
+    EMPTY_INTEGRATIONS, InvalidSettings, integration_summary, validate_integrations,
+)
 
-DEFAULT_CONFIG = {"version": 1, "codex": {"enabled": False, "db_path": None}}
-CONFIG_MAX_BYTES = 16384
+DEFAULT_CONFIG = {"version": 2, "codex": {"enabled": False, "db_path": None}, "integrations": EMPTY_INTEGRATIONS}
+CONFIG_MAX_BYTES = 65536
 
 
 class ProfileError(ValueError):
@@ -69,7 +74,10 @@ def resolve_data_dir(data_dir=None, *, environ=None, platform=None, home=None):
 
 
 def validate_config(config):
-    if not isinstance(config, dict) or set(config) != {"version", "codex"} or type(config["version"]) is not int or config["version"] != 1:
+    if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] not in (1, 2):
+        raise ProfileError("invalid_config", "version")
+    expected = {"version", "codex"} if config["version"] == 1 else {"version", "codex", "integrations"}
+    if set(config) != expected:
         raise ProfileError("invalid_config", "version")
     codex = config["codex"]
     if (not isinstance(codex, dict) or set(codex) != {"enabled", "db_path"}
@@ -77,7 +85,84 @@ def validate_config(config):
             or codex["db_path"] is not None and not absolute_path(codex["db_path"])
             or codex["enabled"] and codex["db_path"] is None):
         raise ProfileError("invalid_config", "codex")
+    if config["version"] == 2:
+        checked_integrations(config["integrations"])
     return config
+
+
+def checked_integrations(value):
+    try:
+        return validate_integrations(value)
+    except InvalidSettings as error:
+        raise ProfileError("invalid_config", error.field, message=error.message) from None
+
+
+def normalized_config(config):
+    validate_config(config)
+    result = copy.deepcopy(config)
+    result["version"] = 2
+    result.setdefault("integrations", copy.deepcopy(EMPTY_INTEGRATIONS))
+    return result
+
+
+def validate_settings_document(document):
+    if (not isinstance(document, dict) or set(document) != {"version", "integrations"}
+            or type(document["version"]) is not int or document["version"] != 2):
+        raise ProfileError("invalid_config", "version")
+    return {"version": 2, "integrations": checked_integrations(document["integrations"])}
+
+
+def read_settings_document(filename):
+    if not absolute_path(str(filename)):
+        raise ProfileError("invalid_config", "file")
+    try:
+        with Path(filename).open("rb") as stream:
+            raw = stream.read(CONFIG_MAX_BYTES + 1)
+        if len(raw) > CONFIG_MAX_BYTES:
+            raise ValueError("config_too_large")
+        value = strict_json(raw.decode("utf-8"))
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        raise ProfileError("invalid_config", "file") from None
+    return validate_settings_document(value)
+
+
+@contextmanager
+def config_file_lock(directory):
+    """Lock a persistent byte; never unlink it or recursively open a profile."""
+    try:
+        stream = (Path(directory) / ".profile.lock").open("a+b")
+    except OSError:
+        raise ProfileError("storage_error", status=500) from None
+    locked = False
+    try:
+        stream.seek(0, os.SEEK_END)
+        if stream.tell() == 0:
+            stream.write(b"\0")
+            stream.flush()
+        stream.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+        except OSError:
+            raise ProfileError("config_busy", status=409) from None
+        yield
+    finally:
+        try:
+            if locked:
+                stream.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        finally:
+            stream.close()
 
 
 class Profile:
@@ -91,7 +176,7 @@ class Profile:
     def open(cls, data_dir=None):
         profile = cls(resolve_data_dir(data_dir))
         profile.data_dir.mkdir(parents=True, exist_ok=True)
-        with profile.config_lock:
+        with profile.config_lock, config_file_lock(profile.data_dir):
             if not profile.config_path.exists():
                 profile._write_config(DEFAULT_CONFIG)
             profile.config()
@@ -132,10 +217,34 @@ class Profile:
     def settings(self, body):
         if not isinstance(body, dict) or set(body) != {"codex"}:
             raise ProfileError("invalid_config", "codex")
-        with self.config_lock:
-            self.config()
-            self._write_config({"version": 1, "codex": body["codex"]})
+        with self.config_lock, config_file_lock(self.data_dir):
+            original = self.config()
+            config = normalized_config(original)
+            config["codex"] = body["codex"]
+            validate_config(config)
+            if original["version"] == 1:
+                from session_panel.profiles.profile_import import create_backup
+                create_backup(self)
+            self._write_config(config)
         return self.public()
+
+    def import_settings(self, document):
+        update = validate_settings_document(document)
+        from session_panel.profiles.profile_import import create_backup
+        with self.config_lock, config_file_lock(self.data_dir):
+            config = normalized_config(self.config())
+            config["integrations"] = update["integrations"]
+            validate_config(config)
+            backup = create_backup(self)
+            self._write_config(config)
+        return {"status": "ok", "backup_path": str(backup), "restart_required": True,
+                "integrations": integration_summary(config["integrations"])}
+
+    def integrations(self):
+        return normalized_config(self.config())["integrations"]
+
+    def status(self):
+        return {"data_dir": str(self.data_dir), "integrations": integration_summary(self.integrations())}
 
     def codex_threads(self, offset=0):
         config = self.config()["codex"]
@@ -153,28 +262,52 @@ class Profile:
         value.update({"status": status, "reason": None if status == "available" else status})
         return value
 
-    def public(self):
+    def public(self, *, startup_integrations=None):
         receipt = self.store.import_receipt()
         empty = self.store.is_empty()
-        return {"version": 1, "data_dir": str(self.data_dir), "config": self.config(),
+        config = self.config()
+        integrations = normalized_config(config)["integrations"]
+        return {"version": 1, "data_dir": str(self.data_dir),
+                "config": {"version": config["version"], "codex": copy.deepcopy(config["codex"])},
+                "integrations": integration_summary(integrations),
+                "restart_required": startup_integrations is not None and integrations != startup_integrations,
                 "codex_source": self.codex_threads(), "can_import": empty, "import_receipt": receipt,
                 "import_reason": "already_imported" if receipt else None if empty else "profile_not_empty"}
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="恢复管理备份到另一个空目录")
+    parser = argparse.ArgumentParser(description="初始化本机工作台、检查或导入接入设置、恢复管理备份")
     commands = parser.add_subparsers(dest="command", required=True)
     restore = commands.add_parser("restore")
     restore.add_argument("--backup", required=True)
     restore.add_argument("--data-dir", required=True)
+    for name in ("init", "status", "import-settings", "validate-settings"):
+        command = commands.add_parser(name)
+        if name != "validate-settings":
+            command.add_argument("--data-dir")
+        if name in ("import-settings", "validate-settings"):
+            command.add_argument("--file", required=True)
     args = parser.parse_args(argv)
     from session_panel.profiles.profile_import import restore_backup
     try:
-        path = restore_backup(args.backup, args.data_dir)
+        if args.command == "restore":
+            path = restore_backup(args.backup, args.data_dir)
+            print(f'恢复目录：{path}\n启动：python -m session_panel.gateway --data-dir "{path}" --port 14401')
+        elif args.command == "validate-settings":
+            document = read_settings_document(args.file)
+            print(json.dumps({"status": "valid", "integrations": integration_summary(document["integrations"])}, ensure_ascii=False))
+        else:
+            document = read_settings_document(args.file) if args.command == "import-settings" else None
+            profile = Profile.open(args.data_dir)
+            value = profile.import_settings(document) if document is not None else profile.status()
+            print(json.dumps(value, ensure_ascii=False))
+            if args.command in ("init", "import-settings"):
+                print(f'启动或重启后生效：python -m session_panel.gateway --data-dir "{profile.data_dir}"')
     except (ProfileError, OSError, ValueError) as error:
-        print(f"恢复失败：{error}", file=sys.stderr)
+        detail = ({"reason": error.reason, "field": error.field, "message": error.message}
+                  if isinstance(error, ProfileError) else {"reason": "storage_error"})
+        print(json.dumps(detail, ensure_ascii=False), file=sys.stderr)
         return 1
-    print(f'恢复目录：{path}\n启动：python -m session_panel.gateway --data-dir "{path}" --port 14401')
     return 0
 
 

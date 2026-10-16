@@ -1,4 +1,8 @@
+import copy
+import io
 import json
+import sys
+from types import SimpleNamespace
 import os
 import re
 import subprocess
@@ -11,8 +15,9 @@ from unittest.mock import Mock, patch
 
 from session_panel.sessions import remote_probe
 from session_panel.sessions.service import RemoteClient, SessionService
-from session_panel.sessions.source import MAX_TRANSCRIPT_BYTES, MAX_RESPONSE_BYTES, SOURCE
+from session_panel.sessions.source import MAX_TRANSCRIPT_BYTES, MAX_RESPONSE_BYTES
 from tests.backend.test_observation import MAIN
+from tests.fixtures.integration_config import integration_config
 
 
 FIELDS = {"type", "uuid", "session_id", "message", "parent_tool_use_id", "parent_agent_id"}
@@ -189,10 +194,10 @@ class MessageTests(unittest.TestCase):
 
     def test_message_ssh_timeout_and_exact_runtime_filtered(self):
         runner = Mock(side_effect=subprocess.TimeoutExpired("ssh", 20))
-        client = RemoteClient(runner)
+        client = RemoteClient(runner, config=integration_config()["integrations"]["remote"])
         result = client.read_messages(MAIN)
         self.assertEqual(result["reason"], "reader_timeout")
-        self.assertIn("/session-panel-reader/.venv/bin/python - messages", runner.call_args.args[0][-1])
+        self.assertEqual("/home/example/reader/bin/python -", runner.call_args.args[0][-1])
         self.assertEqual(result["items"], [])
         self.assertIsNone(result["total_visible"])
         self.assertEqual(result["reader_version"], "0.2.163")
@@ -216,6 +221,87 @@ class MessageTests(unittest.TestCase):
         self.assertEqual(maximum[0], 1)
         reader.observe_source.assert_not_called()
         self.assertNotIn("synthetic", json.dumps(service._snapshot))
+
+
+class ProbePayloadTests(unittest.TestCase):
+    def setUp(self):
+        self.config = integration_config()["integrations"]["remote"]
+        self.context = patch.multiple(remote_probe, SOURCE=None, HOME=None, SLOT_FILES={}, MCP_VERSION="1.30.0")
+        self.context.start()
+        self.addCleanup(self.context.stop)
+
+    def payload(self, mode="observe"):
+        return RemoteClient(config=self.config)._payload(mode, None if mode == "observe" else {
+            "session_id": MAIN, "offset": None, "limit": 20, "revision": None})
+
+    def invoke(self, payload):
+        output = io.StringIO()
+        with patch.object(remote_probe.sys, "stdout", output):
+            remote_probe.main(payload)
+        return json.loads(output.getvalue())
+
+    def test_invalid_payload_never_enters_observer_or_reader(self):
+        payload = self.payload()
+        for candidate in (None, {}, {**payload, "extra": 1}, {**payload, "mode": "exec"},
+                          {**self.payload("messages"), "request": {"session_id": MAIN, "limit": False,
+                                                                    "offset": None, "revision": None}}):
+            with self.subTest(candidate=candidate), patch.object(remote_probe, "observe_source") as observer, \
+                    patch.object(remote_probe, "read_messages") as reader:
+                result = self.invoke(candidate)
+                self.assertEqual(result["reason"], "invalid_request")
+                self.assertIsNone(result["source"])
+                observer.assert_not_called(); reader.assert_not_called()
+
+    def test_valid_payload_selects_fixed_operations_and_old_reader_has_upgrade_hint(self):
+        for version in ("1.26.0", "1.30.0"):
+            payload = self.payload(); payload["reader_mcp_version"] = version
+            with patch.object(remote_probe, "observe_source", side_effect=lambda: {
+                    "ok": True, "source": remote_probe.SOURCE}) as observer:
+                result = self.invoke(payload)
+            observer.assert_called_once_with()
+            self.assertEqual(result["source"], self.config["source"])
+            self.assertEqual(bool(result.get("reader_upgrade_required")), version == "1.26.0")
+            self.assertEqual(remote_probe.HOME, self.config["home"])
+            self.assertEqual(remote_probe.SLOT_FILES, self.config["slot_files"])
+        request = self.payload("messages")
+        with patch.object(remote_probe, "read_messages", return_value={"available": True}) as reader:
+            self.assertTrue(self.invoke(request)["available"])
+        reader.assert_called_once_with(**request["request"])
+
+    def test_user_home_config_and_resolved_root_all_remain_exact(self):
+        source = self.config["source"]
+        fake_pwd = SimpleNamespace(getpwuid=lambda _uid: SimpleNamespace(pw_name=source["user"]))
+        remote_probe.SOURCE, remote_probe.HOME = copy.deepcopy(source), self.config["home"]
+        with patch.dict(sys.modules, {"pwd": fake_pwd}), patch.object(remote_probe.os, "getuid", return_value=1000, create=True), \
+                patch.object(remote_probe.Path, "home", return_value=self.config["home"]), \
+                patch.object(remote_probe.Path, "resolve", autospec=True, side_effect=lambda path, **_: path), \
+                patch.dict(remote_probe.os.environ, {"CLAUDE_CONFIG_DIR": source["config_dir"]}, clear=True):
+            remote_probe.fixed_source_check()
+            for failed in ("user", "home", "config", "resolved_root"):
+                with self.subTest(failed=failed):
+                    context = (patch.object(fake_pwd, "getpwuid", return_value=SimpleNamespace(pw_name="other"))
+                               if failed == "user" else patch.object(remote_probe.Path, "home", return_value="/srv/other-home")
+                               if failed == "home" else patch.dict(remote_probe.os.environ, {"CLAUDE_CONFIG_DIR": "/srv/other-home/.claude"})
+                               if failed == "config" else patch.object(remote_probe.Path, "resolve", return_value=Path("/different")))
+                    with context, self.assertRaises(remote_probe.ProbeError) as raised:
+                        remote_probe.fixed_source_check()
+                    self.assertEqual(raised.exception.reason, "source_mismatch")
+
+    def test_supported_reader_versions_are_checked_exactly(self):
+        reader = Mock()
+        for version in ("1.26.0", "1.30.0"):
+            remote_probe.MCP_VERSION = version
+            actual = {"claude-agent-sdk": "0.2.163", "mcp": version}
+            with patch.dict(sys.modules, {"claude_agent_sdk": SimpleNamespace(get_session_messages=reader)}), \
+                    patch.object(remote_probe.importlib.metadata, "version", side_effect=actual.__getitem__):
+                self.assertIs(remote_probe.reader_capability(), reader)
+                actual["mcp"] = "wrong"
+                with self.assertRaises(remote_probe.ProbeError) as raised:
+                    remote_probe.reader_capability()
+                self.assertEqual(raised.exception.reason, "sdk_version_mismatch")
+                actual["mcp"], actual["claude-agent-sdk"] = version, "wrong"
+                with self.assertRaises(remote_probe.ProbeError):
+                    remote_probe.reader_capability()
 
 
 if __name__ == "__main__":

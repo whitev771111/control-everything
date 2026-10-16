@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
+from session_panel.http.gateway import PROFILE_CAPABILITIES
 from session_panel.profiles.profile import Profile
 from session_panel.workspace.service import WorkspaceService
 from tests.backend import test_execution_http
@@ -28,7 +29,8 @@ class ProfileHTTPTests(unittest.TestCase):
         self.news.get.return_value = {"status": "fixture-news"}
         self.workspace = WorkspaceService(profile=self.profile, quota_source=self.quota, news_source=self.news)
         self.server = SimpleNamespace(profile=self.profile, workspace=self.workspace, service=None, execution=None,
-                                      execution_reason=None, expected_host="127.0.0.1:1234", origin="http://127.0.0.1:1234", csrf_token="token")
+                                      execution_reason=None, capabilities=dict(PROFILE_CAPABILITIES), startup_integrations=self.profile.integrations(),
+                                      launchers=None, source=None, expected_host="127.0.0.1:1234", origin="http://127.0.0.1:1234", csrf_token="token")
 
     def test_default_routes_no_personal_or_execution_source(self):
         targets = ["session_panel.http.gateway.catalog", "session_panel.http.gateway.pulse", "session_panel.http.gateway.start",

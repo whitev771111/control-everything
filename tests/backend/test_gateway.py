@@ -12,7 +12,9 @@ from unittest.mock import Mock, patch
 from email.message import Message
 
 from session_panel.http.gateway import WEB, PanelHandler, build_profile_server, make_server
-from session_panel.sessions.source import SOURCE
+from tests.fixtures.integration_config import integration_config
+
+SOURCE = integration_config()["integrations"]["remote"]["source"]
 
 SESSION_ID = "b7ed3430-9064-4153-894d-d295a388a572"
 OTHER_ID = "6ee281b5-e4f7-43ce-b1b7-92da287e5809"
@@ -25,12 +27,13 @@ PAGE = {"available": True, "items": [MESSAGE], "revision": "fixture-v1", "offset
 
 def fake_service():
     service = Mock()
+    service.source = copy.deepcopy(SOURCE)
     service.list_sessions.return_value = {"status": "observed", "source": SOURCE, "observation_revision": "fixture-observation",
         "sessions": [{"session_id": SESSION_ID, "cwd": "/same"}, {"session_id": OTHER_ID, "cwd": "/same"}]}
     service.get_session_status.return_value = {"status": "observed", "session_id": SESSION_ID, "source": SOURCE}
     service.get_session_messages.return_value = copy.deepcopy(PAGE)
     service.terminal.focus_session.return_value = {"focused": True, "status": "confirmed", "session_id": SESSION_ID, "pane_id": "terminal_2", "source": SOURCE}
-    service.terminal.workbench.public_status.return_value = {"session": "workbench-v4", "status": "unknown", "can_connect": False, "can_focus": False}
+    service.terminal.workbench.public_status.return_value = {"session": integration_config()["integrations"]["terminal"]["session"], "status": "unknown", "can_connect": False, "can_focus": False}
     service.terminal.connect_workbench.return_value = {"connected": True, "launched": False, "status": "unique_observed", "cleanup": "not_needed"}
     return service
 

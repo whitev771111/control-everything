@@ -27,7 +27,12 @@ class CodexIndexTests(unittest.TestCase):
     def add(self, index, *, archived=0, source='cli', updated=1700000001):
         with closing(sqlite3.connect(self.path)) as connection, connection:
             connection.execute('INSERT INTO threads VALUES(?,?,?,?,?,?,?)',
-                (thread_id(index), r'\\?\E:\same\<synthetic-project>', 1700000000, updated, archived, source, 'synthetic-not-readable'))
+                (thread_id(index), 'C:/example/same-project', 1700000000, updated, archived, source, 'synthetic-not-readable'))
+
+    def test_absent_database_never_opens_or_probes_a_path(self):
+        with patch('session_panel.sessions.codex_index.sqlite3.connect') as connect, patch.object(Path, 'resolve') as resolve:
+            self.assertEqual(list_threads(), unavailable(0))
+        connect.assert_not_called(); resolve.assert_not_called()
 
     def test_empty_is_valid_but_missing_and_bad_schema_are_unavailable(self):
         self.assertEqual((list_threads(db_path=self.path)['available'], list_threads(db_path=self.path)['total_visible']), (True, 0))

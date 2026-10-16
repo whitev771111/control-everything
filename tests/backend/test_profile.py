@@ -15,7 +15,7 @@ from session_panel.workspace.store import WorkspaceError, BASE_SCHEMA
 class ProfileTests(unittest.TestCase):
     def test_path_priority_and_platform_defaults(self):
         with TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             env = {"SESSION_PANEL_DATA_DIR": str(root / "env"), "LOCALAPPDATA": str(root / "local")}
             self.assertEqual(resolve_data_dir(str(root / "cli"), environ=env), root / "cli")
             self.assertEqual(resolve_data_dir(environ=env), root / "env")

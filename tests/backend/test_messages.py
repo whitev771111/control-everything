@@ -30,7 +30,7 @@ class SixFieldMessage:
 class MessageTests(unittest.TestCase):
     def setUp(self):
         self.temporary = TemporaryDirectory()
-        self.projects = Path(self.temporary.name) / "projects"
+        self.projects = Path(self.temporary.name).resolve() / "projects"
         self.cwd = "/srv/projects/synthetic"
         self.directory = self.projects / re.sub(r"[^a-zA-Z0-9]", "-", self.cwd)
         self.directory.mkdir(parents=True)

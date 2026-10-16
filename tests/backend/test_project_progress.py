@@ -56,7 +56,7 @@ class ProjectProgressTests(unittest.TestCase):
     def setUp(self):
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.binding = self.root / "project"
         self.binding.mkdir()
         self.project = {"id": "example", "name": "样例", "root": str(self.binding),

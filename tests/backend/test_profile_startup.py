@@ -17,7 +17,7 @@ class ProfileStartupTests(unittest.TestCase):
             self.assertIsNone(server.service)
             self.assertIsNone(server.execution)
             self.assertIsNone(server.garden)
-            self.assertEqual(server.profile.data_dir, Path(directory))
+            self.assertEqual(server.profile.data_dir, Path(directory).resolve())
             self.assertEqual(set(path.name for path in Path(directory).iterdir()), {"profile.json", "workspace-state.sqlite3"})
 
     def test_cli_exact_port_and_data_arguments(self):

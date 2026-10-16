@@ -52,7 +52,7 @@ class ExecutionTests(unittest.TestCase):
     def setUp(self):
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.roots = {name: self.root / name for name in ("one", "two", "three")}
         self.roots["child"] = self.roots["one"] / "child"
         for path in self.roots.values():

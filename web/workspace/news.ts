@@ -112,6 +112,8 @@
   const warnings: Partial<Record<Stream, string>> = {}, rechecks: Partial<Record<Stream, boolean>> = {};
   let list: HTMLElement, sources: HTMLElement, status: HTMLElement, preview: HTMLElement | null = null;
   let refresh: HTMLButtonElement | null = null, selector: HTMLSelectElement | null = null;
+  let search: HTMLInputElement | null = null;
+  const expanded = new Map<string, boolean>();
   const mono = (): number => performance.now();
   function sampleAge(sample: Sample): number {
     const wall = Date.now(), currentMono = mono();
@@ -119,17 +121,22 @@
     sample.wall = wall; sample.mono = currentMono; return sample.age;
   }
   function isOld(source: Source, age: number): boolean { return source.status !== 'available' || source.cache_age_ms + age >= 900000 || age >= source.fresh_for_ms; }
-  function card(item: Item, sample: Sample, age: number, local: LocalDay | null): HTMLElement {
+  function card(item: Item, sample: Sample, age: number, local: LocalDay | null, scope = 'list'): HTMLElement {
     const source = sample.value.sources.find(row => row.id === item.source_id);
     const article = element('article', 'daily-news-card'); article.dataset.newsId = item.id;
+    article.dataset.readingKey = JSON.stringify([scope, sample.value.stream, item.source_id, item.id]);
+    article.dataset.source = item.source_id;
     const old = !!warnings[sample.value.stream] || !!rechecks[sample.value.stream] || !source || isOld(source, age);
     article.dataset.freshness = old ? 'stale' : 'available';
-    article.append(element('span', 'news-source-label', item.source_name));
+    const masthead = element('div', 'news-card-header');
+    masthead.append(element('span', 'news-source-label', item.source_name), element('span', 'news-freshness', old ? '待更新' : '缓存有效'));
+    article.append(masthead);
     const heading = element('h3'); heading.append(safeLink(item.title, item.url)); article.append(heading);
     const published = item.content_origin === 'hn_submission' ? `文章发布时间未知 · HN收录 ${displayTime(item.submitted_at, local)}` : `发布 ${displayTime(item.published_at, local)}`;
     const compactDate = local ? published.replace(/（[^）]*）/g, '').trim() : published;
     article.append(element('p', 'news-meta', `${compactDate}${old ? ' · 旧缓存或状态未确认' : ''}`));
     const details = element('details', 'news-article-details'); details.append(element('summary', '', '文章详情'));
+    details.open = expanded.get(article.dataset.readingKey) || false;
     if (item.title_truncated) details.append(element('p', 'news-meta', '标题节选'));
     if (item.published_at === null && item.content_origin !== 'hn_submission') details.append(element('p', 'news-meta', `出版日期未知${item.date_reason === 'timezone_unknown' ? '：来源未给出可判定时区' : ''}${item.published_raw ? ` · 来源日期：${item.published_raw}` : ''}`));
     if (item.updated_at) details.append(element('p', 'news-meta', `来源更新 ${displayTime(item.updated_at, local)}（不作出版时间）`));
@@ -140,6 +147,15 @@
   }
   function render(): void {
     if (stopped) return;
+    let focusedKey: string | undefined, focusedTag: string | undefined;
+    // Read native disclosure state before replacing cards, including pending toggles.
+    for (const root of [list, preview]) if (root) for (const node of root.querySelectorAll<HTMLElement>('[data-reading-key]')) {
+      const key = node.dataset.readingKey!;
+      expanded.set(key, !!node.querySelector<HTMLDetailsElement>('details')?.open);
+      if (document.activeElement && node.contains(document.activeElement)) {
+        focusedKey = key; focusedTag = document.activeElement.tagName.toLowerCase();
+      }
+    }
     const local = localDay(), sample = samples[selected], warning = warnings[selected] || '', rechecking = !!rechecks[selected];
     list.replaceChildren(); sources.replaceChildren();
     const bounded = selected === 'hn' ? 'Hacker News 前页，非默认、非AI筛选；最多4条，仅HN收录时间。' : '本次返回窗口最多20条/源、合计60条；不代表全站或全日。';
@@ -152,11 +168,17 @@
       for (const source of value.sources) sources.append(element('p', 'source-chip', `${source.name} · ${isOld(source, age) ? '陈旧/不可用' : '缓存有效'} · ${source.reason ? reasonText[source.reason] || '未知原因' : statusText[source.status]} · 扫描${source.scanned_count} / 有效${source.valid_count} / 过滤${source.filtered_count} / 重复${source.duplicate_count} / 返回${source.returned_count}${source.truncated ? '（输出已截断）' : ''} · 采样${displayTime(source.sampled_at, local)} · 上次成功${displayTime(source.last_success_at, local)}`));
       if (!local) list.append(element('p', 'news-notice', '无法判定本地日期；以下日期不计入今日。'));
       if (!value.items.length) list.append(element('p', 'news-notice', value.status === 'available' ? '本次源响应为空。' : '本次没有可展示条目，来源状态见上。'));
-      const groups = selected === 'hn' ? [{ key: 'hn', label: 'HN 已返回条目', items: value.items }] : [
-        { key: 'today', label: '本地今日', items: value.items.filter(item => group(item, local) === 'today') },
-        { key: 'earlier', label: '较早文章', items: value.items.filter(item => group(item, local) === 'earlier') },
-        { key: 'unknown', label: '出版日期未知', items: value.items.filter(item => group(item, local) === 'unknown') },
-        { key: 'future', label: '来源标为未来', items: value.items.filter(item => group(item, local) === 'future') },
+      const query = search?.value.trim().toLocaleLowerCase() || '';
+      const visible = value.items.filter(item => !query || [item.title, item.source_name, item.summary || ''].join(' ').toLocaleLowerCase().includes(query));
+      if (query) {
+        status.textContent += ` · 匹配 ${visible.length}/${value.items.length} 条`;
+        if (!visible.length) list.append(element('p', 'news-notice', '已返回的文章中没有匹配内容，请更换关键词或清空搜索。'));
+      }
+      const groups = selected === 'hn' ? [{ key: 'hn', label: 'HN 已返回条目', items: visible }] : [
+        { key: 'today', label: '本地今日', items: visible.filter(item => group(item, local) === 'today') },
+        { key: 'earlier', label: '较早文章', items: visible.filter(item => group(item, local) === 'earlier') },
+        { key: 'unknown', label: '出版日期未知', items: visible.filter(item => group(item, local) === 'unknown') },
+        { key: 'future', label: '来源标为未来', items: visible.filter(item => group(item, local) === 'future') },
       ];
       for (const section of groups) if (section.items.length) {
         const host = element('section', 'news-day-group'); host.dataset.newsGroup = section.key;
@@ -171,13 +193,19 @@
         const age = sampleAge(ai), today = ai.value.items.filter(item => group(item, local) === 'today').slice(0, 2);
         preview.append(element('p', 'news-meta', `${local ? `本地日期 ${local.day}（${local.zone}）` : '无法判定本地日期'} · ${warnings.ai || rechecks.ai || ai.value.sources.some(source => isOld(source, age)) ? '含陈旧、失败或未确认来源' : '来源缓存有效'} · 返回窗口内精选${today.length}条`));
         if (!today.length) preview.append(element('p', 'news-notice', '本次已返回的文章中未见今日内容。'));
-        for (const item of today) preview.append(card(item, ai, age, local));
+        for (const item of today) preview.append(card(item, ai, age, local, 'preview'));
         const unknown = ai.value.items.filter(item => item.published_at === null).length;
         preview.append(element('p', 'news-meta', `日期未知${unknown}条${ai.value.sources.some(source => source.truncated) ? ' · 来源输出已截断' : ''} · 最多20条/源，不代表全网。`));
         const more = element('a', 'text-link', '查看已返回的旧文章/未知日期 →'); more.href = '#news'; preview.append(more);
       }
     }
     if (refresh) refresh.disabled = inFlight;
+    for (const root of [list, preview]) if (root) for (const node of root.querySelectorAll<HTMLElement>('[data-reading-key]')) {
+      if (node.dataset.readingKey === focusedKey && (focusedTag === 'summary' || focusedTag === 'a')) node.querySelector<HTMLElement>(focusedTag)?.focus({ preventScroll: true });
+    }
+    // Keep only reading state for the bounded cached samples.
+    const liveKeys = new Set(Object.values(samples).flatMap(sample => sample.value.items.flatMap(item => ['list', 'preview'].map(scope => JSON.stringify([scope, sample.value.stream, item.source_id, item.id])))));
+    for (const key of expanded.keys()) if (!liveKeys.has(key)) expanded.delete(key);
   }
   function clearCycle(): void {
     if (pollTimer !== null) clearTimeout(pollTimer); if (deadlineTimer !== null) clearTimeout(deadlineTimer);
@@ -219,6 +247,8 @@
     else {
       list = dom('news-list', 'div'); sources = dom('news-sources', 'div'); status = dom('news-status', 'p'); preview = dom('news-preview', 'div');
       refresh = dom('refresh-news', 'button'); selector = dom('news-stream', 'select');
+      search = dom('news-search', 'input');
+      search.addEventListener('input', render);
       refresh.addEventListener('click', () => begin(true));
       selector.addEventListener('change', () => { clearCycle(); nonce++; selected = selector?.value === 'hn' ? 'hn' : 'ai'; render(); begin(); });
     }

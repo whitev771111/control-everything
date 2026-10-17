@@ -98,3 +98,17 @@ test('usage page has no manual ledger form or record requests', async () => {
   await vm.runInContext(fn + '\nloadUsage()', context);
   assert.deepEqual(reads, ['/api/workspace/usage']);
 });
+
+test('overview reports the tightest window and distinguishes low, exhausted and unknown quotas', () => {
+  const f = fixture(); f.render(quota({ status: 'available', buckets: [
+    { id: 'codex', primary: { used_percent: 10, window_minutes: 300 }, secondary: { used_percent: 85, window_minutes: 10080 } },
+    { id: 'extra', primary: { used_percent: 100, window_minutes: 60 }, secondary: { used_percent: null, window_minutes: null } }
+  ] }));
+  assert.match(f.dependencies.summary.textContent, /最少剩余 0%/);
+  assert.match(f.dependencies.summary.textContent, /extra · 1 小时窗口/);
+  const rows = descendants(f.dependencies.root).filter(node => node.className === 'quota-window');
+  assert.deepEqual(rows.map(row => row.dataset.level), ['normal', 'low', 'empty', 'unknown']);
+  assert.match(rows[0].textContent, /5 小时额度/); assert.match(rows[1].textContent, /7 天额度/);
+  assert.match(rows[1].textContent, /余量较低/); assert.match(rows[2].textContent, /本窗口已用尽/);
+  assert.match(rows[3].textContent, /尚无可用数值/);
+});

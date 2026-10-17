@@ -8,14 +8,16 @@ function render(quota, { root, summary, refreshButton, el, dateTime, reason, sta
   root.replaceChildren(); summary.replaceChildren();
   root.dataset.status = quota.status;
   summary.dataset.status = quota.status;
-  const firstBucket = (quota.buckets || []).find(bucket => [bucket.primary, bucket.secondary].some(window => typeof window?.used_percent === 'number' && Number.isFinite(window.used_percent)));
-  const firstWindow = firstBucket && [firstBucket.primary, firstBucket.secondary].find(window => typeof window?.used_percent === 'number' && Number.isFinite(window.used_percent));
+  const windows = (quota.buckets || []).flatMap(bucket => [bucket.primary, bucket.secondary].map(window => ({ bucket, window })))
+    .filter(({ window }) => typeof window?.used_percent === 'number' && Number.isFinite(window.used_percent));
+  const tightest = windows.sort((a, b) => b.window.used_percent - a.window.used_percent)[0];
+  const firstBucket = tightest?.bucket, firstWindow = tightest?.window;
+  const durationLabel = minutes => minutes == null ? '时长未知' : minutes >= 1440 && minutes % 1440 === 0 ? `${minutes / 1440} 天` : minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60} 小时` : `${minutes} 分钟`;
   const remaining = firstWindow ? Math.max(0, Math.min(100, 100 - firstWindow.used_percent)).toFixed(1).replace(/\.0$/, '') : null;
-  summary.append(el('h2', '', firstWindow ? `剩余 ${remaining}%` : quotaTitle(quota)));
+  summary.append(el('h2', '', firstWindow ? `最少剩余 ${remaining}%` : quotaTitle(quota)));
   const brief = quota.status === 'not_checked' ? '点击「查询额度」读取官方只读接口。页面不会自动启动查询。' : ['unavailable', 'stale'].includes(quota.status) ? quotaIssue(quota) : '各窗口的已用与剩余比例见用量页。';
   if (firstWindow) {
-    const minutes = firstWindow.window_minutes;
-    const duration = minutes === null ? '窗口时长未知' : minutes >= 1440 && minutes % 1440 === 0 ? `${minutes / 1440} 天窗口` : `${minutes} 分钟窗口`;
+    const duration = `${durationLabel(firstWindow.window_minutes)}窗口`;
     summary.append(el('p', 'muted', `${firstBucket.id} · ${duration} · 已用 ${firstWindow.used_percent}%${quota.status === 'stale' ? ' · 旧缓存' : ''}`));
     if (quota.status === 'stale') summary.append(el('p', 'muted', brief));
   } else summary.append(el('p', 'muted', brief));
@@ -34,11 +36,12 @@ function render(quota, { root, summary, refreshButton, el, dateTime, reason, sta
     for (const [key, label] of [['primary', '主窗口'], ['secondary', '次窗口']]) {
       const window = bucket[key]; if (!window) continue;
       const row = el('div', 'quota-window'), heading = el('div', 'window-heading');
-      const duration = window.window_minutes === null ? '时长未知' : window.window_minutes >= 1440 && window.window_minutes % 1440 === 0 ? `${window.window_minutes / 1440} 天` : `${window.window_minutes} 分钟`;
+      const duration = durationLabel(window.window_minutes);
       const valid = typeof window.used_percent === 'number' && Number.isFinite(window.used_percent);
       heading.append(el('span', '', `${duration}额度`), el('strong', '', valid ? `剩余 ${Math.max(0, Math.min(100, 100 - window.used_percent)).toFixed(1).replace(/\.0$/, '')}%` : '剩余未知'));
       const dial = el('div', 'quota-dial');
       const available = valid ? Math.max(0, Math.min(100, 100 - window.used_percent)) : null;
+      row.dataset.level = available === null ? 'unknown' : available === 0 ? 'empty' : available <= 20 ? 'low' : 'normal';
       dial.dataset.known = String(valid);
       const chart = el('svg'); chart.setAttribute('viewBox', '0 0 160 160'); chart.setAttribute('aria-hidden', 'true');
       for (const filled of [false, true]) {
@@ -50,6 +53,7 @@ function render(quota, { root, summary, refreshButton, el, dateTime, reason, sta
       dial.append(chart);
       dial.append(el('strong', '', valid ? `${Number(available.toFixed(1))}%` : '—'), el('span', '', valid ? '剩余额度' : '额度未知'));
       row.append(heading, dial);
+      row.append(el('span', 'quota-level', available === null ? '尚无可用数值' : available === 0 ? '本窗口已用尽' : available <= 20 ? '余量较低 · 不超过 20%' : '窗口剩余额度'));
       if (valid) { const bar = el('progress'); bar.max = 100; bar.value = window.used_percent; bar.setAttribute('aria-label', `${label}已用 ${window.used_percent}%`); row.append(bar); }
       row.append(el('p', '', `${valid ? `已用 ${window.used_percent}% · ` : ''}重置：${dateTime(window.resets_at)}（北京时间）`)); section.append(row);
     }

@@ -17,6 +17,13 @@ class Element {
   get textContent() { return this.text + this.children.map(node => node.textContent).join(''); }
   set innerHTML(_value) { throw new Error('HTML sink forbidden'); }
   addEventListener(name, callback) { this.listeners[name] = callback; }
+  querySelectorAll(selector) {
+    const all = this.children.flatMap(node => [node, ...node.querySelectorAll('*')]);
+    return all.filter(node => selector === '*' || (selector === '[data-reading-key]' ? node.dataset.readingKey : node.tagName.toLowerCase() === selector));
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  contains(node) { return this === node || this.querySelectorAll('*').includes(node); }
+  focus() { this.ownerDocument.activeElement = this; }
 }
 function fixture(options = {}) {
   const source = fs.readFileSync(path.join(repo, 'web/workspace/news.js'), 'utf8');
@@ -24,7 +31,7 @@ function fixture(options = {}) {
   const nodes = new Map(), reads = [], writes = [], timers = new Map(), events = {}, documentEvents = {};
   let wall = Date.parse(options.now || '2026-10-17T00:30:00Z'), monotonic = 0, timerId = 0, zone = options.zone || 'Asia/Shanghai';
   const node = id => { if (!nodes.has(id)) nodes.set(id, new Element(options.wrongTag === id ? 'span' : tags.get(id) || 'div')); return nodes.get(id); };
-  const document = { hidden: false, getElementById: id => options.missing === id ? null : node(id), createElement: tag => new Element(tag), addEventListener: (name, callback) => { documentEvents[name] = callback; } };
+  const document = { hidden: false, activeElement: null, getElementById: id => options.missing === id ? null : node(id), createElement: tag => Object.assign(new Element(tag), { ownerDocument: document }), addEventListener: (name, callback) => { documentEvents[name] = callback; } };
   const window = { addEventListener: (name, callback) => { events[name] = callback; } };
   const context = vm.createContext({ document, window, URL, AbortController, console,
     Date: class extends Date { constructor(...args) { super(...(args.length ? args : [wall])); } static now() { return wall; } },
@@ -184,4 +191,21 @@ test('all fixed DOM ids check actual HTML tags and reject missing/wrong elements
     assert.throws(() => fixture({ missing: id }), /新闻页面元素/); assert.throws(() => fixture({ wrongTag: id }), /新闻页面元素/);
   }
   for (const id of ['news-zone', 'legacy-news-sources', 'legacy-news-status']) assert.throws(() => fixture({ legacy: true, missing: id }), /新闻页面元素/);
+});
+
+test('local search matches title, source and summary without network and keeps reading state', async () => {
+  const f = fixture(); await deliver(f, envelope([item({ title: 'Codex update', summary: 'A long research summary' }), item({ id: 'other', title: 'Other story', summary: 'Different topic' })]));
+  const first = f.cards('news-list')[0]; first.querySelector('details').open = true;
+  first.querySelector('summary').focus();
+  await f.advance(60000);
+  assert.equal(f.cards('news-list')[0].querySelector('details').open, true);
+  assert.equal(f.document.activeElement, f.cards('news-list')[0].querySelector('summary'));
+  assert.equal(f.cards('news-preview')[0].querySelector('details').open, false);
+  f.node('news-search').value = 'RESEARCH'; f.node('news-search').listeners.input();
+  assert.equal(f.cards('news-list').length, 1); assert.match(f.node('news-status').textContent, /匹配 1\/2/);
+  f.node('news-search').value = 'no matching story'; f.node('news-search').listeners.input();
+  assert.equal(f.cards('news-list').length, 0); assert.match(f.node('news-list').textContent, /没有匹配内容/);
+  f.node('news-search').value = ''; f.node('news-search').listeners.input();
+  assert.equal(f.cards('news-list')[0].querySelector('details').open, true);
+  assert.equal(f.reads.length, 1); assert.equal(f.writes.length, 0);
 });

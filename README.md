@@ -4,7 +4,9 @@
 
 ## 源码与测试目录
 
-后端保留 `session_panel` 包，内部按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 六个功能包组织。前端使用原生 HTML/CSS/JS，页面资源放在 `web/sessions`、`web/progress`、`web/workspace`，无需构建步骤。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+后端保留 `session_panel` 包，内部按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 六个功能包组织。前端使用原生 HTML/CSS 和普通脚本，页面资源放在 `web/sessions`、`web/progress`、`web/workspace`；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+
+本机观察模块以 `web/workspace/observation.ts` 和邻近 `observation.types.d.ts` 为手写源码，`observation.js` 为固定 TypeScript 5.9.3 的生成物；其余模块继续手写 JS。修改观察 TS 后运行 `node scripts/build_observation.cjs build`，连同生成 JS 提交，再运行 `node scripts/build_observation.cjs check` 比较完整字节；不要手改生成物。Node24/项目内固定工具的显式准备、缺工具失败与全部验证命令见[观察前端 TypeScript 开发](CONTRIBUTING.md#观察前端-typescript-开发)。原 `/observation.js` URL 和普通脚本加载顺序保留，不增加常驻 Node 服务。
 
 测试按 `tests/backend`（Python）、`tests/frontend`（纯 Node 合同）、`tests/e2e`（浏览器/协议 harness）和 `tests/fixtures`（合成替身）归类。新增功能放入所属功能目录，测试按类型放置；详细职责与验证命令见 [参与开发](CONTRIBUTING.md)。原有 `python -m session_panel.gateway` 等外部 CLI 继续使用，内部代码直接导入功能包实现。
 
@@ -229,11 +231,12 @@ enabled_tools = ["list_sessions", "get_session_status", "get_session_messages"]
 
 ## 验证与撤销
 
-基础开发验证使用 Windows、Python 3.12、Node.js 24；无需作者资源。浏览器 harness 的 Playwright/Edge 安装与 fixture 执行见 [参与开发](CONTRIBUTING.md)。以下浏览器命令由验收负责人执行，结果与单元测试分别记录：
+基础开发验证使用 Windows、Python 3.12、Node.js 24；无需作者资源。先按[参与开发](CONTRIBUTING.md#观察前端-typescript-开发)准备固定观察编译器，再运行 check 和六份 Node 合同。浏览器 harness 的 Playwright/Edge 安装与 fixture 执行见 [参与开发](CONTRIBUTING.md)。以下浏览器命令由验收负责人执行，结果与单元测试分别记录：
 
 ```powershell
 & '.venv/Scripts/python.exe' -m unittest discover -s tests -v
-node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs
+node scripts/build_observation.cjs check
+node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs
 node tests/e2e/verify_workspace.cjs --fixture
 node tests/e2e/verify_session_panel.cjs --fixture
 ```

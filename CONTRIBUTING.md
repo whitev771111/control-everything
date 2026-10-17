@@ -4,7 +4,7 @@
 
 ## 功能目录与新增代码归属
 
-管理后端沿用 Python，Windows 进程观察由 Rust 组件负责；前端沿用 HTML/CSS/JS，不增加前端构建或包安装层。后端按实际职责组织，新增代码优先放入下表对应功能包；不为每个功能预建空的通用分层。
+管理后端沿用 Python，Windows 进程观察由 Rust 组件负责；前端保留 HTML/CSS 和普通脚本，本机观察模块使用 TypeScript 源码及已生成 JS，工具只在开发和验证时使用。普通启动无需 Node/npm，其他模块继续手写 JS。后端按实际职责组织，新增代码优先放入下表对应功能包；不为每个功能预建空的通用分层。
 
 | 后端目录 | 职责 |
 |---|---|
@@ -24,17 +24,56 @@
 
 ## 环境和验证
 
-使用 Windows、Python 3.12 和 Node.js 24。Python 全套测试包含 Windows 原生接口；纯 Node 合同只依赖内置模块，无需根目录 npm 安装。以下创建命令仅适用于没有 `.venv` 的新检出；已有环境先确认归属和版本，不覆盖他人的环境，必要时选择独立工作树。再从仓库根目录执行：
+使用 Windows、Python 3.12 和 Node.js 24。Python 全套测试包含 Windows 原生接口；观察类型/构建合同另需下节固定项目编译器，没有根目录 npm 包或运行时 Node 桥接。以下创建命令仅适用于没有 `.venv` 的新检出；已有环境先确认归属和版本，不覆盖他人的环境，必要时选择独立工作树。再从仓库根目录执行：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs
 ```
 
 基础测试使用合成配置、临时文件和 mock，不需要作者服务器或个人工具。首次完整测试涉及固定 Gitleaks 检查时，先按下文安装已核验工具；不能把缺工具跳过称为完整检查通过。本机 requirements 固定 MCP 1.30.0，远端新 reader 环境另用 requirements-reader.txt，不能把两套环境混为一次升级。
+
+### 观察前端 TypeScript 开发
+
+仅 `web/workspace/observation.ts` 与 `observation.types.d.ts` 是本包编译输入；`tools/typescript/observation.manifest.json` 固定唯一输出 `web/workspace/observation.js`。`tsconfig.observation.json` 开严格检查、禁止 map/inline源码及声明输出，保持普通 IIFE/Window API；不引入 React/Vite/模块加载器。任务中心等现有 JS 保留独立归属。
+
+固定官方 `typescript@5.9.3`，真实 package-lock.json 一起提交。已有正确项目工具不重复准备；缺失时 build/check 明确非零，不联网、不找全局 tsc。首次或干净复现的准备是单独显式动作，仅作用于自己检出的 `tools/typescript/node_modules`；`npm ci` 会清该工具包依赖目录，先确认归属。下面在专用 PowerShell 会话从仓库根执行，两个通用示例路径须替换为已安装的 Node24 和 npm CLI，不能让宿主 npm.cmd 偷换 Node：
+
+```powershell
+$tsNode = 'C:/example/node24/node.exe'
+$tsNpmCli = 'C:/example/npm/bin/npm-cli.js'
+Get-ChildItem Env:NPM_CONFIG_* | ForEach-Object { Remove-Item -LiteralPath "Env:$($_.Name)" }
+Remove-Item -LiteralPath Env:NODE_OPTIONS, Env:NODE_PATH -ErrorAction SilentlyContinue
+$tsPreparation = Join-Path (Get-Location) 'work/frontend-observation/npm-ci'
+New-Item -ItemType Directory -Path $tsPreparation -Force | Out-Null
+$env:NPM_CONFIG_CACHE = Join-Path $tsPreparation 'cache'
+$env:NPM_CONFIG_USERCONFIG = Join-Path $tsPreparation 'user.npmrc'
+$env:NPM_CONFIG_GLOBALCONFIG = Join-Path $tsPreparation 'global.npmrc'
+[System.IO.File]::WriteAllText($env:NPM_CONFIG_USERCONFIG, '')
+[System.IO.File]::WriteAllText($env:NPM_CONFIG_GLOBALCONFIG, '')
+& $tsNode --version
+& $tsNode $tsNpmCli --version
+# Confirm Node v24 before the explicit dependency preparation.
+& $tsNode $tsNpmCli ci --prefix tools/typescript --include=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
+if ($LASTEXITCODE -ne 0) { throw 'Fixed TypeScript preparation failed' }
+```
+
+日常复用已准备工具，从根目录执行；`node`须是上面核过的Node24（可用 `& $tsNode` 替换）：
+
+```powershell
+node scripts/build_observation.cjs typecheck
+node scripts/build_observation.cjs build
+node scripts/build_observation.cjs check
+node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs
+```
+
+修改 TS 后先 build 并提交生成 JS；验证已有交付物时直接 check，不能先 build 洗掉手改字节。编译/emit/校验失败不会覆盖旧 JS；旧 JS 存在也不代表编译成功。check用fresh临时输出比较完整集合/字节，不修产物。源码、类型、配置、package/lock、manifest、builder及生成JS都须进入显式发布候选；缓存、node_modules、日志留ignored work，不能以子集扫描称整包通过。
+
+仅维护者在新建工具包或经审版本更新时重新生成锁：沿用上述隔离配置，`Push-Location tools/typescript` 后执行 `& $tsNode $tsNpmCli install --package-lock-only --include=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/`，检查退出码并在 `finally` 中 `Pop-Location`，随后核 package/lock diff。实际 npm10.9.8 的首次 install --prefix 曾出现路径错误及 file: 自依赖；已验证成功的首次锁生成形式是该专属cwd、**不传prefix**。不要把首次install与消费已有锁的 `npm ci --prefix` 混为一条已验命令；CI保留后一条命令，远端运行仍须另留证。
+
+采用[TypeScript Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API)的完整Program诊断与受控emit，及[npm ci](https://docs.npmjs.com/cli/v10/commands/npm-ci)的锁一致性/不改锁语义；不使用仅转译、全局工具或隐式安装。CI先固定工具准备、再check、再六份Node合同，缺工具或字节漂移即失败；普通用户启动Python仍只读取已交付JS。
 
 ### Windows 原生观察开发
 

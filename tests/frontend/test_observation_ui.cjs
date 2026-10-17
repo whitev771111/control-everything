@@ -7,10 +7,12 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../..');
 const html = fs.readFileSync(path.join(root, 'web/workspace/workspace.html'), 'utf8');
 const source = fs.readFileSync(path.join(root, 'web/workspace/observation.js'), 'utf8');
+const typescript = fs.readFileSync(path.join(root, 'web/workspace/observation.ts'), 'utf8');
+const htmlTags = new Map([...html.matchAll(/<([a-z][a-z0-9-]*)\b[^>]*\bid="([^"]+)"/g)].map(match => [match[2], match[1]]));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 class Element {
-  constructor() { this.value = ''; this.checked = false; this.open = false; this.children = []; this.listeners = {}; this.dataset = {}; this.hidden = false; this.disabled = false; this.text = ''; }
+  constructor(tag = 'div') { this.tagName = tag.toUpperCase(); this.value = ''; this.checked = false; this.open = false; this.children = []; this.listeners = {}; this.dataset = {}; this.hidden = false; this.disabled = false; this.text = ''; }
   append(...items) { for (const item of items) item.parent = this; this.children.push(...items); }
   replaceChildren(...items) { this.children = items; this.text = ''; }
   addEventListener(name, listener) { this.listeners[name] = listener; }
@@ -21,12 +23,12 @@ class Element {
   querySelector(selector) { return this.children.find(item => `.${item.className}` === selector) || this.children.map(item => item.querySelector(selector)).find(Boolean) || null; }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(item => item !== this); }
 }
-function fixture() {
+function fixture(options = {}) {
   const nodes = new Map(), reads = [], writes = [], timers = new Map(), events = {}, documentEvents = {};
   let timerId = 0, clock = Date.now();
-  const project = new Element(), projectCopy = new Element(); project.dataset.projectId = 'alpha'; projectCopy.className = 'project-copy'; project.append(projectCopy);
-  const node = id => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
-  const document = { hidden: false, getElementById: node, createElement: () => new Element(), querySelectorAll: () => [project],
+  const project = new Element('article'), projectCopy = new Element(); project.dataset.projectId = 'alpha'; projectCopy.className = 'project-copy'; project.append(projectCopy);
+  const node = id => { if (!nodes.has(id)) nodes.set(id, new Element(options.wrongTagId === id ? 'div' : htmlTags.get(id) || 'div')); return nodes.get(id); };
+  const document = { hidden: false, getElementById: id => options.missingId === id ? null : node(id), createElement: tag => new Element(tag), querySelectorAll: () => [project],
     addEventListener: (name, listener) => { documentEvents[name] = listener; } };
   const window = { addEventListener: (name, listener) => { events[name] = listener; } };
   const context = vm.createContext({ window, document, Date: class extends Date { static now() { return clock; } }, Map, console,
@@ -57,6 +59,8 @@ const choices = () => ({ config_revision: 1, config_hash: 'hash', status: 'avail
 test('actual HTML loads observation between existing scripts and actual bootstrap starts independently', () => {
   assert.ok(html.indexOf('src="/execution.js"') < html.indexOf('src="/observation.js"'));
   assert.ok(html.indexOf('src="/observation.js"') < html.indexOf('src="/workspace.js"'));
+  assert.ok(html.indexOf('src="/observation.js"') < html.indexOf('src="/task-center.js"'));
+  assert.ok(html.indexOf('src="/task-center.js"') < html.indexOf('src="/workspace.js"'));
   for (const id of ['native-instances', 'native-unassigned', 'native-registrations', 'window-choices-picker']) assert.ok(html.includes(`id="${id}"`));
   const workspace = fs.readFileSync(path.join(root, 'web/workspace/workspace.js'), 'utf8');
   assert.match(workspace, /WorkspaceObservation\?\.start\(\{ fetchJson: api, postJson: post \}\)/);
@@ -297,4 +301,220 @@ test('config pair changes clear picker and separate custom program processes fro
   assert.equal(f.node('window-choices-list').textContent, '');
   assert.equal(f.node('window-choices-picker').hidden, true);
   assert.equal(f.writes.filter(item => item.url.endsWith('/return')).length, 0);
+});
+
+test('all 27 closed DOM ids use their actual HTML tags and missing/wrong tags fail explicitly', () => {
+  const declaration = typescript.match(/const domTags = \{([^]*?)\} as const;/);
+  assert.ok(declaration);
+  const declared = [...declaration[1].matchAll(/'([^']+)': '([^']+)'/g)].map(match => [match[1], match[2]]);
+  assert.equal(declared.length, 27);
+  for (const [id, tag] of declared) assert.equal(htmlTags.get(id), tag, id);
+  assert.throws(() => fixture({ missingId: 'native-observations-section' }), /observation_dom_unavailable/);
+  assert.throws(() => fixture({ wrongTagId: 'registration-form' }), /observation_dom_unavailable/);
+});
+
+test('legal no-sample snapshot is consumed with unknown coverage and no invented availability', async () => {
+  const f = fixture();
+  f.reads[0].resolve({ status: 'unknown', reason: 'connecting', sampled_at_ms: null, generation: null, config_revision: null, config_hash: null,
+    coverage: { status: 'unknown' }, installations: [], resources: [], instances: [], project_refs: [], unassigned: [] });
+  await tick();
+  assert.match(f.node('observation-status').textContent, /覆盖未知/);
+  assert.doesNotMatch(f.node('observation-status').textContent, /观察读取失败/);
+  assert.match(f.node('native-instances').textContent, /数量未知/);
+  assert.equal(f.writes.length, 0);
+});
+
+for (const mode of ['missing', 'null', 'minimal', 'nullable']) test(`observed registration ${mode} keeps factual fallback and never invents a picker grant`, async () => {
+  const f = fixture(), value = snapshot(); value.coverage.status = 'future_coverage';
+  if (mode === 'missing') delete value.registrations;
+  if (mode === 'null') value.registrations = null;
+  if (mode === 'minimal') value.registrations = [{ registration_id: registrationId, status: 'pending' }];
+  if (mode === 'nullable') value.registrations = [{ registration_id: registrationId, status: 'future_status', label: null, category: null, can_pick: null, reason: null }];
+  f.reads[0].resolve(value); await tick();
+  assert.match(f.node('observation-status').textContent, /可用.*覆盖未知/);
+  if (mode === 'minimal' || mode === 'nullable') {
+    assert.match(f.node('native-registrations').textContent, /已登记工具.*安装未核验/);
+    assert.equal(pickerButton(f).disabled, true);
+  } else assert.equal(f.node('native-registrations').children.length, 0);
+  assert.equal(f.writes.length, 0);
+});
+
+for (const mode of ['missing', 'null']) test(`same-version settings accept ${mode} fact collections with empty fallback`, async () => {
+  const f = fixture(), value = snapshot();
+  if (mode === 'missing') delete value.registrations; else value.registrations = null;
+  f.reads[0].resolve(value); await tick();
+  const settings = settingsSnapshot([configuredRow()], 1); settings.hash = 'hash';
+  if (mode === 'missing') { delete settings.validation; delete settings.application; }
+  else { settings.validation = null; settings.application = null; }
+  await openSettings(f, settings);
+  assert.match(f.node('registrations-status').textContent, /已应用同版本新样本/);
+  assert.match(f.node('registrations-list').textContent, /安装未核验.*运行与会话查看观察页/);
+  assert.equal(f.writes.length, 0);
+});
+
+test('actual profile_intent pending validation stays separate from persisted registration fields', async () => {
+  const f = fixture(); f.reads[0].resolve(snapshot()); await tick();
+  const value = settingsSnapshot([configuredRow()], 2);
+  value.validation = [{ registration_id: registrationId, status: 'pending', reason: 'config_pending', source: 'profile_intent', sampled_at_ms: null, duplicate_of_id: null }];
+  await openSettings(f, value);
+  assert.match(f.node('registrations-list').textContent, /安装未核验.*等待后台应用/);
+  assert.doesNotMatch(f.node('registrations-list').textContent, /安装已核验/);
+  assert.equal(f.writes.length, 0);
+});
+
+test('short no-action grant and null resource metrics remain unknown without a return button', async () => {
+  const f = fixture(), value = snapshot();
+  value.instances[0].return_action = { action_id: null, status: 'stale', reason: 'sample_timeout' };
+  value.resources[0] = { resource_id: 'resource', rss_bytes: null, cpu_percent_one_core: null, threads: null, handles: null, metrics_interval_ms: null };
+  f.reads[0].resolve(value); await tick();
+  assert.match(f.node('native-instances').textContent, /工作集未知.*线程 未知.*句柄 未知/);
+  assert.doesNotMatch(f.node('native-instances').textContent, /核验并返回/);
+  assert.equal(f.writes.length, 0);
+});
+
+const badSnapshots = [
+  ['missing coverage', value => { delete value.coverage; }],
+  ...[null, [], 'complete', {}, { status: 1 }].map((coverage, index) => [`bad coverage ${index}`, value => { value.coverage = coverage; }]),
+  ...[null, 1, {}, { registration_id: 1, status: 'pending' }, { registration_id: registrationId },
+    { registration_id: registrationId, status: 1 }, { registration_id: registrationId, status: 'pending', reason: 1 },
+    { registration_id: registrationId, status: 'pending', label: [] }, { registration_id: registrationId, status: 'pending', category: 1 },
+    { registration_id: registrationId, status: 'pending', can_pick: 'true' }].map((row, index) => [`bad observation fact ${index}`, value => { value.registrations = [row]; }]),
+  ['bad resource number', value => { value.resources[0].rss_bytes = '1'; }],
+  ['nonfinite resource number', value => { value.resources[0].rss_bytes = Infinity; }],
+  ['incomplete active grant', value => { delete value.instances[0].return_action.issued_seq; }],
+  ['bad project reference', value => { value.project_refs = [{ project_id: 'alpha', instance_ids: [1] }]; }],
+  ['bad instance pid', value => { value.instances[0].pid = null; }],
+];
+for (const [label, corrupt] of badSnapshots) test(`${label} cannot restore UI trust and clears existing picker`, async () => {
+  const f = fixture(); f.reads[0].resolve(snapshot()); await tick();
+  const old = f.node('native-instances').children[0].children.at(-1);
+  const opening = pickerButton(f).listeners.click(); f.writes[0].resolve(choices()); await opening;
+  await f.advance(2000); const bad = snapshot(); corrupt(bad); f.reads[1].resolve(bad); await tick();
+  assert.match(f.node('observation-status').textContent, /过期.*观察读取失败/);
+  assert.equal(old.disabled, true);
+  assert.equal(f.node('window-choices-list').textContent, '');
+  assert.equal(f.node('window-choices-picker').hidden, true);
+  await old.listeners.click(); assert.equal(f.writes.filter(item => item.url.endsWith('/return')).length, 0);
+});
+
+const badSettings = [
+  ['fact as persisted row', value => { value.registrations = [{ registration_id: registrationId, status: 'pending' }]; }],
+  ['null id persisted row', value => { value.registrations[0].id = null; }],
+  ['bad binding shape', value => { value.registrations[0].binding_state = ['confirmed']; }],
+  ['bad builtin relation', value => { value.registrations[0] = { ...configuredRow(), category: 'builtin', provider_id: 'hermes', locator_kind: 'npm_command' }; }],
+  ['bad application', value => { value.application = { reason: 1 }; }],
+  ...[null, 1, {}, { registration_id: 1, status: 'pending' }, { registration_id: registrationId },
+    { registration_id: registrationId, status: 1 }, { registration_id: registrationId, status: 'pending', reason: 1 }].map((row, index) => [`bad validation ${index}`, value => { value.validation = [row]; }]),
+];
+for (const [label, corrupt] of badSettings) test(`${label} save response preserves the draft and is never replayed`, async () => {
+  const f = fixture(); f.reads[0].resolve(snapshot()); await tick(); await openSettings(f); editFields(f);
+  const saving = submit(f), value = settingsSnapshot([configuredRow()], 1); corrupt(value);
+  f.writes[0].resolve(value); await saving;
+  assert.equal(f.node('registration-path').value, 'C:/example/host.exe');
+  assert.equal(f.node('registration-label').value, 'Example host');
+  assert.doesNotMatch(f.node('registrations-feedback').textContent, /已保存/);
+  assert.equal(f.node('registration-fields').disabled, false);
+  assert.equal(f.writes.length, 1);
+});
+
+test('malformed settings read keeps typed draft and does not request candidates or save', async () => {
+  const f = fixture(); f.reads[0].resolve(snapshot()); await tick();
+  f.node('registration-settings').open = true; f.node('registration-settings').listeners.toggle(); editFields(f);
+  f.reads.at(-1).resolve({ revision: 1, hash: 'hash', registrations: null }); await tick();
+  assert.equal(f.node('registration-path').value, 'C:/example/host.exe');
+  assert.equal(f.reads.filter(item => item.url.endsWith('/candidates')).length, 0);
+  assert.equal(f.writes.length, 0);
+});
+
+test('unavailable candidate short response works, malformed candidates never enter the editor', async () => {
+  for (const candidate of [null, { provider_id: 'codex', path: 'C:/example/tool.cmd', locator_kind: 1 }]) {
+    const f = fixture(); f.reads[0].resolve(snapshot()); await tick();
+    f.node('registration-settings').open = true; f.node('registration-settings').listeners.toggle();
+    f.reads.at(-1).resolve(settingsSnapshot()); await tick();
+    f.reads.at(-1).resolve({ candidates: [candidate] }); await tick();
+    assert.equal(f.node('registration-candidates').children.length, 0);
+    assert.equal(f.writes.length, 0);
+  }
+});
+
+test('well-shaped future candidate preserves the original empty label fallback', async () => {
+  const f = fixture(); f.reads[0].resolve(snapshot()); await tick();
+  f.node('registration-settings').open = true; f.node('registration-settings').listeners.toggle();
+  f.reads.at(-1).resolve(settingsSnapshot()); await tick();
+  f.reads.at(-1).resolve({ candidates: [{ provider_id: 'future_provider', locator_kind: 'future_locator', path: 'C:/example/tool.exe', version: null }] }); await tick();
+  f.node('registration-candidates').children[0].listeners.click();
+  assert.equal(f.node('registration-label').value, '');
+  assert.equal(f.node('registration-path').value, 'C:/example/tool.exe');
+  assert.equal(f.node('registration-confirm').checked, false);
+  assert.equal(f.writes.length, 0);
+});
+
+test('all existing builtin provider and locator pairs are accepted as persistent settings', async () => {
+  for (const [provider_id, locator_kind] of [['codex', 'npm_command'], ['codex', 'codex_desktop'], ['claude', 'npm_command'], ['pi', 'npm_command'], ['hermes', 'hermes_launcher']]) {
+    const f = fixture(); f.reads[0].resolve(snapshot()); await tick();
+    await openSettings(f, settingsSnapshot([{ ...configuredRow(), category: 'builtin', provider_id, locator_kind }], 1));
+    assert.match(f.node('registrations-list').textContent, /Example host.*已确认本机定位/);
+    assert.equal(f.writes.length, 0);
+  }
+});
+
+test('bad picker and receipt objects fail without replaying navigation', async () => {
+  const f = fixture(); f.reads[0].resolve(snapshot()); await tick();
+  const opening = pickerButton(f).listeners.click(); f.writes[0].resolve({ ...choices(), choices: [{ title: 1 }] }); await opening;
+  assert.equal(f.node('window-choices-list').textContent, '');
+  const returning = f.node('native-instances').children[0].children.at(-1).listeners.click();
+  const request = f.writes.find(item => item.url.endsWith('/return')); request.resolve({ status: 1 }); await returning;
+  assert.match(f.node('observation-feedback').textContent, /不会自动重试/);
+  assert.equal(f.writes.filter(item => item.url.endsWith('/return')).length, 1);
+});
+
+test('hidden/closed late picker and settings responses are discarded before reading their fields', async () => {
+  const f = fixture(); f.reads[0].resolve(snapshot()); await tick();
+  const opening = pickerButton(f).listeners.click(); f.document.hidden = true; f.documentEvents.visibilitychange();
+  let read = false;
+  const untrusted = {}; Object.defineProperty(untrusted, 'selection_id', { get() { read = true; throw new Error('late field'); } });
+  f.writes[0].resolve(untrusted); await opening; assert.equal(read, false);
+  f.node('registration-settings').open = true; f.node('registration-settings').listeners.toggle();
+  f.node('registration-settings').open = false; f.node('registration-settings').listeners.toggle();
+  const lateSettings = {}; Object.defineProperty(lateSettings, 'revision', { get() { read = true; throw new Error('late field'); } });
+  f.reads.at(-1).resolve(lateSettings); await tick(); assert.equal(read, false);
+  assert.equal(f.node('window-choices-list').textContent, ''); assert.equal(f.node('registrations-list').textContent, '');
+});
+
+test('actual ambient consumer compiles valid injection and rejects unknown/body/DOM/fact misuse', () => {
+  const ts = require(path.join(root, 'tools/typescript/node_modules/typescript'));
+  const parent = path.join(root, 'work/frontend-observation-types'); fs.mkdirSync(parent, { recursive: true });
+  const folder = fs.mkdtempSync(path.join(parent, 'consumer-'));
+  const declaration = path.join(folder, 'observation.types.d.ts'); fs.copyFileSync(path.join(root, 'web/workspace/observation.types.d.ts'), declaration);
+  const valid = `const injected: WorkspaceObservationTypes.Options = { fetchJson: async () => null, postJson: async () => null };
+window.WorkspaceObservation.start(injected);
+window.WorkspaceObservation.projects = [{ id: 'synthetic', name: 'Synthetic' }];
+const draft: WorkspaceObservationTypes.RegistrationWrite = { id: null, category: 'custom_exe', provider_id: null, locator_kind: 'executable', environment_id: 'windows:local', label: 'Synthetic', path: 'example', enabled: true, binding_state: 'confirmed' };
+injected.postJson('/api/profile/observations', { expected_revision: 0, expected_hash: 'hash', registrations: [draft] });
+function hasStatus(value: unknown): value is {status: string} { return typeof value === 'object' && value !== null && 'status' in value && typeof value.status === 'string'; }
+declare const raw: unknown; if (hasStatus(raw)) raw.status.toUpperCase();`;
+  const cases = [['valid', valid, true], ['unknown', 'declare const raw: unknown; raw.status;', false],
+    ['body', "declare const api: WorkspaceObservationTypes.Options; api.postJson('/return', {action_id: 1, generation: 'g', seq: 1});", false],
+    ['dom', "document.createElement('p').checked = true;", false],
+    ['observed-as-persisted', 'declare const fact: WorkspaceObservationTypes.ObservedRegistration; const row: WorkspaceObservationTypes.Registration = fact;', false],
+    ['validation-as-write', 'declare const fact: WorkspaceObservationTypes.RegistrationValidation; const row: WorkspaceObservationTypes.RegistrationWrite = fact;', false],
+    ['draft-as-persisted', 'declare const draft: WorkspaceObservationTypes.RegistrationWrite; const row: WorkspaceObservationTypes.Registration = draft;', false]];
+  const evidence = [];
+  for (const [name, text, success] of cases) {
+    const input = path.join(folder, name + '.ts'); fs.writeFileSync(input, text);
+    const options = { strict: true, noUncheckedIndexedAccess: true, exactOptionalPropertyTypes: true, skipLibCheck: false, noEmit: true,
+      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, types: [], lib: ['lib.es2022.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'] };
+    const program = ts.createProgram([declaration, input], options), diagnostics = ts.getPreEmitDiagnostics(program);
+    assert.equal(diagnostics.length === 0, success, name);
+    evidence.push({ case: name, expected: success ? 'zero diagnostics' : 'diagnostics required', diagnostics: diagnostics.map(item => item.code) });
+  }
+  const ast = ts.createSourceFile('observation.ts', typescript, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+  function inspect(node) {
+    assert.notEqual(node.kind, ts.SyntaxKind.AnyKeyword); assert.equal(ts.isNonNullExpression(node), false);
+    if (ts.isAsExpression(node)) assert.ok(['const', 'HTMLElementTagNameMap[typeof domTags[K]]'].includes(node.type.getText(ast)));
+    assert.equal(ts.isTypeAssertionExpression(node), false); ts.forEachChild(node, inspect);
+  }
+  inspect(ast); assert.doesNotMatch(typescript, /@ts-(?:ignore|nocheck|expect-error)/);
+  fs.writeFileSync(path.join(folder, 'evidence.json'), JSON.stringify({ compiler: ts.version, evidence }, null, 2));
+  console.log(JSON.stringify({ scope: 'actual ambient compile-only consumers', path: path.relative(root, folder), compiler: ts.version, evidence }));
 });

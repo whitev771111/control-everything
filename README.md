@@ -6,6 +6,8 @@
 
 普通用户从 [GitHub Releases](https://github.com/zxl123456123/control-everything/releases) 选择 Windows x64 技术预发布的 `session-panel-<版本>-windows-x64.exe`，先用 `Get-FileHash -Algorithm SHA256` 与该次发布的 `SHA256SUMS.txt` 核对，再运行安装器。标准产品自带 CPython 3.13.16、固定 Python 依赖、前端资源和 release Rust 原生观察后台，无需另外安装 Python、Node、npm 或 Rust 编译器。wheel 和源码归档供开发使用，不能代替完整安装器。
 
+安装目录支持中文和空格；当前产品按普通 Windows 路径工作，每个完整交付文件路径须少于260个UTF-16字符。安装器在写入目标前检查整个固定文件清单，超限时提示选择更短目录，不修改系统的长路径策略。
+
 安装按当前用户运行，无需管理员权限，默认位置为 `%LOCALAPPDATA%/Programs/SessionPanel`。从开始菜单的 **Session Panel** 打开网关控制台，再在浏览器访问 `http://127.0.0.1:8766/workspace`；安装不会自动启动网关或外部 Agent。端口被占用时明确退出，可从 PowerShell 指定自己的端口和 profile：
 
 ```powershell

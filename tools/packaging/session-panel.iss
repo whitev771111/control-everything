@@ -119,6 +119,14 @@ begin
   Result := AddBackslash(ExpandConstant('{app}')) + 'versions\{#PayloadId}';
 end;
 
+procedure RequireSupportedInstallPaths;
+var I: Integer;
+begin
+  for I := 0 to GetArrayLength(PayloadPaths) - 1 do
+    if Length(AddBackslash(InstalledVersionRoot) + PayloadPaths[I]) >= 260 then
+      RaiseException('安装目录过长，请选择更短的目录；完整文件路径必须少于260个UTF-16字符。');
+end;
+
 function NewReport(Stage: String): String;
 begin
   ReportSequence := ReportSequence + 1;
@@ -268,6 +276,7 @@ begin
   Prepared := False;
   try
     ReleaseMaintenance;
+    RequireSupportedInstallPaths;
     if not BootstrapExtracted then begin
       ExtractTemporaryFiles('{app}\versions\{#PayloadId}\*');
       BootstrapRoot := AddBackslash(ExpandConstant('{tmp}')) + '{app}\versions\{#PayloadId}';

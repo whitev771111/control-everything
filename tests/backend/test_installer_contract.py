@@ -118,6 +118,33 @@ class InstallerIncludesTests(PayloadFixture):
 
 
 class InstallerScriptTests(unittest.TestCase):
+    def test_path_limit_precedes_bootstrap_parent_creation_and_target_writes(self):
+        prepare = body('PrepareToInstall')
+        positions = [prepare.index(value) for value in (
+            'ReleaseMaintenance', 'RequireSupportedInstallPaths', 'ExtractTemporaryFiles',
+            'EnsureDefaultParent', "RunMaintenance('prepare'", "RunMaintenance('preflight'")]
+        self.assertEqual(positions, sorted(positions))
+        guard = body('RequireSupportedInstallPaths')
+        self.assertIn('for I := 0 to GetArrayLength(PayloadPaths) - 1 do', guard)
+        self.assertIn('请选择更短的目录', guard)
+        for forbidden in ('CreateDir', 'ExtractTemporaryFiles', 'CopyFile', 'RegWrite', 'PathConvertNormalToSuper'):
+            self.assertNotIn(forbidden, guard)
+
+    def test_actual_pascal_path_expression_accepts_259_utf16_units_and_rejects_260(self):
+        guard = body('RequireSupportedInstallPaths')
+        expression = re.search(r'if Length\(AddBackslash\(InstalledVersionRoot\) \+ PayloadPaths\[I\]\) >= (\d+) then', guard)
+        self.assertIsNotNone(expression)
+        limit = int(expression[1])
+        self.assertEqual(limit, 260)
+        # Pascal's Unicode String Length counts UTF-16 code units, including surrogate pairs.
+        prefix = 'C:/example/中文 空格/' + '\U0001f600'
+        prefix_units = len(prefix.encode('utf-16-le')) // 2
+        for units, blocked in ((259, False), (260, True)):
+            filename = prefix + 'a' * (units - prefix_units)
+            measured = len(filename.encode('utf-16-le')) // 2
+            self.assertEqual(measured, units)
+            self.assertEqual(measured >= limit, blocked)
+
     def test_single_user_native_target_and_no_generic_shutdown_or_deletion(self):
         for directive in ('PrivilegesRequired=lowest', 'SetupArchitecture=x64', 'ArchitecturesAllowed=x64os',
                           'CloseApplications=no', 'RestartApplications=no', 'UninstallLogMode=append',

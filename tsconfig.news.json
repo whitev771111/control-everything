@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "none",
+    "moduleDetection": "legacy",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": false,
+    "allowJs": false,
+    "checkJs": false,
+    "noEmitOnError": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "inlineSourceMap": false,
+    "inlineSources": false,
+    "importHelpers": false,
+    "removeComments": false,
+    "emitBOM": false,
+    "newLine": "lf",
+    "forceConsistentCasingInFileNames": true,
+    "rootDir": "web/workspace",
+    "outDir": "work/frontend-news/manual-emit"
+  },
+  "files": [
+    "web/workspace/news.types.d.ts",
+    "web/workspace/news.ts"
+  ]
+}

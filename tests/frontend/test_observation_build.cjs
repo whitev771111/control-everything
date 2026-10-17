@@ -9,7 +9,7 @@ const { spawnSync } = require('node:child_process');
 const builder = require('../../scripts/build_observation.cjs');
 const repo = path.resolve(__dirname, '../..');
 const parent = path.join(repo, 'work/frontend-observation-tests');
-const declarations = ['tools/typescript/package.json', 'tools/typescript/package-lock.json', 'tools/typescript/observation.manifest.json', 'tsconfig.observation.json', 'scripts/build_observation.cjs'];
+const declarations = ['scripts/frontend_compile.cjs', 'tools/typescript/package.json', 'tools/typescript/package-lock.json', 'tools/typescript/observation.manifest.json', 'tsconfig.observation.json', 'scripts/build_observation.cjs'];
 const validSource = `'use strict';\n(function () {\n  const label: string = 'synthetic';\n  window.WorkspaceObservation = { projects: [], start() { void label; }, renderProjectRefs() {} };\n})();\n`;
 const types = `declare namespace WorkspaceObservationTypes {\n  interface PublicApi { projects: readonly {id: string; name: string}[]; start(): void; renderProjectRefs(): void; }\n}\ninterface Window { WorkspaceObservation: WorkspaceObservationTypes.PublicApi; }\n`;
 const oldBytes = Buffer.from('// old delivered asset, intentionally not generated\n');

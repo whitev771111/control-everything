@@ -23,6 +23,7 @@ from session_panel.workspace.progress import MANUAL, REGISTRY, TODOS, add_todo, 
 from session_panel.integrations.launchers import LauncherCatalog, catalog, start
 from session_panel.integrations.desk import headlines, pulse
 from session_panel.workspace.service import WorkspaceService
+from session_panel.workspace.news_source import NewsSource
 from session_panel.workspace.store import WorkspaceError
 from session_panel.profiles.profile import Profile, ProfileError, strict_json
 
@@ -78,6 +79,15 @@ def page_params(query, *, extra=(), default=50):
 
 def invalid_json_constant(_value):
     raise ValueError("invalid_json")
+
+
+def news_stream(query):
+    values = parse_qs(query, keep_blank_values=True, strict_parsing=True)
+    if not values:
+        return 'ai'
+    if set(values) != {'stream'} or len(values['stream']) != 1 or values['stream'][0] not in ('ai', 'hn'):
+        raise ValueError('invalid_query')
+    return values['stream'][0]
 
 
 def codex_offset(query):
@@ -220,6 +230,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/task-center.js": ("workspace/task-center.js", "text/javascript; charset=utf-8"),
             "/execution.js": ("workspace/execution.js", "text/javascript; charset=utf-8"),
             "/observation.js": ("workspace/observation.js", "text/javascript; charset=utf-8"),
+            "/news.js": ("workspace/news.js", "text/javascript; charset=utf-8"),
             "/workspace.css": ("workspace/workspace.css", "text/css; charset=utf-8"),
         }
         if path.path in static and not path.query:
@@ -230,6 +241,13 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return self.reject(404, "route_not_found")
             return self.reply(200, body, mime)
         try:
+            if path.path == '/api/desk/news':
+                if path.query:
+                    raise ValueError('invalid_query')
+                source = self.server.__dict__.get('news_source') or NewsSource()
+                return self.reply(200, source.get('hn'))
+            if path.path == '/api/workspace/news':
+                return self.workspace_reply(path.path, stream=news_stream(path.query))
             if path.path == "/api/workspace/observations":
                 if path.query:
                     raise ValueError("invalid_query")
@@ -250,7 +268,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.path == "/api/desk":
                 if path.query:
                     raise ValueError("invalid_query")
-                return self.reply(200, {"launchers": self.server.launchers.catalog() if self.server.launchers is not None else catalog(), "pulse": pulse(), "news": headlines(), "todos": load_todos(TODOS)})
+                return self.reply(200, {"launchers": self.server.launchers.catalog() if self.server.launchers is not None else catalog(), "pulse": pulse(), "news": headlines(), "news_state": NewsSource().cached('hn'), "todos": load_todos(TODOS)})
             if path.path == "/api/codex/threads":
                 result = list_codex_threads(codex_offset(path.query))
                 return self.reply(200 if result["available"] else 503, result)
@@ -289,6 +307,20 @@ class PanelHandler(BaseHTTPRequestHandler):
         if not self.allowed(api=True, focus=True):
             return
         path = urlsplit(self.path)
+        if path.path == '/api/workspace/news/refresh':
+            if self.server.workspace is None:
+                return self.reject(503, 'workspace_unavailable')
+            try:
+                if path.query:
+                    raise ValueError('invalid_query')
+                body = self.read_json_body(max_bytes=1024, strict=True)
+                if set(body) != {'stream'} or body['stream'] not in ('ai', 'hn'):
+                    raise ValueError('invalid_body')
+                return self.reply(200, self.server.workspace.news(body['stream'], refresh=True))
+            except BodyTooLarge:
+                return self.reject(413, 'body_too_large')
+            except (ValueError, TypeError, UnicodeError, OSError):
+                return self.reject(400, 'invalid_request')
         if path.path in {"/api/workspace/observations/return", "/api/workspace/observations/window-choices",
                          "/api/workspace/observations/window-choices/close"}:
             return self.observation_post(path)
@@ -417,7 +449,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             status = 200
         self.reply(status, value)
 
-    def workspace_reply(self, path, body=None):
+    def workspace_reply(self, path, body=None, *, stream='ai'):
         workspace = self.server.workspace
         if workspace is None:
             return self.reject(503, "workspace_unavailable")
@@ -427,7 +459,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             elif path == "/api/workspace/usage":
                 value = workspace.usage()
             elif path == "/api/workspace/news":
-                value = workspace.news()
+                value = workspace.news() if stream == 'ai' else workspace.news(stream)
             elif path == "/api/workspace/usage/refresh":
                 if body != {}:
                     raise ValueError("invalid_request")
@@ -580,7 +612,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             todos = profile.store.list_todos()
             self.reply(200, {"launchers": self.server.launchers.catalog() if self.server.launchers is not None else [],
                              "pulse": [], "personal_launchers_unavailable": not self.server.capabilities["personal_launchers"],
-                             "pulse_unavailable": True, "news": headlines(), "todos": todos["items"], "todos_total": todos["total"]})
+                             "pulse_unavailable": True, "news": headlines(), "news_state": NewsSource().cached('hn'), "todos": todos["items"], "todos_total": todos["total"]})
         elif route == "/api/codex/threads":
             value = profile.codex_threads(codex_offset(path.query))
             self.reply(200 if value["available"] else 503, value)
@@ -682,6 +714,10 @@ class PanelServer(ThreadingHTTPServer):
             observer.start()
 
     def server_close(self):
+        source = self.__dict__.get('news_source')
+        lease = self.__dict__.pop('_news_lease', None)
+        if source is not None and lease is not None:
+            source.release(lease)
         observer = self.__dict__.get("observer")
         if observer is not None:
             observer.close_client()
@@ -727,6 +763,8 @@ def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None
     server.expected_host = f"{HOST}:{server.server_address[1]}"
     server.origin = f"http://{server.expected_host}"
     server.csrf_token = secrets.token_urlsafe(32)
+    server.news_source = workspace.news_source if workspace is not None else NewsSource()
+    server._news_lease = server.news_source.acquire()
     return server
 
 

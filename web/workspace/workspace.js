@@ -41,7 +41,7 @@ const viewCopy = {
   news: ['AI 资讯', '留一点时间，看向前沿。', '来自公开来源的标题与原文。按发布时间排序，保留抓取状态。', 'A WINDOW INTO AI'],
   settings: ['来源与导入', '让数据留在自己的空间。', '配置可选的元数据来源，或将旧管理记录导入空 profile。', 'PROFILE & SOURCES'],
 };
-const app = { view: 'overview', csrf: '', snapshot: null, usage: null, news: null, taskId: null, recordId: null, profileMode: false, profile: null, capabilities: {}, projectId: null, restoreId: null, manualId: null, historyRequest: 0, pages: { tasks: 0, records: 0, todos: 0, history: 0, compatibility: 0 } };
+const app = { view: 'overview', csrf: '', snapshot: null, usage: null, taskId: null, recordId: null, profileMode: false, profile: null, capabilities: {}, projectId: null, restoreId: null, manualId: null, historyRequest: 0, pages: { tasks: 0, records: 0, todos: 0, history: 0, compatibility: 0 } };
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -82,6 +82,9 @@ function fillOptions(select, options, selected = '') {
 const apiError = (message, status, reason) => Object.assign(new Error(message), { status, reason });
 async function api(path, options = {}) {
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
   const timer = setTimeout(() => controller.abort(), 40000);
   let status = null;
   try {
@@ -96,11 +99,11 @@ async function api(path, options = {}) {
     if (error instanceof SyntaxError) throw apiError('无法连接工作台服务，请检查服务是否已启动', status, 'invalid_response');
     if (error instanceof TypeError) throw apiError('无法连接工作台服务，请检查服务是否已启动', null, 'network_error');
     throw error;
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); }
 }
-function post(path, body) {
+function post(path, body, options = {}) {
   if (!app.csrf) return Promise.reject(apiError('保存凭据尚未就绪，请刷新页面后重试', null, 'csrf_unavailable'));
-  return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-CSRF': app.csrf }, body: JSON.stringify(body) });
+  return api(path, { ...options, method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-CSRF': app.csrf }, body: JSON.stringify(body) });
 }
 
 function showView(view) {
@@ -124,6 +127,7 @@ function showView(view) {
   projects.parentElement.insertBefore(view === 'tasks' ? tasks : projects, view === 'tasks' ? projects : tasks);
   for (const id of ['agents', 'usage', 'news', 'runs']) $(`${id}-view`).hidden = view !== id;
   if (!app.profileMode) window.WorkspaceExecution?.onView(view);
+  window.WorkspaceNews?.onView(view);
   $('all-tasks').hidden = view !== 'overview';
   if (app.snapshot) { renderProjects(); if (!app.profileMode) renderTasks(); }
   $('settings-view').hidden = view !== 'settings' || !app.profileMode;
@@ -431,29 +435,6 @@ async function saveRecord(event) {
   finally { $('record-fields').disabled = false; }
 }
 
-function renderNews(result) {
-  const root = $('news-list'), preview = $('news-preview'), sources = $('news-sources'); root.replaceChildren(); preview.replaceChildren(); sources.replaceChildren();
-  $('news-status').textContent = `${statusNames[result.status] || '未知'} · ${dateTime(result.sampled_at)} 采样（北京时间）${result.status === 'stale' ? ' · 部分来源失败，保留旧结果' : ''}`;
-  for (const source of result.sources) {
-    const chip = el('div', `source-chip ${source.status}`);
-    chip.append(el('span', '', `${source.name} · ${statusNames[source.status] || '未知'}`), el('small', '', `${source.reason ? `${reason(source.reason)} · ` : ''}${dateTime(source.sampled_at)} 采样${source.status === 'stale' ? ` · 上次成功 ${dateTime(source.last_success_at)}` : ''}`)); sources.append(chip);
-  }
-  if (!result.items.length) { empty(root, result.status === 'unavailable' ? '资讯来源暂时不可用' : '当前没有可展示的标题', '可以稍后重新读取。'); preview.append(el('p', 'section-note', result.status === 'unavailable' ? '来源暂不可用，稍后再来看看。' : '暂无公开标题。')); return; }
-  for (const [index, item] of result.items.entries()) {
-    const story = link('', item.url, 'news-item'), copy = el('div');
-    copy.append(el('h3', '', item.title), el('p', '', `${item.source_name} · ${dateTime(item.published_at)} 发布 · ${dateTime(item.fetched_at)} 抓取`));
-    story.append(el('span', 'news-number', String(index + 1).padStart(2, '0')), copy, el('span', 'news-arrow', '↗')); root.append(story);
-    if (index < 2) { const short = link('', item.url, 'preview-story'); short.append(el('strong', '', item.title), el('small', '', `${item.source_name} · ${dateTime(item.published_at)}`)); preview.append(short); }
-  }
-  if (result.status === 'stale') preview.append(el('p', 'section-note', '部分来源失败 · 含旧缓存'));
-}
-async function loadNews() {
-  $('refresh-news').disabled = true;
-  try { app.news = await api('/api/workspace/news'); renderNews(app.news); }
-  catch (error) { $('news-status').textContent = error.message; $('news-preview').replaceChildren(el('p', 'section-note', error.message)); }
-  finally { $('refresh-news').disabled = false; }
-}
-
 for (const button of document.querySelectorAll('[data-view]')) button.addEventListener('click', () => showView(button.dataset.view));
 for (const button of document.querySelectorAll('[data-go]')) button.addEventListener('click', () => showView(button.dataset.go));
 $('refresh-workspace').addEventListener('click', loadBase);
@@ -470,18 +451,19 @@ $('cancel-record').addEventListener('click', () => { $('record-form').hidden = t
 $('record-provider').addEventListener('change', () => recordProducts());
 $('record-metric').addEventListener('change', recordMetric);
 $('record-form').addEventListener('submit', saveRecord);
-$('refresh-news').addEventListener('click', loadNews);
 fillOptions($('task-provider'), [['', '暂不分配'], ...Object.entries(providerNames)]);
 fillOptions($('record-provider'), Object.entries(providerNames), 'codex');
+window.addEventListener('hashchange', () => showView(location.hash.slice(1) || 'overview'));
 showView(location.hash.slice(1) || 'overview');
 async function bootstrap() {
   try { const value = await api('/api/bootstrap'); app.csrf = typeof value.csrf_token === 'string' ? value.csrf_token : ''; app.capabilities = value.capabilities || {}; app.profileMode = app.capabilities.profile === true; }
   catch { message('workspace-status', '保存凭据不可用，仍可尝试读取信息。', true); }
+  window.WorkspaceNews?.startWorkspace({ fetchJson: api, postJson: post });
   if (app.profileMode) { setupProfile(); setupTaskCenter(); try { await loadProfile(); } catch (error) { message('workspace-status', error.message, true); } }
   else { window.WorkspaceExecution?.init({ api, post, showView, getSnapshot: () => app.snapshot });
     if (!window.WorkspaceExecution) message('execution-status', '执行页面资源尚未就绪；请在新版服务启动后刷新。现有任务仍可使用。', true); }
   if (app.profileMode) window.WorkspaceObservation?.start({ fetchJson: api, postJson: post });
-  await Promise.allSettled([loadBase(), loadUsage(), loadNews()]);
+  await Promise.allSettled([loadBase(), loadUsage()]);
   if (!app.profileMode) window.WorkspaceExecution?.onView(app.view);
 }
 function action(label, callback) {

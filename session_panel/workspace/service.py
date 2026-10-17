@@ -483,5 +483,9 @@ class WorkspaceService:
         return {"status": "ok", "codex": quota, "manual_records": records,
                 "manual_status": status, "manual_reason": reason, "manual_total": total, "manual_limit": 100}
 
-    def news(self):
-        return self.news_source.get()
+    def news(self, stream='ai', *, refresh=False):
+        if stream not in ('ai', 'hn'):
+            raise ValueError('invalid_stream')
+        if refresh:
+            return self.news_source.refresh(stream)
+        return self.news_source.get() if stream == 'ai' else self.news_source.get(stream)

@@ -96,6 +96,14 @@ main { padding:32px 36px 40px; background:radial-gradient(900px 420px at 90% -10
 .zone-launch { grid-area:launch; }
 .story { display:block; padding:14px 0; border-bottom:1px solid var(--line); color:var(--text); text-decoration:none; font-size:17px; line-height:1.35; }
 .story:hover { color:#f0b429; }
+.daily-news-card { min-width:0; padding:14px 0; border-top:1px solid var(--line); overflow-wrap:anywhere; }
+.daily-news-card h3 { font-size:16px; line-height:1.6; margin:0; }
+.news-link { color:var(--text); text-decoration:none; }
+a.news-link:hover { color:#f0b429; text-decoration:underline; }
+.news-meta,.news-limit,.news-notice,#legacy-news-status,.source-chip { color:var(--muted); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+.news-summary { font-size:14px; line-height:1.8; white-space:pre-wrap; }
+.daily-news-card[data-freshness="stale"] { border-left:2px solid var(--line); padding-left:10px; }
+.news-group-title { font-size:14px; }
 .groups { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
 .group { background:#101620; border-radius:16px; padding:14px; }
 .group h3 { margin:0 0 4px; font-size:16px; }

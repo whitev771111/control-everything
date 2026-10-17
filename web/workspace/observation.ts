@@ -235,7 +235,7 @@
     if (settingsValue) renderSettings();
   }
   async function poll() {
-    if (polling || !started) return;
+    if (polling || !started || document.hidden) return;
     polling = true;
     // A pending shared request may take 40 seconds; visible trust never lasts that long.
     readTimer = setTimeout(() => { markStale('observation_timeout'); render(); }, 12000);
@@ -246,7 +246,7 @@
       expire(); render(); scheduleExpiry();
     }
     catch { markStale('observation_failed'); render(); scheduleExpiry(); }
-    finally { clearTimeout(readTimer); readTimer = undefined; polling = false; if (started) timer = setTimeout(poll, 2000); }
+    finally { clearTimeout(readTimer); readTimer = undefined; polling = false; if (started && !document.hidden) timer = setTimeout(poll, 2000); }
   }
   function clearPicker(sendDismiss = true) {
     pickerNonce += 1;
@@ -399,7 +399,11 @@
       $('native-observations-section').hidden = false;
       initializeSettings();
       $('close-window-choices').addEventListener('click', () => { clearPicker(); render(); });
-      document.addEventListener('visibilitychange', () => { if (document.hidden) clearPicker(); });
+      document.addEventListener('visibilitychange', () => {
+        clearTimeout(timer);
+        if (document.hidden) clearPicker();
+        else { expire(); render(); scheduleExpiry(); poll(); }
+      });
       window.addEventListener('pagehide', () => { clearPicker(); started = false; clearTimeout(timer); clearTimeout(expiryTimer); clearTimeout(readTimer); });
       window.addEventListener('pageshow', () => { if (!started) { started = true; expire(); render(); scheduleExpiry(); poll(); } });
       poll();

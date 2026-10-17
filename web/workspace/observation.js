@@ -266,7 +266,7 @@
             renderSettings();
     }
     async function poll() {
-        if (polling || !started)
+        if (polling || !started || document.hidden)
             return;
         polling = true;
         // A pending shared request may take 40 seconds; visible trust never lasts that long.
@@ -292,7 +292,7 @@
             clearTimeout(readTimer);
             readTimer = undefined;
             polling = false;
-            if (started)
+            if (started && !document.hidden)
                 timer = setTimeout(poll, 2000);
         }
     }
@@ -527,8 +527,17 @@
             $('native-observations-section').hidden = false;
             initializeSettings();
             $('close-window-choices').addEventListener('click', () => { clearPicker(); render(); });
-            document.addEventListener('visibilitychange', () => { if (document.hidden)
-                clearPicker(); });
+            document.addEventListener('visibilitychange', () => {
+                clearTimeout(timer);
+                if (document.hidden)
+                    clearPicker();
+                else {
+                    expire();
+                    render();
+                    scheduleExpiry();
+                    poll();
+                }
+            });
             window.addEventListener('pagehide', () => { clearPicker(); started = false; clearTimeout(timer); clearTimeout(expiryTimer); clearTimeout(readTimer); });
             window.addEventListener('pageshow', () => { if (!started) {
                 started = true;

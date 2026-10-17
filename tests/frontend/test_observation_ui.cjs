@@ -518,3 +518,14 @@ declare const raw: unknown; if (hasStatus(raw)) raw.status.toUpperCase();`;
   fs.writeFileSync(path.join(folder, 'evidence.json'), JSON.stringify({ compiler: ts.version, evidence }, null, 2));
   console.log(JSON.stringify({ scope: 'actual ambient compile-only consumers', path: path.relative(root, folder), compiler: ts.version, evidence }));
 });
+
+test('hidden tabs stop scheduling observation reads and resume once visible', async () => {
+  const f = fixture(); f.reads[0].resolve(snapshot()); await tick();
+  f.document.hidden = true; f.documentEvents.visibilitychange();
+  await f.advance(30000); assert.equal(f.reads.length, 1);
+  f.document.hidden = false; f.documentEvents.visibilitychange();
+  assert.equal(f.reads.length, 2);
+  f.document.hidden = true; f.documentEvents.visibilitychange();
+  f.reads[1].resolve(snapshot()); await tick(); await f.advance(30000);
+  assert.equal(f.reads.length, 2);
+});

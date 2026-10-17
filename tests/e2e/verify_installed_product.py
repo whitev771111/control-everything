@@ -168,7 +168,7 @@ def probe(args):
     require(Path(control_everything.__file__).is_relative_to(payload / 'runtime/Lib/site-packages'), 'source_import')
     require(source_root() is None, 'checkout_resource_fallback')
     require(observer_install_dir() == payload / 'native/observer', 'native_location')
-    require(importlib.metadata.version('session-panel') == result['version'], 'metadata_version')
+    require(importlib.metadata.version('control-everything') == result['version'], 'metadata_version')
     ssl.create_default_context()
     require(sqlite3.connect(':memory:').execute('select 1').fetchone() == (1,), 'sqlite_unavailable')
     require(Path(news_worker.__file__).is_file() and Path(remote_source.__file__).is_file(), 'worker_source_missing')

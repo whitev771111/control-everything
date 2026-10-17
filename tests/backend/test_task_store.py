@@ -25,6 +25,19 @@ class TaskStoreTests(unittest.TestCase):
         return self.store.save_item(dict({'title': 'Fixture', 'project_id': None, 'provider_id': None,
                                          'state': 'todo', 'session_key': None}, **changes))
 
+    def test_attention_scope_filters_before_count_and_revision_pagination(self):
+        for state in ('todo', 'doing', 'done'):
+            self.create(state=state)
+        blocked, review = self.create(state='blocked'), self.create(state='review')
+        first = self.store.list_items(scope='attention', limit=1)
+        self.assertEqual(first['total'], 2)
+        second = self.store.list_items(scope='attention', offset=1, limit=1, list_revision=first['list_revision'])
+        self.assertEqual({first['items'][0]['id'], second['items'][0]['id']}, {blocked['id'], review['id']})
+        self.store.save_item({'state': 'done'}, item_id=blocked['id'], expected_revision=blocked['revision'])
+        with self.assertRaisesRegex(WorkspaceError, 'list_changed'):
+            self.store.list_items(scope='attention', offset=1, limit=1, list_revision=first['list_revision'])
+        self.assertEqual(self.store.list_items(scope='attention')['total'], 1)
+
     def test_single_authority_raw_id_views_and_noop(self):
         row = self.create()
         legacy = self.store.get_task(row['origin_id'])

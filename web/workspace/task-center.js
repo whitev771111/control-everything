@@ -11,7 +11,7 @@
   const fields = ['project_id', 'provider_id', 'state', 'session_key'];
   const codepoints = text => [...text].length;
   const bytes = body => new TextEncoder().encode(JSON.stringify(body)).byteLength;
-  function create({ root, fetchJson, postJson, canWrite, onSaved }) {
+  function create({ root, fetchJson, postJson, canWrite, onSaved, onProject }) {
     const node = (tag, className = '', text) => {
       const value = document.createElement(tag); value.className = className;
       if (text !== undefined) value.textContent = text;
@@ -29,9 +29,10 @@
     const feedback = (target, text, failed = false) => { target.textContent = text; target.classList.toggle('error', failed); };
     let projects = [], sessions = [], page = null, request = 0, reading = false, writing = false;
     let original = null, editingId = null, initialTitle = '', initialFields = {};
+    let contextKey = '', contextProject = '', quickProject = null;
     const heading = node('div', 'section-heading'), title = node('h2', '', '任务中心');
     heading.append(title, button('详细新建', () => open(null), 'button secondary'));
-    const hint = node('p', 'section-note', '快速记下一个下一步，也可以稍后关联项目和工具。状态均为人工记录，不会发送给工具。');
+    const hint = node('p', 'section-note', ''); hint.hidden = true;
     const quick = named('form', 'item-quick-form', 'item-quick'), quickFields = node('fieldset');
     const quickTitle = named('textarea', 'item-quick-title'); quickTitle.rows = 2; quickTitle.maxLength = 4000; quickTitle.required = true;
     quickTitle.placeholder = '写下一个具体的下一步（可不选项目）';
@@ -41,10 +42,11 @@
     const toolbar = node('div', 'task-toolbar item-toolbar');
     const scope = named('select', 'item-scope'), project = named('select', 'item-project-filter');
     const provider = named('select', 'item-provider-filter'), state = named('select', 'item-state-filter');
-    options(scope, [['all', '全部事项'], ['active', '活动项目'], ['archived', '归档项目'], ['orphan', '未登记项目'], ['global', '全局事项']], 'all');
+    options(scope, [['all', '全部事项'], ['attention', '待我处理'], ['active', '活动项目'], ['archived', '归档项目'], ['orphan', '未登记项目'], ['global', '全局事项']], 'all');
     options(provider, [['', '全部工具'], ...Object.entries(providers)]);
     options(state, [['', '全部状态'], ...Object.entries(states)]);
-    toolbar.append(label('范围', scope), label('项目', project), label('工具', provider), label('状态', state));
+    const scopeField = label('范围', scope), projectField = label('项目', project);
+    toolbar.append(scopeField, projectField, label('工具', provider), label('状态', state));
     const status = named('p', 'items-status', 'section-note'); status.setAttribute('role', 'status');
     const list = named('div', 'items-list', 'task-list'), pager = named('div', 'items-pager', 'pager');
     const refreshButton = button('重新读取列表', () => refresh(0));
@@ -60,8 +62,9 @@
     const cancel = button('取消', () => { if (!writing) dialog.close(); }, 'button secondary');
     const actions = node('div', 'form-actions'); actions.append(save, cancel);
     const editorFeedback = named('p', 'item-feedback', 'feedback'); editorFeedback.setAttribute('role', 'status');
-    editorFields.append(label('事项名称', editorTitle), grid, meter, actions);
-    form.append(formTitle, identity, editorFields, editorFeedback); dialog.append(form);
+    editorFields.append(label('事项名称', editorTitle), grid, actions);
+    const details = node('details', 'item-details'); details.append(node('summary', '', '来源与限制'), identity, meter);
+    form.append(formTitle, details, editorFields, editorFeedback); dialog.append(form);
     root.replaceChildren(heading, hint, quick, quickFeedback, toolbar, status, list, pager, refreshButton, dialog);
     root.hidden = false;
 
@@ -81,17 +84,17 @@
     function render() {
       list.replaceChildren(); pager.replaceChildren();
       if (!page) { list.append(node('p', 'empty-state', '列表尚未读取，请重新读取。')); syncBusy(); return; }
-      feedback(status, `${page.total} 条匹配事项 · 当前 ${page.items.length} 条 · 全部记录统计，不影响人工百分比`);
-      if (!page.items.length) list.append(node('p', 'empty-state', '当前范围没有事项。可以直接快速记录全局事项。'));
+      feedback(status, `${page.total} 条事项${scope.value === 'attention' ? ' · 阻塞与待验收' : ''}`);
+      if (!page.items.length) list.append(node('p', 'empty-state', '当前范围没有事项。'));
       for (const item of page.items) {
         const row = node('article', 'task-row item-row'); row.dataset.itemId = item.id;
         const copy = node('div', 'task-copy'), meta = node('div', 'task-meta');
         copy.append(node('strong', 'item-title-copy', item.title));
         meta.append(node('span', `task-state state-${item.state}`, `${states[item.state] || '未知'} · 手工`),
-          node('span', '', projectName(item.project_id)), node('span', '', providers[item.provider_id] || item.provider_id || '未分配工具'),
-          node('span', 'item-origin', `${item.origin === 'todo' ? '原待办' : '原任务'} · ${item.origin_id === '' ? '空原ID' : item.origin_id}`));
+          node('span', '', projectName(item.project_id)), node('span', '', providers[item.provider_id] || item.provider_id || '未分配工具'));
         if (item.session_key) meta.append(node('span', '', { verified: '会话关联已核验', not_in_current_sample: '关联暂不在当前样本', project_mismatch: '关联与项目不匹配' }[item.session_link_state] || '关联状态未知'));
         const rowActions = node('div', 'task-actions'); rowActions.append(button('编辑详情', () => open(item)));
+        if (onProject && projects.some(project => project.id === item.project_id)) rowActions.append(button('打开项目', () => onProject(item.project_id)));
         copy.append(meta); row.append(node('span', `task-indicator ${item.state}`), copy, rowActions);
         list.append(row);
       }
@@ -106,7 +109,7 @@
       const query = new URLSearchParams({ offset, limit: 50, scope: scope.value });
       if (offset > 0 && revision !== undefined) query.set('list_revision', revision);
       for (const [key, control] of [['project_id', project], ['provider_id', provider], ['state', state]]) if (control.value) query.set(key, control.value);
-      reading = true; page = null; render(); feedback(status, '正在读取事项…');
+      reading = true; syncBusy(); feedback(status, '正在读取事项…');
       try {
         const result = await fetchJson(`/api/workspace/items?${query}`);
         if (current !== request) return;
@@ -116,7 +119,7 @@
         if (current !== request) return;
         reading = false;
         if (error.status === 409 && error.reason === 'list_changed' && offset > 0) return refresh(0, true);
-        render(); feedback(status, `事项读取失败：${error.message}。编辑草稿已保留，可重新读取。`, true);
+        page = null; render(); feedback(status, `事项读取失败：${error.message}。编辑草稿已保留，可重新读取。`, true);
       } finally { if (current === request) { reading = false; syncBusy(); } }
     }
     function sessionOptions(selected = controls.session_key.value) {
@@ -137,7 +140,7 @@
       identity.textContent = item ? `${item.origin === 'todo' ? '原待办' : '原任务'} · ${item.origin_id === '' ? '空原ID' : item.origin_id}` : '保存后生成事项标识；项目和工具可留空。';
       const projectRows = [['', '全局事项'], ...projects.filter(row => !row.archived).map(row => [row.id, row.name])];
       if (item?.project_id && !projectRows.some(([id]) => id === item.project_id)) projectRows.push([item.project_id, `保留原项目 · ${projectName(item.project_id)}`]);
-      options(controls.project_id, projectRows, item?.project_id ?? '');
+      options(controls.project_id, projectRows, item ? (item.project_id ?? '') : contextProject);
       const providerRows = [['', '暂不分配'], ...Object.entries(providers)];
       if (item?.provider_id && !providers[item.provider_id]) providerRows.push([item.provider_id, `保留原工具 · ${item.provider_id}`]);
       options(controls.provider_id, providerRows, item?.provider_id ?? '');
@@ -182,10 +185,13 @@
     quick.addEventListener('submit', async event => {
       event.preventDefault(); if (writing) return;
       const payload = { title: quickTitle.value.trim() };
+      const targetProject = quickProject ?? contextProject;
+      if (targetProject) payload.project_id = targetProject;
       try { validate(payload, payload.title, 2000); }
       catch (error) { feedback(quickFeedback, `${error.message} 输入已保留。`, true); return; }
-      await write(payload, quickFeedback, () => { quickTitle.value = ''; });
+      await write(payload, quickFeedback, () => { quickTitle.value = ''; quickProject = null; hint.hidden = true; });
     });
+    quickTitle.addEventListener('input', () => { if (quickProject === null) quickProject = contextProject; if (!quickTitle.value) quickProject = null; });
     form.addEventListener('submit', async event => {
       event.preventDefault(); if (writing) return;
       const payload = body();
@@ -211,7 +217,29 @@
       syncBusy();
     }
     render();
-    return { update, refresh, open, filterProject(id) { scope.value = 'all'; project.value = id; return refresh(0); } };
+    function setContext({ projectId = '', scope: nextScope = 'all', state: nextState = '' } = {}) {
+      const key = JSON.stringify([projectId, nextScope, nextState]);
+      if (key === contextKey) return;
+      contextKey = key; contextProject = projectId;
+      quick.hidden = nextScope === 'attention' && !quickTitle.value;
+      heading.lastElementChild.hidden = nextScope === 'attention';
+      scopeField.hidden = Boolean(projectId) || nextScope !== 'all'; projectField.hidden = Boolean(projectId) || nextScope === 'global';
+      title.textContent = nextScope === 'attention' ? '待我处理' : nextScope === 'global' ? '未归类事项' : '任务';
+      if (quickTitle.value) {
+        if (quickProject === null) quickProject = '';
+        hint.textContent = `未保存草稿属于：${projectName(quickProject)}`; hint.hidden = false;
+      }
+      scope.value = nextScope;
+      if (projectId && !projects.some(row => row.id === projectId)) {
+        const pending = node('option', '', projectName(projectId)); pending.value = projectId; project.append(pending);
+      }
+      project.value = projectId; provider.value = ''; state.value = nextState;
+      quickTitle.placeholder = projectId ? '写下这个项目的下一步' : '写下一个具体的下一步';
+      return refresh(0);
+    }
+    return { update, refresh, open, setContext,
+      filterState(value) { state.value = value; return refresh(0); },
+      filterProject(id) { return setContext({ projectId: id }); } };
   }
   window.WorkspaceTaskCenter = { create };
 })();

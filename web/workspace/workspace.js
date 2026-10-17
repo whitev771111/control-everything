@@ -41,6 +41,13 @@ const viewCopy = {
   news: ['AI 资讯', '留一点时间，看向前沿。', '来自公开来源的标题与原文。按发布时间排序，保留抓取状态。', 'A WINDOW INTO AI'],
   settings: ['来源与导入', '让数据留在自己的空间。', '配置可选的元数据来源，或将旧管理记录导入空 profile。', 'PROFILE & SOURCES'],
 };
+Object.assign(viewCopy, {
+  overview: ['总览', '工作总览', '', ''], tasks: ['全部事项', '全部事项', '', ''],
+  attention: ['待我处理', '待我处理', '', ''], global: ['未归类事项', '未归类事项', '', ''],
+  project: ['项目', '项目工作空间', '', ''], projects: ['项目管理', '项目管理', '', ''],
+  agents: ['工具与接入', '工具与接入', '', ''], usage: ['用量与额度', '用量与额度', '', ''],
+  news: ['信息流', '信息流', '', ''], settings: ['设置与导入', '设置与导入', '', ''],
+});
 const app = { view: 'overview', csrf: '', snapshot: null, usage: null, taskId: null, recordId: null, profileMode: false, profile: null, capabilities: {}, projectId: null, restoreId: null, manualId: null, historyRequest: 0, pages: { tasks: 0, records: 0, todos: 0, history: 0, compatibility: 0 } };
 
 function el(tag, className, text) {
@@ -107,6 +114,11 @@ function post(path, body, options = {}) {
 }
 
 function showView(view) {
+  if (view.startsWith('project/')) { app.projectRoute = view; view = 'project'; }
+  if (view === 'project' && app.projectRoute) {
+    const [, id, tab] = app.projectRoute.split('/');
+    try { app.projectSpace?.route(decodeURIComponent(id), tab); } catch { view = 'overview'; }
+  }
   if (!viewCopy[view]) view = 'overview';
   if (app.profileMode && view === 'runs') view = 'overview';
   app.view = view;
@@ -129,10 +141,16 @@ function showView(view) {
   if (!app.profileMode) window.WorkspaceExecution?.onView(view);
   window.WorkspaceNews?.onView(view);
   $('all-tasks').hidden = view !== 'overview';
-  if (app.snapshot) { renderProjects(); if (!app.profileMode) renderTasks(); }
+  if (app.snapshot) { if (!app.projectSpace || view === 'projects') renderProjects(); if (!app.profileMode) renderTasks(); }
   $('settings-view').hidden = view !== 'settings' || !app.profileMode;
+  if (app.projectSpace) {
+    $('work-grid').hidden = view !== 'projects';
+    $('tasks-section').hidden = true; $('overview-stats').hidden = true;
+    $('overview-aside').hidden = true;
+    app.projectSpace.show(view);
+  }
   if (view !== 'settings') $('registration-settings').open = false;
-  history.replaceState(null, '', `#${view}`);
+  history.replaceState(null, '', `#${view === 'project' ? (app.projectRoute || view) : view}`);
 }
 function renderStats() {
   const snapshot = app.snapshot;
@@ -172,7 +190,10 @@ function renderProjects() {
     row.append(el('span', 'project-mark', String(index + 1).padStart(2, '0')), copy, measure); root.append(row);
     if (app.profileMode) {
       const actions = el('div', 'project-actions');
-      actions.append(action('编辑项目 / 来源', () => openProject(project)), action('人工记录与历史', () => { showView('projects'); openManual(project); }), action('查看项目事项', () => { showView('tasks'); app.taskCenter?.filterProject(project.id); }), action(project.archived ? '恢复项目' : '归档项目', () => archiveProject(project)));
+      actions.append(action('编辑项目 / 来源', () => openProject(project)), action('人工记录与历史', () => { showView('projects'); openManual(project); }), action('查看项目事项', () => {
+        if (app.projectSpace) app.projectSpace.open(project.id, 'tasks');
+        else { showView('tasks'); app.taskCenter?.filterProject(project.id); }
+      }), action(project.archived ? '恢复项目' : '归档项目', () => archiveProject(project)));
       row.append(actions);
       copy.append(el('p', '', taskSummary(project.task_counts)), el('p', '', observationSummary(project.observation)));
     }
@@ -263,13 +284,15 @@ async function loadBase() {
     app.snapshot = snapshot;
     if (app.profileMode && window.WorkspaceObservation) window.WorkspaceObservation.projects = snapshot.projects.items;
     $('today').textContent = `${snapshot.today} · 北京时间`;
-    message('workspace-status', `本机信息采样于 ${dateTime(snapshot.sampled_at)} · 额度与资讯独立更新`);
+    message('workspace-status', `更新于 ${dateTime(snapshot.sampled_at)}`);
     const selectedFilter = $('project-filter').value;
     fillOptions($('project-filter'), [['', '全部项目'], ...snapshot.projects.items.map(item => [item.id, item.name])], selectedFilter);
     if (!$('project-filter').value) $('project-filter').value = '';
     $('new-task').disabled = !app.csrf || snapshot.projects.status !== 'available' || !snapshot.projects.items.some(item => !item.archived) || snapshot.tasks.status !== 'available';
     if (app.profileMode) app.taskCenter?.update(snapshot);
-    renderStats(); renderProjects();
+    app.projectSpace?.update(snapshot);
+    if (!app.projectSpace) renderStats();
+    if (!app.projectSpace || app.view === 'projects') renderProjects();
     if (!app.profileMode) { renderTasks(); renderTodos(); }
     renderProviders();
     if (!$('record-form').hidden && !$('record-day').value) $('record-day').value = snapshot.today;
@@ -505,15 +528,20 @@ function setupProfile() {
 function setupTaskCenter() {
   document.querySelector('.sidebar-links').append(action('人工记录与历史', () => showView('projects')));
   document.querySelector('[data-view="projects"]').hidden = false;
-  const navigation = document.querySelector('[data-view="tasks"]'); navigation.textContent = '☷ 任务中心';
-  viewCopy.tasks = ['任务中心', '让下一步清楚一点。', '全局和项目事项共用一份记录，快速记录后再补充细节。', 'TASK CENTER'];
+  const navigation = document.querySelector('[data-view="tasks"]'); navigation.textContent = '全部事项';
   $('legacy-tasks').hidden = true;
   $('todos-list').closest('section').hidden = true;
   $('projects-section').querySelector('a[href="/progress"]').hidden = true;
   $('profile-empty').querySelector('p').textContent = '可以先记录全局事项；需要项目归属时再添加项目。已有记录可导入当前空 profile。';
   if (!window.WorkspaceTaskCenter) { message('workspace-status', '任务中心资源未就绪，请刷新页面。', true); return; }
   app.taskCenter = window.WorkspaceTaskCenter.create({ root: $('task-center-root'), fetchJson: api, postJson: post,
-    canWrite: () => Boolean(app.csrf), onSaved: loadBase });
+    canWrite: () => Boolean(app.csrf), onSaved: loadBase, onProject: id => app.projectSpace?.open(id) });
+  app.projectSpace = window.WorkspaceProjectSpace?.create({
+    root: $('project-space'), navigation: $('project-navigation'), taskRoot: $('task-center-root'), tasks: app.taskCenter,
+    navigate: showView,
+    manage: project => { showView('projects'); openProject(project); },
+    record: project => { showView('projects'); openManual(project); $('manual-panel').scrollIntoView({ block: 'nearest' }); },
+  });
   showView(app.view);
 }
 async function loadProfile(preserveDraft = false) {
@@ -675,4 +703,5 @@ async function importLegacy(event) {
   catch (error) { fieldError('import-feedback', error, { source_dir: $('import-source-dir') }); }
   finally { $('import-fields').disabled = false; }
 }
+window.WorkspaceProjectSpace?.prepareChrome();
 bootstrap();

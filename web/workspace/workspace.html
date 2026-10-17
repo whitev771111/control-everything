@@ -3,38 +3,42 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>开发工作台</title>
+  <title>Control Everything</title>
   <link rel="stylesheet" href="/workspace.css">
   <script src="/execution.js" defer></script>
   <script src="/observation.js" defer></script>
   <script src="/task-center.js" defer></script>
   <script src="/news.js" defer></script>
   <script src="/quota.js" defer></script>
+  <script src="/project-space.js" defer></script>
   <script src="/workspace.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">跳到工作区</a>
   <div class="shell">
     <aside class="sidebar">
-      <a class="brand" href="/workspace"><span class="brand-mark" aria-hidden="true">w.</span><span>开发工作台<small>PERSONAL WORKSPACE</small></span></a>
+      <a class="brand" href="/workspace"><span class="brand-mark" aria-hidden="true">w.</span><span>Control Everything</span></a>
       <p class="nav-label">工作空间</p>
       <nav class="navigation" aria-label="主导航">
         <button type="button" data-view="overview" aria-current="page"><span aria-hidden="true">◫</span>总览</button>
+        <button type="button" data-view="attention">待我处理</button>
         <button type="button" data-view="tasks"><span aria-hidden="true">☷</span>项目任务</button>
         <button type="button" data-view="projects" hidden><span aria-hidden="true">◫</span>项目与进度</button>
         <button type="button" data-view="runs"><span aria-hidden="true">▷</span>运行</button>
-        <button type="button" data-view="agents"><span aria-hidden="true">⌘</span>Agents</button>
+        <button type="button" data-view="agents">工具与接入</button>
         <button type="button" data-view="usage"><span aria-hidden="true">◷</span>用量与额度</button>
-        <button type="button" data-view="news"><span aria-hidden="true">≋</span>AI 资讯</button>
+        <button type="button" data-view="news">信息流</button>
         <button type="button" data-view="settings" hidden><span aria-hidden="true">⚙</span>来源与导入</button>
       </nav>
+      <p class="nav-label project-navigation-label">项目</p><nav id="project-navigation" class="project-navigation" aria-label="我的项目"></nav>
       <div class="sidebar-links"><p class="nav-label">已有工具</p><a href="/">会话与终端观察 <span>↗</span></a><a href="/progress">进度、待办与启动器 <span>↗</span></a></div>
-      <div class="local-note"><span class="local-dot" aria-hidden="true"></span><strong>本机工作空间</strong><p>任务与记录保存在本机<br>仅限当前电脑访问</p></div>
+      <div class="local-note"><span class="local-dot" aria-hidden="true"></span><strong>本机工作空间</strong><label class="theme-label">外观<select id="theme-choice"><option value="auto">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label></div>
     </aside>
     <main id="main" tabindex="-1">
       <header class="topbar"><p>工作空间 <span>/</span> <b id="breadcrumb">总览</b></p><span id="today" class="muted">北京时间</span></header>
       <div class="page-heading"><div><p class="eyebrow" id="page-eyebrow">YOUR DEVELOPMENT DESK</p><h1 id="page-title">今天，从这里开始。</h1><p id="page-description" class="muted">把项目、任务和工具，放回一个清晰的工作空间。</p></div><button id="refresh-workspace" class="button secondary" type="button">↻ 刷新本地信息</button></div>
       <p id="workspace-status" class="source-line" role="status" aria-live="polite">正在读取本地工作空间…</p>
+      <section id="project-space" class="section project-space" hidden aria-label="项目工作空间"></section>
       <div id="overview-stats" class="overview-stats" aria-label="当前记录概况"></div>
       <div id="work-grid" class="work-grid">
         <div class="primary-column">
@@ -86,7 +90,7 @@
         <div class="execution-grid"><section class="section execution-index"><h2>正在运行</h2><p class="section-note">不同项目最多同时运行 2 个；重叠目录不能同时启动。</p><div id="execution-active"></div><h2 class="execution-history-title">最近运行</h2><p id="execution-history-count" class="section-note"></p><div id="execution-history"></div></section>
           <section class="section execution-detail"><div class="section-heading"><h2 id="execution-run-title" tabindex="-1">运行详情</h2><button id="execution-cancel" type="button" class="button secondary" hidden>取消当前运行</button></div><p id="execution-run-state" class="section-note">从任务卡片准备运行，或选择一条已有记录。</p><div id="execution-run-meta" class="execution-facts"></div><p id="execution-run-policy" class="section-note"></p><p id="execution-token" class="section-note"></p><p id="execution-action-status" class="feedback" role="status" aria-live="polite"></p><div id="execution-approvals"></div><div id="execution-unknown" class="execution-notice" hidden><p>本次原生运行的结果未知。请先核对目录和事件；新建运行是独立任务，不会恢复这次运行。</p><button id="execution-back-task" type="button" class="text-button">回到项目任务</button><button id="execution-prepare-again" type="button" class="text-button">准备新的独立运行</button></div><p id="execution-gap" class="section-note" role="status"></p><h3>事件与结果</h3><p class="section-note">来自本工作台这次运行的 Codex 通知；内容仅按文本展示。</p><ol id="execution-events" class="execution-timeline"></ol></section></div>
       </section>
-      <footer>开发工作台 <span>·</span> 进度与任务状态由人工记录；Agent 活动与完成以原始证据为准。</footer>
+      <footer>Control Everything · 本机工作空间</footer>
     </main>
   </div>
 </body>

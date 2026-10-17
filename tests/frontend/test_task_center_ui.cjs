@@ -65,7 +65,9 @@ test('empty projects: quick creation is title-only and succeeds without a projec
 });
 test('literal titles, empty raw IDs and same raw ID from separate origins stay distinct', () => {
   const f = fixture(page([item({ title: '<img onerror=attack()>', origin_id: '' }), item({ id: '00000000-0000-4000-8000-000000000002', origin: 'todo' }), item({ id: '00000000-0000-4000-8000-000000000003' })]));
-  assert.match(f.get('items-list').textContent, /<img onerror=attack\(\)>/); assert.match(f.get('items-list').textContent, /空原ID/);
+  assert.match(f.get('items-list').textContent, /<img onerror=attack\(\)>/);
+  assert.doesNotMatch(f.get('items-list').textContent, /空原ID/);
+  f.api.open(item({ origin_id: '' })); assert.match(f.get('item-identity').textContent, /空原ID/);
   assert.equal(f.get('items-list').children.length, 3); assert.equal(f.host.querySelectorAll('img').length, 0);
 });
 for (const state of ['todo', 'doing', 'blocked', 'review', 'done']) test(`state ${state} updates by internal UUID, never raw origin ID`, async () => {
@@ -145,7 +147,7 @@ test('late page response cannot replace newer page or updated snapshot; drafts s
 test('read failure is visible, keeps draft, removes old page and recovers', async () => {
   const f = fixture(); f.api.open(item()); f.get('item-title').value = 'draft'; const pending = f.api.refresh(0);
   f.reads[0].reject(new Error('read lost')); await pending; assert.match(f.get('items-status').textContent, /读取失败/); assert.ok(!f.get('items-list').textContent.includes('原任务'));
-  const recovered = f.api.refresh(0); f.reads[1].resolve(page()); await recovered; assert.match(f.get('items-list').textContent, /原任务/); assert.equal(f.get('item-title').value, 'draft');
+  const recovered = f.api.refresh(0); f.reads[1].resolve(page()); await recovered; assert.match(f.get('items-list').textContent, /编辑详情/); assert.equal(f.get('item-title').value, 'draft');
 });
 test('archived/orphan original associations and unavailable sessions are preserved on state-only edit', async () => {
   const f = fixture(page(), { projects: [{ id: 'archived', name: '旧项目', archived: true }] });
@@ -161,4 +163,30 @@ test('Hermes and Pi are task labels only; explicit project unlink sends null', a
 test('confirmed save is not reported as unknown if project refresh fails', async () => {
   const f = fixture(page(), { onSaved: async () => { throw new Error('refresh failed'); } }); f.get('item-quick-title').value = 'confirmed';
   const pending = f.get('item-quick-form').fire('submit'); await settleWrite(f, pending); assert.equal(f.get('item-quick-title').value, ''); assert.match(f.get('item-quick-feedback').textContent, /保存已确认/);
+});
+
+test('project context defaults new items without reassigning existing global items', async () => {
+  const f = fixture(page(), { projects: [{ id: 'p', name: 'Project' }] });
+  const loading = f.api.setContext({ projectId: 'p' });
+  assert.equal(new URL('http://local' + f.reads.at(-1).url).searchParams.get('project_id'), 'p');
+  f.reads.at(-1).resolve(page()); await loading;
+  f.api.open(); assert.equal(f.get('item-project_id').value, 'p');
+  f.api.open(item()); assert.equal(f.get('item-project_id').value, '');
+  f.get('item-quick-title').value = 'project task'; await f.get('item-quick-title').fire('input');
+  const saving = f.get('item-quick-form').fire('submit');
+  assert.equal(f.writes[0].payload.project_id, 'p'); await settleWrite(f, saving);
+});
+
+test('quick and detail drafts retain identity across project and attention navigation', async () => {
+  const f = fixture(page(), { projects: [{ id: 'p', name: 'Project' }] });
+  let pending = f.api.setContext({ projectId: 'p' }); f.reads.at(-1).resolve(page()); await pending;
+  f.get('item-quick-title').value = 'draft'; await f.get('item-quick-title').fire('input');
+  f.api.open(item()); f.get('item-title').value = 'detail draft';
+  pending = f.api.setContext({ scope: 'attention' });
+  assert.equal(new URL('http://local' + f.reads.at(-1).url).searchParams.get('scope'), 'attention');
+  f.reads.at(-1).resolve(page()); await pending;
+  assert.equal(f.get('item-title').value, 'detail draft');
+  const reads = f.reads.length; f.api.setContext({ scope: 'attention' }); assert.equal(f.reads.length, reads);
+  const saving = f.get('item-quick-form').fire('submit');
+  assert.equal(f.writes[0].payload.project_id, 'p'); await settleWrite(f, saving);
 });

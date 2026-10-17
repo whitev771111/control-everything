@@ -291,3 +291,5 @@ node tests/e2e/verify_control_everything.cjs --fixture
 真实 SSH 补绑、独立 SDK 合成链/空结果对照、选中真实 UUID 分页、Edge 桌面/360px、真实 focus 和 Codex 加载由协调者分别承接。fixture 自证不代表这些已验收；详细状态与所有失败保留在本地开发记录及 ignored `work/`，不提交仓库。
 
 Ctrl+C 停网关即可停本批查询，原 Claude/SSH/Zellij 对话继续运行。代码回退需与对应 profile 版本配套，先保留备份，再在另一个空数据目录恢复并验证；真实 MCP 回退仅撤销本 server 表并由用户重载。删除本地 `.venv` 或远端 reader `.venv` 前确认绝对路径和本批归属。保留研究、方案和实施报告；不删除远端 `.claude`、项目或 Workbench。已经切换的 pane 由用户自行切回。
+
+项目工作空间由 `web/workspace/project-space.js` 负责项目导航、概览和项目上下文展示，任务编辑与分页继续复用 `task-center.js` 的同一份事项。`attention` 查询范围在数据库分页前筛选人工状态为阻塞或待验收的事项；进程运行和普通待办不属于该范围。项目会话仅展示来源返回的目录归属样本；资料页仅显示登记目录，不扫描文档。`workspace.js` 负责装配，主题偏好只保存在浏览器本机。

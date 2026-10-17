@@ -25,6 +25,7 @@ ASSETS = {
     '/progress.css': 'progress/progress.css', '/workspace': 'workspace/workspace.html',
     '/workspace.js': 'workspace/workspace.js', '/workspace.css': 'workspace/workspace.css',
     '/task-center.js': 'workspace/task-center.js', '/execution.js': 'workspace/execution.js',
+    '/project-space.js': 'workspace/project-space.js',
     '/observation.js': 'workspace/observation.js', '/news.js': 'workspace/news.js',
     '/quota.js': 'workspace/quota.js',
 }

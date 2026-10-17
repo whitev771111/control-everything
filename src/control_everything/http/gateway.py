@@ -230,6 +230,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/progress.css": ("progress/progress.css", "text/css; charset=utf-8"),
             "/workspace": ("workspace/workspace.html", "text/html; charset=utf-8"),
             "/workspace.js": ("workspace/workspace.js", "text/javascript; charset=utf-8"),
+            "/project-space.js": ("workspace/project-space.js", "text/javascript; charset=utf-8"),
             "/task-center.js": ("workspace/task-center.js", "text/javascript; charset=utf-8"),
             "/execution.js": ("workspace/execution.js", "text/javascript; charset=utf-8"),
             "/observation.js": ("workspace/observation.js", "text/javascript; charset=utf-8"),
@@ -600,7 +601,7 @@ class PanelHandler(BaseHTTPRequestHandler):
                     params["list_revision"] = int(params["list_revision"])
                     if not 1 <= params["list_revision"] <= 9007199254740991:
                         raise ValueError("invalid_query")
-                if params.get("scope", "all") not in ("all", "active", "archived", "orphan", "global"):
+                if params.get("scope", "all") not in ("all", "active", "archived", "orphan", "global", "attention"):
                     raise ValueError("invalid_query")
                 self.reply(200, workspace.page_items(**params))
             except ValueError:

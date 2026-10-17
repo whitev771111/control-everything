@@ -459,12 +459,13 @@ class WorkspaceStore:
             revision = connection.execute('SELECT list_revision FROM task_center_meta WHERE id=1').fetchone()[0]
             if offset > 0 and list_revision is None or list_revision is not None and list_revision != revision:
                 raise WorkspaceError('list_changed')
-            if scope not in ('all', 'active', 'archived', 'orphan', 'global') or not 0 <= offset or not 1 <= limit <= 100:
+            if scope not in ('all', 'active', 'archived', 'orphan', 'global', 'attention') or not 0 <= offset or not 1 <= limit <= 100:
                 raise WorkspaceError('invalid_item')
             where, args = [], []
             clause = {'active': 'p.archived=0', 'archived': 'p.archived=1',
                       'orphan': "p.id IS NULL AND t.project_id IS NOT NULL AND t.project_id!=''",
-                      'global': "(t.project_id IS NULL OR t.project_id='')"}.get(scope)
+                      'global': "(t.project_id IS NULL OR t.project_id='')",
+                      'attention': "t.state IN ('blocked','review')"}.get(scope)
             if clause:
                 where.append(clause)
             for key, value in (('project_id', project_id), ('provider_id', provider_id), ('state', state)):

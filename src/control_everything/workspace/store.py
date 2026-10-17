@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from control_everything.input_validation import ProfileError
 from control_everything.workspace.validation import (
-    project_id_valid, path_key, validate_project, finite_number, observation_owner,
+    project_id_valid, path_key, validate_project, validate_codex_project, finite_number, observation_owner,
 )
 from control_everything.workspace import task_schema as tasks
 from control_everything.workspace.task_schema import BASE_SCHEMA, MANAGEMENT_SCHEMA
@@ -200,6 +200,9 @@ class WorkspaceStore:
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute("SELECT * FROM projects WHERE id=?", (identity,)).fetchone()
+            marker = connection.execute("SELECT kind FROM project_sources WHERE project_id=?", (identity,)).fetchone()
+            if marker is not None and marker[0] == "codex":
+                raise ProfileError("invalid_project", "id", message="read_only_project")
             if restore:
                 references = sum(connection.execute(f"SELECT COUNT(*) FROM {table} WHERE project_id=?", (identity,)).fetchone()[0]
                                  for table in ("tasks", "project_manual", "todos"))
@@ -297,6 +300,9 @@ class WorkspaceStore:
                 if not 1 <= len(text) <= 40:
                     raise ValueError("invalid_request")
                 if identity and connection.execute("SELECT 1 FROM projects WHERE id=? AND archived=0", (identity,)).fetchone() is None:
+                    raise ValueError("invalid_request")
+                marker = connection.execute("SELECT kind FROM project_sources WHERE project_id=?", (identity,)).fetchone()
+                if identity.startswith("cx-") or marker is not None and marker[0] == "codex":
                     raise ValueError("invalid_request")
                 position = connection.execute("SELECT COALESCE(MIN(position),0)-1 FROM todos").fetchone()[0]
                 stamp = now_utc()
@@ -410,7 +416,7 @@ class WorkspaceStore:
             return dict(row)
 
     @staticmethod
-    def _check_item_associations(connection, fields, old=None, session_cwd=None):
+    def _check_item_associations(connection, fields, old=None, session_cwd=None, codex_session_project_id=None):
         merged = {**old, **fields} if old is not None else fields
         project_changed = old is None or merged['project_id'] != old['project_id']
         link_changed = old is None or any(merged[key] != old[key] for key in ('project_id', 'provider_id', 'session_key'))
@@ -419,21 +425,53 @@ class WorkspaceStore:
             if connection.execute('SELECT 1 FROM projects WHERE id=? AND archived=0', (merged['project_id'],)).fetchone() is None:
                 raise ProfileError('invalid_item', 'project_id')
         if check_session:
+            marker = connection.execute('SELECT kind FROM project_sources WHERE project_id=?', (merged['project_id'],)).fetchone()
+            if marker is not None and marker[0] == 'codex':
+                if codex_session_project_id != merged['project_id']:
+                    raise WorkspaceError('session_project_mismatch')
+                return
             if session_cwd is None:
                 raise WorkspaceError('session_not_in_sample')
             # Only database facts are refreshed here; the request's session sample stays outside the write transaction.
             projects = {}
             for row in connection.execute('''SELECT p.id,d.path FROM projects p JOIN project_directories d
-                                             ON p.id=d.project_id WHERE p.archived=0'''):
+                                             ON p.id=d.project_id JOIN project_sources s ON s.project_id=p.id
+                                             WHERE p.archived=0 AND s.kind!='codex' '''):
                 projects.setdefault(row['id'], {'id': row['id'], 'directories': []})['directories'].append({'path': row['path']})
             if observation_owner(session_cwd, list(projects.values())) != merged['project_id']:
                 raise WorkspaceError('session_project_mismatch')
 
-    def save_item(self, fields, *, item_id=None, expected_revision=None, session_cwd=None):
+    @staticmethod
+    def _materialize_codex_project(connection, projection):
+        project = validate_codex_project(projection)
+        identity = project['id']
+        existing = connection.execute('SELECT kind FROM project_sources WHERE project_id=?', (identity,)).fetchone()
+        if existing is not None:
+            if existing[0] != 'codex':
+                raise ProfileError('invalid_item', 'project_id')
+            return
+        if connection.execute('SELECT 1 FROM projects WHERE id=?', (identity,)).fetchone():
+            raise ProfileError('invalid_item', 'project_id')
+        if connection.execute('SELECT COUNT(*) FROM projects').fetchone()[0] >= 1000:
+            raise ProfileError('invalid_project', 'projects', message='project_budget_exceeded')
+        stamp = now_utc()
+        position = connection.execute('SELECT COALESCE(MAX(position),-1)+1 FROM projects').fetchone()[0]
+        connection.execute('INSERT INTO projects VALUES(?,?,?,?,?,?)', (identity, project['name'], 0, stamp, stamp, position))
+        connection.executemany('INSERT INTO project_directories VALUES(?,?,?,?,?)',
+            [(identity, row['id'], row['path'], row['path_key'], int(row['id'] == 'main')) for row in project['directories']])
+        connection.execute('INSERT INTO project_sources VALUES(?,?,?,?)', (identity, 'codex', None, None))
+
+    def save_item(self, fields, *, item_id=None, expected_revision=None, session_cwd=None,
+                  codex_project=None, codex_session_project_id=None):
         with self.connection() as connection:
             connection.execute('BEGIN IMMEDIATE')
             if item_id is None:
-                self._check_item_associations(connection, fields, session_cwd=session_cwd)
+                if codex_project is not None:
+                    if codex_project.get('id') != fields.get('project_id'):
+                        raise ProfileError('invalid_item', 'project_id')
+                    self._materialize_codex_project(connection, codex_project)
+                self._check_item_associations(connection, fields, session_cwd=session_cwd,
+                                               codex_session_project_id=codex_session_project_id)
                 stamp = now_utc()
                 return self._create_item(connection, fields, created_at=stamp, updated_at=stamp)
             row = connection.execute('SELECT * FROM task_items WHERE id=?', (item_id,)).fetchone()
@@ -446,7 +484,11 @@ class WorkspaceStore:
                 raise WorkspaceError('item_changed')
             if not isinstance(fields, dict) or not fields or set(fields) - {'title', 'project_id', 'provider_id', 'state', 'session_key'}:
                 raise WorkspaceError('invalid_item')
-            self._check_item_associations(connection, fields, current, session_cwd)
+            if codex_project is not None:
+                if codex_project.get('id') != fields.get('project_id', current['project_id']):
+                    raise ProfileError('invalid_item', 'project_id')
+                self._materialize_codex_project(connection, codex_project)
+            self._check_item_associations(connection, fields, current, session_cwd, codex_session_project_id)
             return self._update_item(connection, current, fields, expected_revision)
 
     def list_items(self, *, offset=0, limit=50, scope='all', project_id=None, provider_id=None,

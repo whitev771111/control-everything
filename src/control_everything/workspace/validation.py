@@ -27,7 +27,7 @@ def validate_project(body, *, restore=False):
     if not isinstance(body, dict) or set(body) != fields:
         invalid("project")
     identity = body["project_id"] if restore else body["id"]
-    if identity is not None and not project_id_valid(identity):
+    if identity is not None and (not project_id_valid(identity) or identity.startswith("cx-")):
         invalid("id")
     if restore and identity is None:
         invalid("project_id")
@@ -74,6 +74,18 @@ def validate_project(body, *, restore=False):
                 or ".." in relative.split("/") or kind == "wfc" and relative != "docs/current"):
             invalid("source.relative_path", "invalid_source")
     return {"id": identity, "name": name.strip(), "archived": archived, "directories": checked, "source": source}
+
+
+def validate_codex_project(body):
+    """Validate an internal projection or restored marker, never a public project edit."""
+    if (not isinstance(body, dict) or not isinstance(body.get("id"), str)
+            or re.fullmatch(r"cx-[0-9a-f]{24}", body["id"]) is None
+            or body.get("source") != {"kind": "codex", "directory_id": None, "relative_path": None}):
+        raise ProfileError("invalid_project", "source")
+    checked = validate_project({"id": "internal-codex", "name": body.get("name"),
+        "archived": body.get("archived", False), "directories": body.get("directories"),
+        "source": {"kind": "none", "directory_id": None, "relative_path": None}})
+    return {**checked, "id": body["id"], "source": dict(body["source"])}
 
 
 def finite_number(value):

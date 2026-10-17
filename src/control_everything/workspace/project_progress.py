@@ -227,7 +227,7 @@ def observe(project, budget=None):
               "directory_id": source.get("directory_id") if isinstance(source, dict) else None,
               "path": None, "observed_at": datetime.now(timezone.utc).isoformat(),
               "records": [], "reported": None, "total": 0, "truncated": False}
-    if kind == "none":
+    if kind in ("none", "codex"):
         return result
     try:
         if kind not in ("wfc", "text", "json"):

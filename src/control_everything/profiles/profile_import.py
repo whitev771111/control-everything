@@ -19,7 +19,7 @@ from control_everything.sessions.source import canonical_uuid
 from control_everything.workspace.service import WorkspaceService, TASK_STATES, PROVIDERS
 from control_everything.workspace.store import (BASE_SCHEMA, MANAGEMENT_TABLES, WorkspaceError, WorkspaceStore,
                               now_utc)
-from control_everything.workspace.validation import finite_number, project_id_valid, validate_project
+from control_everything.workspace.validation import finite_number, project_id_valid, validate_project, validate_codex_project
 
 TASK_COLUMNS = "id,title,project_id,provider_id,state,session_key,source,created_at,updated_at"
 RECORD_COLUMNS = "id,provider_id,product,day,metric,value,currency,window_label,note,source,created_at,updated_at"
@@ -427,6 +427,13 @@ def validate_backup(directory):
             if manifest['schema_version'] == 2:
                 for title, in connection.execute('SELECT title FROM task_items'):
                     task_schema.check_text(title)
+            for identity, name, archived, kind, directory_id, relative in connection.execute(
+                    "SELECT p.id,p.name,p.archived,s.kind,s.directory_id,s.relative_path FROM projects p "
+                    "JOIN project_sources s ON s.project_id=p.id WHERE s.kind='codex' OR p.id LIKE 'cx-%'"):
+                validate_codex_project({"id": identity, "name": name, "archived": bool(archived),
+                    "directories": [{"id": binding, "path": path} for binding, path in connection.execute(
+                        'SELECT binding_id,path FROM project_directories WHERE project_id=?', (identity,))],
+                    "source": {"kind": kind, "directory_id": directory_id, "relative_path": relative}})
             for table in manifest['counts']:
                 count = manifest["counts"][table]
                 if type(count) is not int or count < 0 or connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] != count:

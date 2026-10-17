@@ -312,6 +312,14 @@ class Profile:
         value.update({"status": status, "reason": None if status == "available" else status})
         return value
 
+    def codex_desktop(self):
+        from control_everything.sessions.codex_desktop import read_desktop
+        config = self.config()["codex"]
+        if not config["enabled"]:
+            return {"available": False, "reason": "not_configured", "sampled_at": None,
+                    "source_id": None, "complete": False, "projects": [], "items": [], "coverage": {}}
+        return read_desktop(db_path=Path(config["db_path"]))
+
     def public(self, *, startup_integrations=None):
         receipt = self.store.import_receipt()
         empty = self.store.is_empty()

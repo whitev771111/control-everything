@@ -2,6 +2,11 @@
 
 import re
 import shutil
+import copy
+import hashlib
+import json
+import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from control_everything.workspace import progress
@@ -11,7 +16,7 @@ from control_everything.workspace.sources import CodexQuotaSource, NewsSource
 from control_everything.input_validation import ProfileError
 from control_everything.workspace.store import WorkspaceError, WorkspaceStore
 from control_everything.workspace.validation import (
-    finite_number, windows_path, inside_project, observation_owner, path_key, project_id_valid,
+    finite_number, windows_path, inside_project, observation_owner, path_key, project_id_valid, validate_codex_project,
 )
 
 DEFAULT_DB = progress.REGISTRY.with_name("workspace-state.sqlite3")
@@ -66,7 +71,8 @@ def discover_providers(installations=None):
 class WorkspaceService:
     def __init__(self, db_path=DEFAULT_DB, *, registry_path=progress.REGISTRY,
                  manual_path=progress.MANUAL, todos_path=progress.TODOS,
-                 session_reader=None, quota_source=None, news_source=None, profile=None, observer=None):
+                 session_reader=None, quota_source=None, news_source=None, profile=None, observer=None,
+                 desktop_reader=None):
         self.profile = profile
         self.observer = observer
         self.store = profile.store if profile is not None else WorkspaceStore(db_path)
@@ -74,6 +80,112 @@ class WorkspaceService:
         self.session_reader = profile.codex_threads if profile is not None else session_reader or list_threads
         self.quota_source = quota_source or CodexQuotaSource()
         self.news_source = news_source or NewsSource()
+        self.desktop_reader = desktop_reader or (profile.codex_desktop if profile is not None else None)
+        self._desktop_lock = threading.RLock()
+        self._desktop_config = None
+        self._desktop_cached = None
+        self._desktop_good = None
+        self._desktop_until = 0
+
+    def desktop_snapshot(self):
+        """Keep one source's last usable metadata; stale facts can never authorize binding."""
+        with self._desktop_lock:
+            config = self.profile.config()["codex"] if self.profile is not None else {"enabled": False, "db_path": None}
+            pair = (config["enabled"], path_key(config["db_path"]) if config["db_path"] else None)
+            if pair != self._desktop_config:
+                self._desktop_config = pair
+                self._desktop_cached = self._desktop_good = None
+                self._desktop_until = 0
+            if self._desktop_cached is not None and time.monotonic() < self._desktop_until:
+                return copy.deepcopy(self._desktop_cached)
+            empty = {"available": False, "reason": "not_configured", "sampled_at": None,
+                     "source_id": None, "complete": False, "projects": [], "items": [], "coverage": {}}
+            if not pair[0]:
+                value = {**empty, "status": "not_configured"}
+            else:
+                try:
+                    current = self.desktop_reader() if self.desktop_reader else empty
+                except Exception:
+                    current = {**empty, "reason": "source_unavailable"}
+                latest = self.profile.config()["codex"]
+                latest_pair = (latest["enabled"], path_key(latest["db_path"]) if latest["db_path"] else None)
+                if latest_pair != pair:
+                    self._desktop_good = None
+                    current = {**empty, "reason": "source_changed" if latest_pair[0] else "not_configured"}
+                if current["available"]:
+                    value = {**copy.deepcopy(current), "status": "available"}
+                    self._desktop_good = copy.deepcopy(value)
+                elif self._desktop_good is not None:
+                    value = {**copy.deepcopy(self._desktop_good), "available": False,
+                             "status": "stale", "reason": current["reason"]}
+                else:
+                    value = {**copy.deepcopy(current), "status": "not_configured" if current["reason"] == "not_configured" else "unavailable"}
+            if value["status"] != "available" or not value["complete"]:
+                for row in (*value["projects"], *value["items"]):
+                    row["binding_available"] = False
+            self._desktop_cached, self._desktop_until = value, time.monotonic() + 2
+            return copy.deepcopy(value)
+
+    @staticmethod
+    def desktop_summary(value):
+        return {key: value[key] for key in ("status", "reason", "sampled_at", "source_id", "complete", "coverage")}
+
+    def _desktop_projects(self, desktop):
+        projects = []
+        for row in desktop["projects"]:
+            directories = [{"id": "main" if binding["role"] == "main" else
+                            "d-" + hashlib.sha256(path_key(binding["path"]).encode("utf-8")).hexdigest()[:32],
+                            "path": binding["path"]} for binding in row["directories"]]
+            project = {**row, "directories": directories,
+                       "root": next((value["path"] for value in directories if value["id"] == "main"), None),
+                       "source": {"kind": "codex", "directory_id": None, "relative_path": None},
+                       "read_only": True, "source_available": desktop["status"] == "available",
+                       "binding_available": bool(row.get("binding_available") and desktop["complete"]
+                                                 and desktop["status"] == "available")}
+            try:
+                validate_codex_project(project)
+            except ProfileError:
+                project["binding_available"] = False
+            projects.append(project)
+        return projects
+
+    def page_codex_sessions(self, *, project_id=None, scope="active", offset=0, limit=20):
+        if (scope not in ("active", "archived", "projectless", "unknown")
+                or type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100
+                or project_id is not None and (not project_id_valid(project_id) or scope in ("projectless", "unknown"))):
+            raise ProfileError("invalid_query")
+        desktop = self.desktop_snapshot()
+        registry = self.registered_projects(desktop=desktop)
+        project = next((row for row in registry if row["id"] == project_id), None)
+        items = []
+        for row in desktop["items"]:
+            assignment = row["assignment_state"]
+            if scope == "projectless" and assignment != "projectless":
+                continue
+            if scope == "unknown" and assignment not in ("unknown", "conflict"):
+                continue
+            if scope in ("active", "archived") and bool(row["archived"]) != (scope == "archived"):
+                continue
+            if project_id is not None:
+                if project is None:
+                    continue
+                if project.get("read_only"):
+                    if assignment != "assigned" or row["project_id"] != project_id:
+                        continue
+                elif assignment != "projectless" or observation_owner(row["cwd"], [p for p in registry if not p.get("read_only")]) != project_id:
+                    continue
+            if project is not None and not project.get("read_only"):
+                row = {**row, "binding_available": bool(desktop["status"] == "available" and desktop["complete"]
+                                                        and not project.get("archived"))}
+            elif project is not None:
+                row = {**row, "binding_available": bool(row.get("binding_available") and project.get("binding_available"))}
+            items.append(row)
+        revision = hashlib.sha256(json.dumps([desktop["source_id"], desktop["status"], desktop["complete"],
+            [(row["session_key"], row.get("project_id"), row["assignment_state"], row["archived"])
+             for row in items]], separators=(",", ":")).encode("utf-8")).hexdigest()[:24]
+        return {**{key: desktop[key] for key in ("status", "reason", "sampled_at", "source_id", "complete")},
+                "items": items[offset:offset + limit], "total": len(items), "offset": offset, "limit": limit,
+                "revision": revision}
 
     def sessions(self):
         try:
@@ -138,9 +250,19 @@ class WorkspaceService:
                 instance["registration_labels"] = [configured[identity]["label"] for identity in instance["registration_ids"] if identity in configured]
         return value, registry
 
-    def registered_projects(self):
+    def registered_projects(self, *, desktop=None):
         if self.profile is not None:
-            return self.store.list_projects()
+            desktop = self.desktop_snapshot() if desktop is None else desktop
+            external = self._desktop_projects(desktop)
+            by_id = {row["id"]: row for row in external}
+            local = []
+            for row in self.store.list_projects():
+                if row["source"]["kind"] == "codex":
+                    if row["id"] in by_id:
+                        continue
+                    row.update(read_only=True, source_available=False, binding_available=False)
+                local.append(row)
+            return local + external
         try:
             return progress.load_registry(self.registry_path)
         except (OSError, ValueError, TypeError):
@@ -173,15 +295,29 @@ class WorkspaceService:
                           "sessions": progress.session_hits(project["root"], codex, grok)})
         return items
 
-    def link_state(self, task, sessions, registry):
+    def link_state(self, task, sessions, registry, desktop=None):
         if task["session_key"] is None:
             return "none"
+        if self.profile is not None:
+            desktop = self.desktop_snapshot() if desktop is None else desktop
+            full = next((row for row in desktop["items"] if row["session_key"] == task["session_key"]), None)
+            project = next((row for row in registry if row["id"] == task["project_id"]), None)
+            if project and project.get("read_only"):
+                if full is None or desktop["status"] != "available":
+                    return "not_in_current_sample"
+                return "verified" if full["assignment_state"] == "assigned" and full["project_id"] == project["id"] else "project_mismatch"
+            if full is not None and full["assignment_state"] == "assigned":
+                return "project_mismatch"
+            if full is not None and full["assignment_state"] in ("unknown", "conflict"):
+                return "not_in_current_sample"
+            if full is not None and desktop["status"] == "available":
+                sessions = {"available": True, "items": [full]}
         session = next((row for row in sessions["items"] if row["session_key"] == task["session_key"]), None)
         if session is None or not sessions["available"]:
             return "not_in_current_sample"
         project = next((row for row in registry if row["id"] == task["project_id"]), None)
         if self.profile is not None:
-            return "verified" if project and observation_owner(session["cwd"], registry) == project["id"] else "project_mismatch"
+            return "verified" if project and observation_owner(session["cwd"], [row for row in registry if not row.get("read_only")]) == project["id"] else "project_mismatch"
         return "verified" if project and inside_project(session["cwd"], project["root"]) else "project_mismatch"
 
     def profile_projects(self, registry=None, sessions=None):
@@ -190,11 +326,15 @@ class WorkspaceService:
         sessions = self.sessions() if sessions is None else sessions
         saved, counts, budget = self.store.manual_rows(), self.store.task_counts(), RequestBudget()
         result = []
+        desktop = self.desktop_snapshot()
         for project in registry:
             manual = saved.get(project["id"])
             observation = observe(project, budget)
+            candidates = desktop["items"] if project.get("read_only") or desktop["status"] == "available" else sessions["items"]
             hits = [{"tool": "Codex", "place": row["cwd"], "href": "/workspace", "session_key": row["session_key"]}
-                    for row in sessions["items"] if observation_owner(row["cwd"], registry) == project["id"]]
+                    for row in candidates if (row.get("assignment_state") == "assigned" and row.get("project_id") == project["id"] if project.get("read_only") else
+                    row.get("assignment_state", "projectless") == "projectless" and
+                    observation_owner(row["cwd"], [value for value in registry if not value.get("read_only")]) == project["id"])][:12]
             result.append({**project, "manual_recorded": manual is not None,
                            "manual_reason": None if manual else "not_recorded",
                            "state": manual["state"] if manual else None,
@@ -213,7 +353,8 @@ class WorkspaceService:
                                offset=params.get("offset", 0), limit=params.get("limit", 50))
 
     def _task_page(self, rows, total, sessions, registry, *, offset=0, limit=50):
-        return {"items": [{**row, "session_link_state": self.link_state(row, sessions, registry)} for row in rows],
+        desktop = self.desktop_snapshot()
+        return {"items": [{**row, "session_link_state": self.link_state(row, sessions, registry, desktop)} for row in rows],
                 "total": total, "offset": offset, "limit": limit}
 
     def page_items(self, **params):
@@ -227,7 +368,8 @@ class WorkspaceService:
         return self._item_page(page, self.sessions(), self.registered_projects())
 
     def _item_page(self, page, sessions, registry):
-        return {**page, "items": [{**row, "session_link_state": self.link_state(row, sessions, registry)}
+        desktop = self.desktop_snapshot()
+        return {**page, "items": [{**row, "session_link_state": self.link_state(row, sessions, registry, desktop)}
                                   for row in page["items"]]}
 
     def save_item(self, body, *, update=False):
@@ -280,15 +422,23 @@ class WorkspaceService:
         if "project_id" in fields and fields["project_id"] is not None and not project_id_valid(fields["project_id"]):
             invalid("project_id")
         merged = {**old, **fields} if old else fields
-        registry = self.registered_projects()
+        desktop = self.desktop_snapshot()
+        registry = self.registered_projects(desktop=desktop)
         if "project_id" in fields and fields["project_id"] is not None:
             project = next((row for row in registry if row["id"] == fields["project_id"]), None)
             if project is None or project["archived"]:
                 invalid("project_id")
         link_changed = old is None or any(name in fields for name in ("project_id", "provider_id", "session_key"))
+        project = next((row for row in registry if row["id"] == merged["project_id"]), None)
+        projection = None
+        if project and project.get("read_only") and link_changed:
+            if not project.get("binding_available"):
+                raise WorkspaceError("session_not_in_sample")
+            projection = project
         key = merged["session_key"]
         sessions = self.sessions() if key is not None else unavailable(0)
         session_cwd = None
+        session_project_id = None
         if key is not None and link_changed:
             if merged["provider_id"] != "codex" or merged["project_id"] is None or not isinstance(key, str) or not key.startswith("codex:"):
                 invalid("session_key")
@@ -299,16 +449,30 @@ class WorkspaceService:
             project = next((row for row in registry if row["id"] == merged["project_id"]), None)
             if project is None or project["archived"]:
                 invalid("project_id")
-            session = next((row for row in sessions["items"] if row["session_key"] == key), None)
-            if session is None or not sessions["available"]:
+            session = next((row for row in desktop["items"] if row["session_key"] == key), None)
+            # Legacy-only installations keep their existing sample contract.
+            if session is None and not project.get("read_only") and desktop["status"] == "not_configured":
+                session = next((row for row in sessions["items"] if row["session_key"] == key), None)
+                available = sessions["available"]
+            else:
+                available = (desktop["status"] == "available" and desktop["complete"] and session is not None
+                             and (session.get("binding_available", False) or not project.get("read_only")
+                                  and session.get("assignment_state") == "projectless"))
+            if session is None or not available:
                 raise WorkspaceError("session_not_in_sample")
-            if observation_owner(session["cwd"], registry) != merged["project_id"]:
+            if project.get("read_only"):
+                if session.get("assignment_state") != "assigned" or session.get("project_id") != project["id"]:
+                    raise WorkspaceError("session_project_mismatch")
+                session_project_id = project["id"]
+            elif (session.get("assignment_state") == "assigned" or
+                  observation_owner(session["cwd"], [row for row in registry if not row.get("read_only")]) != merged["project_id"]):
                 raise WorkspaceError("session_project_mismatch")
             session_cwd = session["cwd"]
         # Preserve no-op CAS: the store receives an unchanged allowed field, never an empty patch.
         item = self.store.save_item(fields or {"title": old["title"]}, item_id=item_id,
-                                    expected_revision=revision, session_cwd=session_cwd)
-        return {"item": {**item, "session_link_state": self.link_state(item, sessions, registry)}}
+                                    expected_revision=revision, session_cwd=session_cwd,
+                                    codex_project=projection, codex_session_project_id=session_project_id)
+        return {"item": {**item, "session_link_state": self.link_state(item, sessions, registry, desktop)}}
 
     def page_records(self, **params):
         rows, total = self.store.list_records(**params)
@@ -335,6 +499,7 @@ class WorkspaceService:
                                                             "observe_sessions": item["id"] == "codex"}, "entrypoints": []}
                                   for item in discover_providers(observations["installations"])], "sessions": sessions,
                     "observations": summary(observations),
+                    "codex_desktop": self.desktop_summary(self.desktop_snapshot()),
                     "entrypoints": [{"id": "progress", "label": "项目进度与待办", "href": "/progress"}],
                     "data_dir": str(self.profile.data_dir)}
         try:
@@ -377,6 +542,8 @@ class WorkspaceService:
         existing = self.store.get_task(task_id) if update else None
         registry = self.registered_projects()
         project = next((row for row in registry if row["id"] == project_id), None)
+        if self.profile is not None and (project_id.startswith("cx-") or project and project.get("read_only")):
+            raise ValueError("invalid_request")
         if self.profile is not None and not project_id_valid(project_id):
             raise ValueError("invalid_request")
         if self.profile is not None:
@@ -387,10 +554,21 @@ class WorkspaceService:
         unchanged = existing and all(existing[name] == body[name] for name in ("project_id", "provider_id", "session_key"))
         sessions = self.sessions() if key is not None else unavailable(0)
         if key is not None and not unchanged:
-            session = next((row for row in sessions["items"] if row["session_key"] == key), None)
-            if session is None or not sessions["available"]:
-                raise WorkspaceError("session_not_in_sample")
-            owns = observation_owner(session["cwd"], registry) == project_id if self.profile is not None else inside_project(session["cwd"], project["root"])
+            desktop = self.desktop_snapshot() if self.profile is not None else None
+            if desktop is not None and desktop["status"] != "not_configured":
+                session = next((row for row in desktop["items"] if row["session_key"] == key), None)
+                if session is None or desktop["status"] != "available" or not desktop["complete"]:
+                    raise WorkspaceError("session_not_in_sample")
+                if session["assignment_state"] == "assigned":
+                    raise WorkspaceError("session_project_mismatch")
+                if session["assignment_state"] != "projectless":
+                    raise WorkspaceError("session_not_in_sample")
+            else:
+                session = next((row for row in sessions["items"] if row["session_key"] == key), None)
+                if session is None or not sessions["available"]:
+                    raise WorkspaceError("session_not_in_sample")
+            owns = (observation_owner(session["cwd"], [row for row in registry if not row.get("read_only")]) == project_id
+                    if self.profile is not None else inside_project(session["cwd"], project["root"]))
             if not owns:
                 raise WorkspaceError("session_project_mismatch")
         task = self.store.save_task({**body, "title": title.strip()}, task_id)

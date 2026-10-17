@@ -592,6 +592,12 @@ class PanelHandler(BaseHTTPRequestHandler):
         elif route == "/api/codex/threads":
             value = profile.codex_threads(codex_offset(path.query))
             self.reply(200 if value["available"] else 503, value)
+        elif route == "/api/workspace/codex/sessions":
+            try:
+                params = page_params(path.query, extra=("project_id", "scope"), default=20)
+                self.reply(200, workspace.page_codex_sessions(**params))
+            except ValueError:
+                raise ProfileError("invalid_query") from None
         elif route == "/api/workspace/items":
             try:
                 params = page_params(path.query, extra=("project_id", "scope", "provider_id", "state", "list_revision"))

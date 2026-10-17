@@ -6,10 +6,10 @@ import re
 import sqlite3
 from pathlib import Path
 
-from session_panel.paths import REPOSITORY_ROOT
+from session_panel.paths import legacy_data_root
 from urllib.parse import unquote
 
-REGISTRY = REPOSITORY_ROOT / "progress-registry.json"
+REGISTRY = legacy_data_root() / "progress-registry.json"
 MANUAL = REGISTRY.with_name("progress-manual.json")
 STATES = ("未开始", "在做", "等我", "完成")
 ID_TEXT = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")

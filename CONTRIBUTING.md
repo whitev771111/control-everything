@@ -8,15 +8,15 @@
 
 | 后端目录 | 职责 |
 |---|---|
-| `session_panel/http` | HTTP 路由、静态白名单与服务装配 |
-| `session_panel/sessions` | 会话观察、索引、终端与本机进程证据 |
-| `session_panel/workspace` | 项目、进度、管理存储与来源观察 |
-| `session_panel/execution` | 执行准入、执行记录与受控进程 |
-| `session_panel/profiles` | 用户配置、导入备份与离线恢复 |
-| `session_panel/integrations` | 外部接入、固定启动器与旧只读 MCP |
+| `src/session_panel/http` | HTTP 路由、静态白名单与服务装配 |
+| `src/session_panel/sessions` | 会话观察、索引、终端与本机进程证据 |
+| `src/session_panel/workspace` | 项目、进度、管理存储与来源观察 |
+| `src/session_panel/execution` | 执行准入、执行记录与受控进程 |
+| `src/session_panel/profiles` | 用户配置、导入备份与离线恢复 |
+| `src/session_panel/integrations` | 外部接入、固定启动器与旧只读 MCP |
 | `native/observer` | Windows 只读进程观察、受限本机管道及核验后的窗口返回；不写管理库 |
 
-`session_panel/paths.py` 统一固定仓库根路径。根包的四个旧 CLI 文件只保留兼容入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
+生产 Python 包只放在 `src/session_panel`，不要在根目录建立影子包。`src/session_panel/paths.py` 分别定位检出目录、包内资源和用户数据；源码模式保留旧根数据合同，安装模式不会把程序目录当数据目录。包根的四个旧 CLI 文件只保留兼容入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
 
 前端按 `web/sessions`、`web/progress`、`web/workspace` 分组；执行界面属于工作台，放在 `web/workspace/execution.js`。新增页面资源放入所属功能目录，并在 HTTP 静态白名单中显式映射。物理路径与公开 URL 分开维护：搬文件不改变 `/workspace`、`/workspace.js` 等地址，也不改变普通脚本加载顺序。
 
@@ -43,7 +43,7 @@
 
 额度 DOM 展示在 `web/workspace/quota.js`，观察动作处理在 `http/observation_routes.py`；主脚本、网关只委派相应职责。前端仍使用普通 Window 模块，依赖注入、DOM 合同、脚本顺序及独立代码审查共同约束；Python 导入检查不覆盖 JavaScript 或 SQL 的业务含义。
 
-开发环境显式安装固定工具，再从根执行：
+开发环境先按下文安装 editable 包，再显式安装固定工具，从根执行：
 
 ```powershell
 python -m pip --isolated install -r tools/architecture/requirements.txt
@@ -60,12 +60,26 @@ python tests/e2e/verify_architecture.py --output work/architecture-check-unique
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pip install -r tools/packaging/requirements.txt
 .\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 基础测试使用合成配置、临时文件和 mock，不需要作者服务器或个人工具。首次完整测试涉及固定 Gitleaks 检查时，先按下文安装已核验工具；不能把缺工具跳过称为完整检查通过。本机 requirements 固定 MCP 1.30.0，远端新 reader 环境另用 tools/remote-reader/requirements.txt，不能把两套环境混为一次升级。
+
+### Python 分发构建
+
+`pyproject.toml` 是产品版本的唯一来源，运行依赖只从根 `requirements.txt` 读取。`tools/packaging` 负责分发构建，不放业务逻辑；其工具依赖单独固定，不加入运行 requirements。完整开发测试中的构建合同也需要这些固定工具：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r tools/packaging/requirements.txt
+.\.venv\Scripts\python.exe -m build --outdir work/python-package/dist
+```
+
+默认先生成 sdist，再从 sdist 构建 wheel。`BuildPy` 只复制 HTTP 白名单中的 HTML/CSS/交付 JS；`web` 保持唯一手写源，editable 不往 src 复制一份资源。新增静态资源须同时更新 HTTP 白名单、`tools/packaging/build_assets.py`、`MANIFEST.in` 和合同测试。wheel 不包含开发工具、测试、原生 EXE 或个人数据。包内 `source.py`、`remote_probe.py` 和 news worker 的真实 `.py` 是运行所需文件，不能只发字节码。标准 wheel 缺少原生后台时明确降级；完整 Windows 产品另有固定运行闭包。
+
+隔离构建、离开源树安装、四个 CLI 的各自合同及实际 HTTP 资源验收由负责人留证；根目录可 import 不能替代这些验证。不要设置根 PYTHONPATH 掩盖漏安装。`build/`、`dist/` 和 egg-info 都是 ignored 产物，不提交 EXE 或安装包。
 
 ### 观察前端 TypeScript 开发
 

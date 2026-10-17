@@ -10,6 +10,6 @@
 - 不提交实际个人配置、数据库、日志、凭据或图片视频。例子使用通用占位、临时目录或保留测试地址。发现泄露只报告类别和相对位置，不在公开 PR 复制原值。
 - 项目说明用中文，代码注释用英文。提交信息遵循 Conventional Commits，不加入 AI 署名。
 - 开发记录仅保留在本机 ignored `docs/`，不提交仓库；历史事实和失败证据不得静默改写。仓库规则不代表远端保护已经启用，启用须有实际检查与配置证据。
-- 新增功能放入所属后端功能包和前端功能目录，测试按 backend/frontend/e2e/fixtures 类型放置；具体归属见 [CONTRIBUTING.md](CONTRIBUTING.md)。内部引用真实实现，保持旧 CLI 与公开资源 URL 合同。
+- 生产 Python 只放入 `src/session_panel` 所属功能包，前端唯一源码在 `web`；不要建立根影子包。构建工具归 `tools/packaging`，资源按显式白名单入包。测试按 backend/frontend/e2e/fixtures 类型放置；具体归属见 [CONTRIBUTING.md](CONTRIBUTING.md)。内部引用真实实现，保持旧 CLI 与公开资源 URL 合同。
 - 新增文件先检查归属；依赖遵守 `tools/architecture/importlinter.ini`，运行 `python scripts/check_architecture.py layout` 和官方 Import Linter。不得经旧 CLI、兼容转发或动态导入绕过方向约束；新增构建单元须同时更新规则与贡献指南。
 - HTTP 入口保留权限、请求处理及装配，页面主脚本保留状态及装配；新业务处理和完整展示放入所属模块。跨项目/事项的管理写入保持现有同库事务，Rust 不写业务库。

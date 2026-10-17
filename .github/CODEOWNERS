@@ -3,4 +3,4 @@
 /.github/ @zxl123456123
 /tools/architecture/ @zxl123456123
 /native/observer/protocol.json @zxl123456123
-/session_panel/workspace/task_schema.py @zxl123456123
+/src/session_panel/workspace/task_schema.py @zxl123456123

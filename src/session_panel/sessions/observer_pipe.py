@@ -10,7 +10,7 @@ import subprocess
 import threading
 import time
 
-from session_panel.paths import REPOSITORY_ROOT
+from session_panel.paths import observer_install_dir
 from session_panel.sessions import observer_protocol as protocol
 
 
@@ -358,9 +358,11 @@ class WindowsPipe:
         self.key = self.build = None
 
     def connect(self):
-        install = REPOSITORY_ROOT / "work" / "native-observer" / "install"
-        binary = install / "session-panel-observer.exe"
         try:
+            install = observer_install_dir()
+            if install is None:
+                raise PipeError("native_missing")
+            binary = install / "session-panel-observer.exe"
             if not binary.is_file():
                 raise PipeError("native_missing")
             if (install / "manifest.json").stat().st_size > 4096:

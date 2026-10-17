@@ -1,0 +1,14 @@
+include requirements.txt
+include setup.py
+include tools/packaging/build_assets.py
+include tools/packaging/requirements.txt
+recursive-include src/session_panel *.py
+include web/sessions/index.html web/sessions/app.js web/sessions/style.css
+include web/progress/progress.html web/progress/progress.js web/progress/progress.css
+include web/workspace/workspace.html web/workspace/workspace.js web/workspace/workspace.css
+include web/workspace/task-center.js web/workspace/execution.js web/workspace/observation.js
+include web/workspace/news.js web/workspace/quota.js
+prune work
+prune docs
+prune videos
+global-exclude __pycache__ *.py[cod]

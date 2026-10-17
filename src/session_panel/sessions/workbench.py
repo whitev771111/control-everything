@@ -16,7 +16,7 @@ from ctypes import wintypes
 from datetime import datetime, timezone
 from pathlib import Path
 
-from session_panel.paths import REPOSITORY_ROOT
+from session_panel.paths import execution_root
 
 from session_panel.sessions.source import TERMINAL_TIMEOUT
 
@@ -153,8 +153,9 @@ class Workbench:
         return result.stdout
 
     def _processes(self, deadline):
-        result = self.runner([_native_interpreter(), "-X", "utf8", "-B", "-m", "session_panel.native_processes"],
-                             cwd=str(REPOSITORY_ROOT), shell=False,
+        script = Path(__file__).resolve().with_name("native_processes.py")
+        result = self.runner([_native_interpreter(), "-I", "-B", "-X", "utf8", str(script)],
+                             cwd=str(execution_root()), shell=False,
                              capture_output=True, text=True, encoding="utf-8", errors="strict",
                              timeout=self.remaining(deadline), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if result.returncode:

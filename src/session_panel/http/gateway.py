@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from session_panel.paths import REPOSITORY_ROOT
+from session_panel.paths import web_root
 from urllib.parse import parse_qs, urlsplit
 
 from session_panel.sessions.source import HOST, PORT, canonical_uuid
@@ -28,7 +28,7 @@ from session_panel.workspace.store import WorkspaceError
 from session_panel.profiles.profile import Profile, ProfileError, strict_json
 
 APP = "remote-claude-session-panel"
-WEB = REPOSITORY_ROOT / "web"
+WEB = web_root()
 SESSION_ROUTE = re.compile(r"/api/sessions/([^/]+)(?:/(messages|focus))?\Z")
 EXECUTION_RUN_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)\Z")
 EXECUTION_ACTION_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)/(cancel|approvals/([^/]+))\Z")

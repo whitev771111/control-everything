@@ -7,7 +7,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = {'.gitattributes', '.gitignore', 'AGENTS.md', 'CONTRIBUTING.md', 'README.md',
-              'requirements.txt', 'rust-toolchain.toml'}
+              'requirements.txt', 'rust-toolchain.toml', 'pyproject.toml', 'MANIFEST.in', 'setup.py'}
 PACKAGE_FILES = {'__init__.py', 'paths.py', 'input_validation.py', 'gateway.py',
                  'profile.py', 'native_processes.py', 'mcp_stdio.py'}
 PACKAGES = {'http', 'sessions', 'workspace', 'execution', 'profiles', 'integrations', 'platform'}
@@ -24,10 +24,12 @@ def ownership_error(value):
     if len(parts) == 1:
         return None if value in ROOT_FILES else 'root_file_has_no_owner'
     top, section = parts[:2]
-    if top == 'session_panel':
-        if len(parts) == 2:
-            return None if section in PACKAGE_FILES else 'package_root_is_for_entries_and_foundations'
-        return None if section in PACKAGES and path.suffix == '.py' else 'unknown_backend_owner'
+    if top == 'src':
+        if section != 'session_panel' or len(parts) < 3:
+            return 'unknown_backend_owner'
+        if len(parts) == 3:
+            return None if parts[2] in PACKAGE_FILES else 'package_root_is_for_entries_and_foundations'
+        return None if parts[2] in PACKAGES and path.suffix == '.py' else 'unknown_backend_owner'
     if top == 'web':
         return None if section in {'sessions', 'progress', 'workspace'} and path.suffix in {
             '.html', '.css', '.js', '.ts'} else 'unknown_frontend_owner'
@@ -35,7 +37,7 @@ def ownership_error(value):
         return None if value == 'tests/__init__.py' or section in {
             'backend', 'frontend', 'e2e', 'fixtures'} else 'unknown_test_type'
     if top == 'tools':
-        return None if section in {'typescript', 'remote-reader', 'architecture'} else 'unknown_development_tool'
+        return None if section in {'typescript', 'remote-reader', 'architecture', 'packaging'} else 'unknown_development_tool'
     if top == 'examples':
         return None if section in {'integrations', 'legacy'} and path.suffix == '.json' else 'unknown_example_owner'
     if top == 'native':

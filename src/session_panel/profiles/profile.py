@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from session_panel.input_validation import ProfileError, absolute_path
+from session_panel.paths import default_profile_dir
 from session_panel.sessions import codex_index
 from session_panel.sessions import observation_settings as observations
 from session_panel.workspace.store import WorkspaceStore, WorkspaceError
@@ -59,11 +60,7 @@ def resolve_data_dir(data_dir=None, *, environ=None, platform=None, home=None):
         if not absolute_path(str(selected)):
             raise ProfileError("invalid_config", "data_dir")
         return Path(selected).resolve()
-    if platform == "win32":
-        base = Path(environ["LOCALAPPDATA"]) if environ.get("LOCALAPPDATA") else home / "AppData" / "Local"
-        return (base / "SessionPanel").resolve()
-    base = Path(environ["XDG_DATA_HOME"]) if environ.get("XDG_DATA_HOME") else home / ".local" / "share"
-    return (base / "session-panel").resolve()
+    return default_profile_dir(environ=environ, platform=platform, home=home)
 
 
 def validate_config(config):

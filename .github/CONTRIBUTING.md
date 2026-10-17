@@ -201,12 +201,12 @@ node tests/e2e/verify_workspace.cjs --fixture
 
 实现者仅运行经代码核过的无listener合成合同；真实旧连接/多进程停写、CLI迁移恢复回退、HTTP/Edge以及全量discover由验收负责人承接并保存全部退出码、失败和清理收据。纯单测入口为 `tests.backend.test_task_store` 与 `tests.backend.test_task_migration`；它们只操作TemporaryDirectory，不是用户迁移验收。
 
-1. 任务说明记录目标、验收、负责人、分支/worktree、拟改文件和当前状态。开始、交接和结束均核对 `git status`、diff，注明阻塞与未验证项。
-2. 独立任务使用独立分支或 worktree；若共用工作树，先分配文件负责人。需要改同一文件时先协调；合并冲突保留双方意图和证据。
-3. PR 写明目的、范围、验证命令和退出码、风险与遗留，并指定一名未参与实施的审查人。后续修改后重新验证并请审查最终 diff。
+1. 在本机任务记录中写明目标、范围和实际验证结果；开始和结束均核对 `git status`、diff，注明未验证项。
+2. 当前采用直接提交并推送 main 的快速开发方式，不强制 PR、独立审查或等待远端 CI。需要并行隔离时再使用分支或 worktree；共用工作树先协调文件归属。
+3. 执行与改动相称的本地验证；每次迭代独立提交，信息说明原因。代码、数据迁移和发布仍需各自实际验证，不能把未运行的检查称为通过。
 4. 按任务授权提交和推送。使用显式文件清单暂存并检查 staged diff，推送前检查上游和完整 outgoing commit 区间。不要将别人的未提交改动混入自己的提交。
 
-提交和推送遵循当前任务授权。不提交图片视频，也不为清理范围删除其他会话的媒体草稿。没有选定仓库许可证前，不自行添加许可证或宣称任意再分发许可。
+提交和推送遵循当前任务授权。产品宣传只使用项目主导者选定的成片，通过 GitHub 视频附件供首页播放；不将媒体制作资料加入源码提交，也不删除本机媒体草稿。没有选定仓库许可证前，不自行添加许可证或宣称任意再分发许可。
 
 ## 内容和秘密检查
 
@@ -239,19 +239,15 @@ python scripts/check_repository.py release --manifest work/checks/candidates.jso
 
 发现真实秘密先由持有人撤销或轮换，公开记录只留类别和位置。当前树清理、当前候选、待推送提交及既有历史是四种范围；改当前文件不等于清理历史。历史改写、强推和删除分支仍须明确授权。
 
-## CI 与维护者启用步骤
+## 可选 CI 与发布
 
-工作流使用普通 `pull_request`、main 的 `push` 和手动 `workflow_dispatch`，默认仅 `contents: read`，不持久化 checkout 凭据、不上传扫描报告。稳定状态名为 `windows-tests`、`new-content-checks`、`architecture-boundaries`；手动 `release-readiness` 检查当前全部 Git 跟踪候选，不属于普通开发 PR 的必过项。它遇到现有媒体或旧个人值会阻塞，不能通过排除后宣称全仓库已脱敏。
+当前快速开发阶段，`repository-checks` 只保留手动 `workflow_dispatch`，提交和推送不会自动触发，也不是 main 的合入门槛。需要完整检查时由维护者主动运行；本地未执行的全量检查不能记为通过。
 
-维护者获得管理权限并授权发布后执行：
+手动检查保留 `windows-tests`、`architecture-boundaries`、`new-content-checks` 和 `release-readiness`。新增内容检查比较所选提交与其第一父提交，完整候选检查覆盖当前跟踪树；两者不能互相替代。权限仍为 `contents: read`，不上传扫描报告。
 
-1. 先让 CI 分支在 GitHub 实际运行，记录 run URL 和三个状态名；本地测试和 YAML 检查不能替代远端运行。
-2. 为 main 建 active ruleset：要求 PR、必需状态全部通过并与最新 main 一起检查、解决讨论，禁止 force push 和删除。绕过列表为空，规则同样约束管理员。
-3. 当前只有 `zxl123456123` 一位维护者，按其明确决定暂设 required approvals=0、owner review=false；保留独立代码审查及证据，不能自批冒充第二人审查。以后增加真实维护者再启用独立批准和 owner review。
-4. CODEOWNERS 使用真实有权限的 `@zxl123456123`；目录所有者与强制第二账号审批是不同设置，不编造所有者。
-5. 读取 effective ruleset、实际 PR checks 和 CI 未通过时的受阻状态，才可记录“远端门禁已启用”。不能从本文或 CODEOWNERS 推断远端已经配置。
+main 的远端规则仅保留防强推与防删分支，不要求 PR 或必需 CI。调整远端规则后必须读取实际生效结果；以后恢复多人协作门槛须由项目主导者另行决定，不能从旧说明自动重建。
 
-采用 GitHub 原生 [贡献指南](https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/setting-guidelines-for-repository-contributors)、[分支规则](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets) 和官方 [Gitleaks CLI](https://github.com/gitleaks/gitleaks)。Actions 直接依赖固定完整 SHA；未采用仍在预览的 actions.lock，不声称具有传递依赖锁定。
+安装器发布仍是单独的手动操作，实际产品构建与验收要求见[Windows 安装与维护](../guide/windows.md)。日常快速提交不代表已发布安装器，也不替代发布验收。
 
 ## 源码与测试目录
 

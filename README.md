@@ -8,9 +8,7 @@
 
 ## 产品展示
 
-
-
-封面和视频为 `44c359f` 版本的历史演示，使用合成数据；部分入口已调整，协作小院已移除。当前能力以下表为准。
+https://github.com/user-attachments/assets/be96cc58-6bd8-4221-b0aa-77c0f9e31804
 
 | 功能 | 可以做什么 |
 | --- | --- |
@@ -28,21 +26,11 @@
 
 当前提供源码启动方式。**截至 2026-10-17，公开 Releases 尚无安装包**；后续安装器及维护说明见 [Windows 安装指南](guide/windows.md)。
 
-在 Windows 上准备 Python 3.12 或更新版本，克隆仓库后进入根目录。以下创建环境步骤适用于全新检出；已有 `.venv` 时先确认环境归属，直接复用正确的环境。
+1. 在 Windows 上准备 Python 3.12 或更新版本。
+2. 按[源码启动指南](guide/usage.md#多-agent-工作台)安装并启动服务。
+3. 打开 **http://127.0.0.1:8766/workspace**，点击“添加项目”开始使用。
 
-```powershell
-git clone https://github.com/zxl123456123/control-everything.git
-cd control-everything
-python -m venv .venv
-& '.venv/Scripts/python.exe' -m pip install -e .
-& '.venv/Scripts/python.exe' -m pip check
-& '.venv/Scripts/python.exe' -m session_panel.profile init
-& '.venv/Scripts/python.exe' -m session_panel.gateway
-```
-
-打开 **http://127.0.0.1:8766/workspace**，点击“添加项目”开始使用。基础网页启动无需 Node.js 或 Rust 编译器。
-
-默认数据保存在 `%LOCALAPPDATA%/SessionPanel`。端口被占用时退出，可通过 `--port` 指定其他端口；独立数据目录、导入与备份见[使用指南](guide/usage.md)。在启动终端按 Ctrl+C 停止网关。
+基础网页启动无需 Node.js 或 Rust 编译器。数据保存在本机；独立数据目录、端口设置、导入与备份见[使用指南](guide/usage.md)。
 
 ## 当前边界
 
@@ -58,5 +46,3 @@ python -m venv .venv
 - [可选接入](guide/integrations.md)：远端会话、终端、启动器与只读 MCP。
 - [Windows 安装与维护](guide/windows.md)：安装、停止、升级、回退、卸载及发布验证。
 - [参与开发](.github/CONTRIBUTING.md)：环境、目录职责、构建、测试和贡献约定。
-
-后端按功能组织在 `src/session_panel/`，前端在 `web/`，Windows 原生观察在 `native/observer/`。`session_panel` 是现有 Python 包与启动命令的名称；新增功能放入对应功能目录。

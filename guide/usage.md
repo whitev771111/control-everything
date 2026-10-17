@@ -11,6 +11,8 @@
 以下为源码开发入口，使用 Windows 与 Python 3.12 及以上版本。先安装 editable 包，再使用原模块 CLI；仅安装 requirements 不会安装 `src` 下的程序。已有 `.venv` 时核对归属与版本，不覆盖：
 
 ```powershell
+git clone https://github.com/zxl123456123/control-everything.git
+cd control-everything
 python -m venv .venv
 & '.venv/Scripts/python.exe' -m pip install -e .
 & '.venv/Scripts/python.exe' -m pip check

@@ -225,7 +225,8 @@ class TaskMigrationTests(unittest.TestCase):
                 self.assertFalse(error.exception.committed)
                 self.assertEqual(self.facts(1), before)
         # A committed migration must not inspect the already-closed writer when reopening fails.
-        reload_path = schema1_profile(self.root / 'reload-fault')
+        # Match the canonical writer path when TEMP uses a Windows 8.3 alias.
+        reload_path = schema1_profile(self.root / 'reload-fault').resolve()
         main_reads = 0
         def unreadable_after_commit(path, *, readonly=False):
             nonlocal main_reads

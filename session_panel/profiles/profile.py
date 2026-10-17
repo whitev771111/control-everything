@@ -12,8 +12,9 @@ from uuid import uuid4
 from contextlib import contextmanager
 from pathlib import Path
 
+from session_panel.input_validation import ProfileError, absolute_path
 from session_panel.sessions import codex_index
-from session_panel.profiles import observation_settings as observations
+from session_panel.sessions import observation_settings as observations
 from session_panel.workspace.store import WorkspaceStore, WorkspaceError
 from session_panel.profiles.integration_settings import (
     EMPTY_INTEGRATIONS, InvalidSettings, integration_summary, validate_integrations,
@@ -21,12 +22,6 @@ from session_panel.profiles.integration_settings import (
 
 DEFAULT_CONFIG = {"version": 2, "codex": {"enabled": False, "db_path": None}, "integrations": EMPTY_INTEGRATIONS}
 CONFIG_MAX_BYTES = 65536
-
-
-class ProfileError(ValueError):
-    def __init__(self, reason, field=None, *, status=422, message=None):
-        super().__init__(reason)
-        self.reason, self.field, self.status, self.message = reason, field, status, message
 
 
 def unique_object(pairs):
@@ -53,10 +48,6 @@ def strict_json(data):
                 check(child)
     check(value)
     return value
-
-
-def absolute_path(value):
-    return isinstance(value, str) and 1 <= len(value) <= 2048 and "\x00" not in value and Path(value).is_absolute()
 
 
 def resolve_data_dir(data_dir=None, *, environ=None, platform=None, home=None):

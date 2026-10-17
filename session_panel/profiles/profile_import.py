@@ -13,12 +13,13 @@ from uuid import uuid4
 
 from session_panel.profiles.profile import (CONFIG_MAX_BYTES, ProfileError, absolute_path,
                                           config_file_lock, strict_json, validate_config)
-from session_panel.profiles import observation_settings
+from session_panel.sessions import observation_settings
 from session_panel.workspace import task_schema
 from session_panel.sessions.source import canonical_uuid
-from session_panel.workspace.service import WorkspaceService, TASK_STATES, PROVIDERS, finite_number
+from session_panel.workspace.service import WorkspaceService, TASK_STATES, PROVIDERS
 from session_panel.workspace.store import (BASE_SCHEMA, MANAGEMENT_TABLES, WorkspaceError, WorkspaceStore,
-                              now_utc, project_id_valid, validate_project)
+                              now_utc)
+from session_panel.workspace.validation import finite_number, project_id_valid, validate_project
 
 TASK_COLUMNS = "id,title,project_id,provider_id,state,session_key,source,created_at,updated_at"
 RECORD_COLUMNS = "id,provider_id,product,day,metric,value,currency,window_label,note,source,created_at,updated_at"

@@ -16,7 +16,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 if __name__ == '__main__':
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from session_panel.execution.owned_process import WindowsAPI, ExtendedLimits, SecurityAttributes, ProcessError
+from session_panel.platform.windows_jobs import WindowsAPI, ExtendedLimits, SecurityAttributes, ProcessError
 from session_panel.workspace.news_parse import parse_feed_result, parse_hn_result, safe_news_url
 
 FEEDS = (('google_ai', 'Google AI', 'https://blog.google/technology/ai/rss/'),

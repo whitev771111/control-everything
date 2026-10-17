@@ -41,13 +41,13 @@ jobs:
           npm ci --prefix tools/typescript --include=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
           exit $LASTEXITCODE
       - name: Verify delivered observation JavaScript
-        run: node scripts/build_observation.cjs check
+        run: node tools/scripts/build_observation.cjs check
       - name: Typecheck news and verify delivered JavaScript
         shell: pwsh
         run: |
-          node scripts/build_news.cjs typecheck
+          node tools/scripts/build_news.cjs typecheck
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/build_news.cjs check
+          node tools/scripts/build_news.cjs check
           exit $LASTEXITCODE
       - run: python -m pip install -r tools/packaging/requirements.txt
       - run: python -m pip install -e .
@@ -56,7 +56,7 @@ jobs:
         run: python -m build --outdir work/python-package/dist
       - name: Prepare pinned scanner for repository contracts
         shell: pwsh
-        run: ./scripts/install_gitleaks.ps1 -Destination work/tools/gitleaks-8.30.1
+        run: ./tools/scripts/install_gitleaks.ps1 -Destination work/tools/gitleaks-8.30.1
       - name: Prepare isolated observer toolchain
         shell: pwsh
         run: |
@@ -75,13 +75,13 @@ jobs:
           Import-Module (Join-Path $installation 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
           Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           $env:RUSTUP_HOME = Join-Path (Get-Location) 'work/native-observer/rustup-home'
-          python scripts/build_observer.py fmt
+          python tools/scripts/build_observer.py fmt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/build_observer.py test
+          python tools/scripts/build_observer.py test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/build_observer.py clippy
+          python tools/scripts/build_observer.py clippy
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/build_observer.py build
+          python tools/scripts/build_observer.py build
           exit $LASTEXITCODE
       - run: python -m unittest discover -s tests -v
       - run: node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs tests/frontend/test_news_ui.cjs tests/frontend/test_news_build.cjs tests/frontend/test_quota_ui.cjs
@@ -98,7 +98,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip --isolated install -r tools/architecture/requirements.txt
       - run: python -m pip --isolated install --no-deps -e .
-      - run: python scripts/check_architecture.py layout
+      - run: python tools/scripts/check_architecture.py layout
       - run: lint-imports --config tools/architecture/importlinter.ini --no-cache --no-logo
       - run: python tests/e2e/verify_architecture.py --output work/architecture-ci
 
@@ -115,14 +115,14 @@ jobs:
         with:
           python-version: '3.12'
       - shell: pwsh
-        run: ./scripts/install_gitleaks.ps1 -Destination work/tools/gitleaks-8.30.1
+        run: ./tools/scripts/install_gitleaks.ps1 -Destination work/tools/gitleaks-8.30.1
       - shell: pwsh
         run: |
           $baseCommit = git rev-parse HEAD^
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $headCommit = git rev-parse HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/check_repository.py changes --base "$baseCommit" --head "$headCommit" --report work/checks/changes.json
+          python tools/scripts/check_repository.py changes --base "$baseCommit" --head "$headCommit" --report work/checks/changes.json
           exit $LASTEXITCODE
 
   release-readiness:
@@ -138,11 +138,11 @@ jobs:
         with:
           python-version: '3.12'
       - shell: pwsh
-        run: ./scripts/install_gitleaks.ps1 -Destination work/tools/gitleaks-8.30.1
+        run: ./tools/scripts/install_gitleaks.ps1 -Destination work/tools/gitleaks-8.30.1
       - shell: pwsh
         run: |
           New-Item -ItemType Directory -Path work/checks -Force | Out-Null
           python -c "import json,pathlib,subprocess; r=subprocess.run(['git','ls-files','-z'],capture_output=True,check=True); p=r.stdout.decode('utf-8').rstrip('\0').split('\0'); pathlib.Path('work/checks/candidates.json').write_text(json.dumps({'files':p,'excluded':[]}),encoding='utf-8')"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/check_repository.py release --manifest work/checks/candidates.json --report work/checks/release.json
+          python tools/scripts/check_repository.py release --manifest work/checks/candidates.json --report work/checks/release.json
           exit $LASTEXITCODE

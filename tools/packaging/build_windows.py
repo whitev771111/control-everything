@@ -347,7 +347,7 @@ def source_identity(release=False, runner=subprocess.run):
 
 
 def observer_builder():
-    spec = importlib.util.spec_from_file_location('control_everything_observer_builder', ROOT / 'scripts/build_observer.py')
+    spec = importlib.util.spec_from_file_location('control_everything_observer_builder', ROOT / 'tools/scripts/build_observer.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

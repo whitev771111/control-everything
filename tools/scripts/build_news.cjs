@@ -2,6 +2,6 @@
 'use strict';
 const path = require('node:path');
 const { fixedCompiler, cli } = require('./frontend_compile.cjs');
-const builder = fixedCompiler('observation');
-if (require.main === module) cli(builder, path.resolve(__dirname, '..'));
+const builder = fixedCompiler('news');
+if (require.main === module) cli(builder, path.resolve(__dirname, '../..'));
 module.exports = builder;

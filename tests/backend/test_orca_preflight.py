@@ -16,7 +16,7 @@ from unittest.mock import patch
 import webbrowser
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "orca_preflight.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "tools/scripts" / "orca_preflight.py"
 SPEC = importlib.util.spec_from_file_location("orca_preflight", SCRIPT)
 preflight = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(preflight)

@@ -1,4 +1,4 @@
-// Generated from web/workspace/news.ts by scripts/build_news.cjs. Do not edit.
+// Generated from web/workspace/news.ts by tools/scripts/build_news.cjs. Do not edit.
 'use strict';
 (function () {
     const statuses = ['pending', 'available', 'stale', 'unavailable'];

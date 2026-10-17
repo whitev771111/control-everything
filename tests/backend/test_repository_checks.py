@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 
-SPEC = importlib.util.spec_from_file_location("repository_checks", Path(__file__).parents[2] / "scripts/check_repository.py")
+SPEC = importlib.util.spec_from_file_location("repository_checks", Path(__file__).parents[2] / "tools/scripts/check_repository.py")
 CHECKS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKS)
 REAL_SCAN_GITLEAKS = CHECKS.scan_gitleaks

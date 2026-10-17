@@ -6,10 +6,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const builder = require('../../scripts/build_observation.cjs');
+const builder = require('../../tools/scripts/build_observation.cjs');
 const repo = path.resolve(__dirname, '../..');
 const parent = path.join(repo, 'work/frontend-observation-tests');
-const declarations = ['scripts/frontend_compile.cjs', 'tools/typescript/package.json', 'tools/typescript/package-lock.json', 'tools/typescript/observation.manifest.json', 'tools/typescript/tsconfig.observation.json', 'scripts/build_observation.cjs'];
+const declarations = ['tools/scripts/frontend_compile.cjs', 'tools/typescript/package.json', 'tools/typescript/package-lock.json', 'tools/typescript/observation.manifest.json', 'tools/typescript/tsconfig.observation.json', 'tools/scripts/build_observation.cjs'];
 const validSource = `'use strict';\n(function () {\n  const label: string = 'synthetic';\n  window.WorkspaceObservation = { projects: [], start() { void label; }, renderProjectRefs() {} };\n})();\n`;
 const types = `declare namespace WorkspaceObservationTypes {\n  interface PublicApi { projects: readonly {id: string; name: string}[]; start(): void; renderProjectRefs(): void; }\n}\ninterface Window { WorkspaceObservation: WorkspaceObservationTypes.PublicApi; }\n`;
 const oldBytes = Buffer.from('// old delivered asset, intentionally not generated\n');
@@ -170,11 +170,11 @@ test('publish I/O failure cannot replace old bytes or report success', () => {
   assert.deepEqual(fs.readFileSync(file('web/workspace/observation.js')), oldBytes);
 });
 test('the real CLI rejects root/output overrides and accepts only a single mode', () => {
-  const result = spawnSync(process.execPath, [file('scripts/build_observation.cjs'), 'build', '--root', repo], { encoding: 'utf8', cwd: root });
+  const result = spawnSync(process.execPath, [file('tools/scripts/build_observation.cjs'), 'build', '--root', repo], { encoding: 'utf8', cwd: root });
   assert.equal(result.status, 2); assert.match(result.stderr, /mode_required/); assert.deepEqual(fs.readFileSync(file('web/workspace/observation.js')), oldBytes);
 });
 test('the real CLI resolves relocated config from another cwd without emitting delivered JS', () => {
-  const result = spawnSync(process.execPath, [file('scripts/build_observation.cjs'), 'typecheck'], { encoding: 'utf8', cwd: path.join(root, 'tools/typescript') });
+  const result = spawnSync(process.execPath, [file('tools/scripts/build_observation.cjs'), 'typecheck'], { encoding: 'utf8', cwd: path.join(root, 'tools/typescript') });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).compiler, '5.9.3');
   assert.deepEqual(fs.readFileSync(file('web/workspace/observation.js')), oldBytes);

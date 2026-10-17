@@ -116,10 +116,10 @@ jobs:
           $env:CARGO_HOME = Join-Path (Get-Location) 'work/native-observer/cargo-home'
           $env:CARGO_TARGET_DIR = Join-Path (Get-Location) 'work/native-observer/target'
           foreach ($command in @('fmt','test','clippy')) {
-            python scripts/build_observer.py $command
+            python tools/scripts/build_observer.py $command
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          python scripts/build_observer.py build --release
+          python tools/scripts/build_observer.py build --release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $metadata = rustup run 1.97.1-x86_64-pc-windows-msvc cargo metadata --manifest-path native/observer/Cargo.toml --locked --format-version 1 | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Cargo license metadata unavailable' }

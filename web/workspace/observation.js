@@ -1,4 +1,4 @@
-// Generated from web/workspace/observation.ts by scripts/build_observation.cjs. Do not edit.
+// Generated from web/workspace/observation.ts by tools/scripts/build_observation.cjs. Do not edit.
 'use strict';
 // Native observations have their own polling and short-lived navigation permissions.
 (function () {

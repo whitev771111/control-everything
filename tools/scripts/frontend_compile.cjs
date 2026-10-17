@@ -16,7 +16,7 @@ function fixedCompiler(asset) {
     noUncheckedIndexedAccess: true, exactOptionalPropertyTypes: true, skipLibCheck: false, allowJs: false, checkJs: false, noEmitOnError: true,
     declaration: false, declarationMap: false, sourceMap: false, inlineSourceMap: false, inlineSources: false, importHelpers: false, removeComments: false,
     emitBOM: false, newLine: 'lf', forceConsistentCasingInFileNames: true, rootDir: '../../web/workspace', outDir: `../../work/frontend-${asset}/manual-emit` }, files: INPUTS.map(name => '../../' + name) };
-  const MARKER = `// Generated from web/workspace/${asset}.ts by scripts/build_${asset}.cjs.`;
+  const MARKER = `// Generated from web/workspace/${asset}.ts by tools/scripts/build_${asset}.cjs.`;
   const HEADER = MARKER + ' Do not edit.\n';
   const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
   class BuildError extends Error {
@@ -175,7 +175,7 @@ function fixedCompiler(asset) {
     let failure;
     try {
       const ts = preflight(root); receipt.compiler = ts.version;
-      for (const name of [...INPUTS, CONFIG_PATH, 'tools/typescript/package.json', 'tools/typescript/package-lock.json', `tools/typescript/${asset}.manifest.json`, `scripts/build_${asset}.cjs`, 'scripts/frontend_compile.cjs']) {
+      for (const name of [...INPUTS, CONFIG_PATH, 'tools/typescript/package.json', 'tools/typescript/package-lock.json', `tools/typescript/${asset}.manifest.json`, `tools/scripts/build_${asset}.cjs`, 'tools/scripts/frontend_compile.cjs']) {
         const file = path.join(root, name); noLinks(root, file);
         if (!fs.existsSync(file)) fail(`missing_${asset}_inputs`, 2);
         receipt.hashes[name] = hash(fs.readFileSync(file));

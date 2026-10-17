@@ -5,13 +5,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const shared = require('../../scripts/frontend_compile.cjs');
-const observation = require('../../scripts/build_observation.cjs');
-const news = require('../../scripts/build_news.cjs');
+const shared = require('../../tools/scripts/frontend_compile.cjs');
+const observation = require('../../tools/scripts/build_observation.cjs');
+const news = require('../../tools/scripts/build_news.cjs');
 const repo = path.resolve(__dirname, '../..');
 const parent = path.join(repo, 'work/frontend-news-tests');
 let root, compiler;
-const names = ['tools/typescript/package.json', 'tools/typescript/package-lock.json', 'tools/typescript/observation.manifest.json', 'tools/typescript/news.manifest.json', 'tools/typescript/tsconfig.observation.json', 'tools/typescript/tsconfig.news.json', 'scripts/frontend_compile.cjs', 'scripts/build_observation.cjs', 'scripts/build_news.cjs', 'web/workspace/observation.ts', 'web/workspace/observation.types.d.ts', 'web/workspace/news.types.d.ts'];
+const names = ['tools/typescript/package.json', 'tools/typescript/package-lock.json', 'tools/typescript/observation.manifest.json', 'tools/typescript/news.manifest.json', 'tools/typescript/tsconfig.observation.json', 'tools/typescript/tsconfig.news.json', 'tools/scripts/frontend_compile.cjs', 'tools/scripts/build_observation.cjs', 'tools/scripts/build_news.cjs', 'web/workspace/observation.ts', 'web/workspace/observation.types.d.ts', 'web/workspace/news.types.d.ts'];
 const valid = `(function () { window.WorkspaceNews = { startWorkspace() {}, startLegacy() {}, onView() {} }; })();`;
 const file = name => path.join(root, name);
 const put = (name, value) => fs.writeFileSync(file(name), value);
@@ -71,12 +71,12 @@ test('news rejects maps and wrong Window exports; the shared helper adds no runt
   assert.equal(fs.readFileSync(path.join(repo, 'web/workspace/observation.js')).includes('frontend_compile'), false);
 });
 test('real news CLI refuses dynamic flags without touching either output', () => {
-  unchanged(() => { const result = spawnSync(process.execPath, [file('scripts/build_news.cjs'), 'check', '--manifest', 'other'], { cwd: root, encoding: 'utf8' }); assert.equal(result.status, 2); assert.match(result.stderr, /mode_required/); });
+  unchanged(() => { const result = spawnSync(process.execPath, [file('tools/scripts/build_news.cjs'), 'check', '--manifest', 'other'], { cwd: root, encoding: 'utf8' }); assert.equal(result.status, 2); assert.match(result.stderr, /mode_required/); });
 });
 
 test('real news CLI resolves relocated config from another cwd without touching either output', () => {
   unchanged(() => {
-    const result = spawnSync(process.execPath, [file('scripts/build_news.cjs'), 'typecheck'], { cwd: path.join(root, 'web/workspace'), encoding: 'utf8' });
+    const result = spawnSync(process.execPath, [file('tools/scripts/build_news.cjs'), 'typecheck'], { cwd: path.join(root, 'web/workspace'), encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     const receipt = JSON.parse(result.stdout);
     assert.ok(receipt.hashes['tools/typescript/tsconfig.news.json']);

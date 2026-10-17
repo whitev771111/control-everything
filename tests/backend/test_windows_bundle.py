@@ -26,7 +26,7 @@ def load(name, path):
 MANIFEST = load('bundle_manifest_fixture', ROOT / 'src/control_everything/installation/manifest.py')
 BUILD = load('windows_bundle_fixture', ROOT / 'tools/packaging/build_windows.py')
 NOTICES = load('bundle_notices_fixture', ROOT / 'tools/packaging/notices.py')
-OBSERVER = load('bundle_observer_fixture', ROOT / 'scripts/build_observer.py')
+OBSERVER = load('bundle_observer_fixture', ROOT / 'tools/scripts/build_observer.py')
 SOURCE = {'commit': 'a' * 40, 'dirty': False, 'files_hash': 'b' * 64}
 
 

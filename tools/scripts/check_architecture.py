@@ -5,7 +5,7 @@ import json
 from pathlib import Path, PurePosixPath
 import subprocess
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 ROOT_FILES = {'.gitattributes', '.gitignore', 'AGENTS.md', 'README.md',
               'requirements.txt', 'rust-toolchain.toml', 'pyproject.toml', 'MANIFEST.in', 'setup.py'}
 PACKAGE_FILES = {'__init__.py', 'paths.py', 'input_validation.py', 'gateway.py',
@@ -37,19 +37,24 @@ def ownership_error(value):
         return None if value == 'tests/__init__.py' or section in {
             'backend', 'frontend', 'e2e', 'fixtures'} else 'unknown_test_type'
     if top == 'tools':
+        if section == 'scripts':
+            return None if len(parts) == 3 and path.suffix in {'.py', '.cjs', '.ps1'} else 'scripts_are_development_entries'
         return None if section in {'typescript', 'remote-reader', 'architecture', 'packaging'} else 'unknown_development_tool'
-    if top == 'examples':
-        return None if section in {'integrations', 'legacy'} and path.suffix == '.json' else 'unknown_example_owner'
     if top == 'native':
         return None if section == 'observer' and path.suffix in {'.rs', '.toml', '.lock', '.json'} else 'unknown_native_owner'
-    if top == 'scripts':
-        return None if len(parts) == 2 and path.suffix in {'.py', '.cjs', '.ps1'} else 'scripts_are_development_entries'
     if top == 'guide':
+        if section == 'examples':
+            return None if value in {
+                'guide/examples/integrations/codex.toml.example',
+                'guide/examples/integrations/integration-settings.example.json',
+                'guide/examples/legacy/progress-manual.example.json',
+                'guide/examples/legacy/progress-registry.example.json',
+            } else 'unknown_example_owner'
         return None if value in {'guide/usage.md', 'guide/integrations.md', 'guide/windows.md'} else 'unknown_public_guide'
     if top == '.github':
         return None if value in {'.github/CODEOWNERS', '.github/pull_request_template.md', '.github/CONTRIBUTING.md'} or (
             section == 'workflows' and len(parts) == 3 and path.suffix in {'.yml', '.yaml'}) else 'unknown_repository_automation'
-    if value in {'.cargo/config.toml', '.codex/config.toml.example'}:
+    if value == '.cargo/config.toml':
         return None
     return 'unregistered_top_level_directory'
 

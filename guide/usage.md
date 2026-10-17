@@ -30,7 +30,7 @@ python -m venv .venv
 
 ```powershell
 & '.venv/Scripts/python.exe' -m control_everything.gateway --data-dir 'C:/example/SessionPanel/main' --port 14401
-& './scripts/open-workspace.ps1' -Port 14401
+& './tools/scripts/open-workspace.ps1' -Port 14401
 ```
 
 随后访问 `http://127.0.0.1:14401/workspace` 或 `/progress`。网关只监听 `127.0.0.1`，端口范围为 1024–65535；占用即退出，不自动换端口、终止或接管旧服务。打开页面脚本只打开已经运行的服务。Ctrl+C停止Python网关；已构建的原生观察后台独立运行，显式停止方式见下节。

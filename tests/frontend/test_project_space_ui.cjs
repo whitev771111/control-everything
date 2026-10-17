@@ -37,7 +37,7 @@ test('overview uses real counts, literal names and does not infer numeric progre
   assert.match(f.root.textContent, /5 待处理/); assert.match(f.root.textContent, /50 项任务/);
   assert.doesNotMatch(f.root.textContent, /0%|已交接|自动完成/);
   assert.equal(f.root.all.filter(value => value.tag === 'img').length, 0);
-  f.click('<img src=x>'); assert.equal(f.routes.at(-1), 'project/p/overview');
+  f.click('<img src=x>'); assert.equal(f.routes.at(-1), 'project/p/tasks');
 });
 test('project tabs move the same live task node and preserve its draft', () => {
   const f = fixture(); f.taskRoot.draft = 'unsaved'; f.api.route('p', 'tasks'); f.api.show('project');
@@ -50,4 +50,18 @@ test('unavailable sessions and unsupported artifacts have honest empty states', 
   const f = fixture(); f.api.route('p', 'sessions'); f.api.show('project'); assert.match(f.root.textContent, /尚未接入/);
   f.api.route('p', 'records'); f.api.show('project'); assert.match(f.root.textContent, /产物文件尚未接入/);
   f.api.route('missing', 'overview'); f.api.show('project'); assert.match(f.root.textContent, /项目已不存在/);
+});
+
+test('pending items stay scoped to the selected project and reuse the live editor', () => {
+  const f = fixture(); f.taskRoot.draft = 'keep';
+  f.api.route('p', 'attention'); f.api.show('project');
+  assert.equal(f.contexts.at(-1).projectId, 'p');
+  assert.equal(f.contexts.at(-1).scope, 'attention');
+  assert.equal(f.taskRoot.parentElement, f.root);
+  assert.equal(f.taskRoot.draft, 'keep');
+  const pending = f.navigation.all.find(value => value.textContent === '待我处理');
+  assert.equal(pending.attributes['aria-current'], 'page');
+  f.api.route('p', 'tasks'); f.api.show('project');
+  assert.equal(f.contexts.at(-1).scope, 'all');
+  assert.equal(f.contexts.at(-1).projectId, 'p');
 });

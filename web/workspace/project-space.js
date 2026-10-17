@@ -1,7 +1,7 @@
 // Project navigation uses the existing snapshot and a single task editor.
 'use strict';
 (() => {
-  const tabs = { overview: '概览', tasks: '任务', sessions: '会话', records: '成果与记录', materials: '资料' };
+  const tabs = { overview: '概览', tasks: '全部事项', attention: '待我处理', sessions: '会话', records: '成果与记录', materials: '资料' };
   function create({ root, navigation, taskRoot, tasks, navigate, manage, record }) {
     let snapshot = null, selected = null, tab = 'overview', view = 'overview';
     const taskHome = taskRoot.parentElement;
@@ -17,7 +17,7 @@
     const project = () => snapshot?.projects.items.find(item => item.id === selected);
     const blank = text => node('p', 'empty-state', text);
     const attention = item => (item.task_counts?.blocked || 0) + (item.task_counts?.review || 0);
-    function open(id, next = 'overview') {
+    function open(id, next = 'tasks') {
       selected = id; tab = next; navigate(`project/${encodeURIComponent(id)}/${next}`);
     }
     function renderNavigation() {
@@ -30,6 +30,16 @@
         value.title = item.name;
         if (view === 'project' && selected === item.id) value.setAttribute('aria-current', 'page');
         navigation.append(value);
+        if (view === 'project' && selected === item.id) {
+          const children = node('div', 'project-nav-children');
+          for (const [key, label] of [['tasks', '全部事项'], ['attention', '待我处理']]) {
+            const child = button(label, () => open(item.id, key), 'project-nav-child');
+            if (tab === key) child.setAttribute('aria-current', 'page');
+            children.append(child);
+          }
+          children.append(button('项目设置', () => manage(item), 'project-nav-child'));
+          navigation.append(children);
+        }
       }
       if (!navigation.children.length) navigation.append(node('p', 'section-note', '尚无项目'));
     }
@@ -73,7 +83,7 @@
       }
       root.append(grid);
       const actions = node('div', 'form-actions');
-      actions.append(button('全部事项', () => navigate('tasks')), button('未归类事项', () => navigate('global')), button('管理与归档', () => navigate('projects')));
+      actions.append(button('未归类事项', () => navigate('global')), button('管理与归档', () => navigate('projects')));
       root.append(actions);
     }
     function renderProject() {
@@ -81,6 +91,7 @@
       if (!item) { root.append(blank(snapshot ? '项目已不存在，请从左侧重新选择。' : '正在读取项目…')); return; }
       const header = node('div', 'section-heading');
       header.append(node('h2', '', item.name), button('项目设置', () => manage(item)));
+      header.setAttribute('class', 'section-heading project-heading');
       root.append(header);
       const navigation = node('nav', 'project-tabs'); navigation.setAttribute('aria-label', '项目内容');
       for (const [key, label] of Object.entries(tabs)) {
@@ -89,12 +100,12 @@
         navigation.append(value);
       }
       root.append(navigation);
-      if (tab === 'tasks') {
+      if (tab === 'tasks' || tab === 'attention') {
         root.append(taskRoot); taskRoot.hidden = false;
-        tasks.setContext({ projectId: item.id });
+        tasks.setContext({ projectId: item.id, scope: tab === 'attention' ? 'attention' : 'all' });
       } else if (tab === 'overview') {
         const panel = node('section', 'project-summary');
-        panel.append(node('h3', '', '当前记录'), node('p', 'project-note', item.note || '还没有记录当前进展。'));
+        panel.append(node('h3', '', '项目进展'), node('p', 'project-note', item.note || '从一条事项开始推进项目。'));
         if (item.manual_recorded) panel.append(node('p', 'section-note', `人工状态：${item.state}${typeof item.percent === 'number' ? ` · ${item.percent}%` : ''}`));
         panel.append(button('更新记录', () => record(item), 'text-button')); root.append(panel);
         const counts = node('div', 'project-counts');
@@ -159,16 +170,7 @@
     };
   }
   function prepareChrome() {
-    const choice = document.getElementById('theme-choice');
-    const apply = value => {
-      document.documentElement.dataset.theme = ['light', 'dark'].includes(value) ? value : 'auto';
-      choice.value = document.documentElement.dataset.theme;
-    };
-    try { apply(localStorage.getItem('workspace-theme')); } catch { apply('auto'); }
-    choice.addEventListener('change', () => {
-      apply(choice.value);
-      try { localStorage.setItem('workspace-theme', choice.value); } catch { /* Preference storage is optional. */ }
-    });
+    document.documentElement.dataset.theme = 'dark';
     const nav = document.createElement('nav'); nav.className = 'navigation utilities-navigation'; nav.setAttribute('aria-label', '工具与设置');
     for (const name of ['agents', 'usage', 'news', 'settings']) nav.append(document.querySelector(`[data-view="${name}"]`));
     document.getElementById('project-navigation').after(nav);

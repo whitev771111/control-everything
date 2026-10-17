@@ -7,11 +7,13 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../..');
 const sourcePath = path.resolve(process.argv[2] || path.join(root, 'web/workspace/workspace.js'));
 const source = fs.readFileSync(sourcePath, 'utf8');
-const names = ['el', 'message', 'action', 'pager', 'openManual', 'loadHistory', 'saveManual', 'renderIntegrations', 'loadLaunchers'];
+const names = ['el', 'message', 'action', 'pager', 'showProjectDialog', 'openManual', 'loadHistory', 'saveManual', 'renderIntegrations', 'loadLaunchers'];
 const functions = names.map(name => { const match = source.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`)); assert.ok(match, name); return match[0]; }).join('\n');
 class Element {
   constructor() { this.children = []; this.listeners = {}; this.dataset = {}; this.value = ''; this.text = ''; this.classList = { toggle() {} }; }
-  append(...nodes) { this.children.push(...nodes); }
+  closest() { return this.parentElement || null; }
+  showModal() { this.open = true; }
+  append(...nodes) { this.children.push(...nodes); nodes.forEach(node => { node.parentElement = this; }); }
   replaceChildren(...nodes) { this.children = nodes; this.text = ''; }
   addEventListener(name, callback) { this.listeners[name] = callback; }
   get textContent() { return this.text + this.children.map(item => item.textContent).join(''); }

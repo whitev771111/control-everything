@@ -440,7 +440,7 @@ function setupProfile() {
   $('new-project').addEventListener('click', () => openProject()); $('empty-add-project').addEventListener('click', () => openProject());
   $('empty-import').addEventListener('click', () => { showView('settings'); $('import-source-dir').focus(); });
   $('empty-settings').addEventListener('click', () => { showView('settings'); $('codex-db-path').focus(); });
-  $('cancel-project').addEventListener('click', () => { $('project-form').hidden = true; });
+  $('cancel-project').addEventListener('click', () => { $('project-form').hidden = true; $('project-dialog').close(); });
   $('add-directory').addEventListener('click', () => { if (directoryRows().length < 8) addDirectory(`d-${crypto.randomUUID().replaceAll('-', '')}`, ''); syncSource(); });
   $('project-source-kind').addEventListener('change', syncSource); $('project-form').addEventListener('input', projectBytes);
   $('project-form').addEventListener('submit', saveProject); $('manual-form').addEventListener('submit', saveManual);
@@ -465,9 +465,10 @@ function setupTaskCenter() {
   app.projectSpace = window.WorkspaceProjectSpace?.create({
     root: $('project-space'), navigation: $('project-navigation'), taskRoot: $('task-center-root'), tasks: app.taskCenter,
     navigate: showView,
-    manage: project => { showView('projects'); openProject(project); },
-    record: project => { showView('projects'); openManual(project); $('manual-panel').scrollIntoView({ block: 'nearest' }); },
+    manage: project => { openProject(project); },
+    record: project => { $('project-form').hidden = true; openManual(project); },
   });
+  for (const name of ['tasks', 'attention', 'projects']) document.querySelector(`[data-view="${name}"]`).hidden = true;
   showView(app.view);
 }
 async function loadProfile(preserveDraft = false) {
@@ -535,7 +536,14 @@ function projectBody() {
     source: { kind, directory_id: kind === 'none' ? null : $('project-source-directory').value, relative_path: kind === 'none' ? null : kind === 'wfc' ? 'docs/current' : $('project-source-path').value } };
 }
 function projectBytes() { const size = new TextEncoder().encode(JSON.stringify(projectBody())).length; $('project-body-size').textContent = `提交大小 ${size} / 16384 bytes`; }
+function showProjectDialog() {
+  const dialog = $('project-dialog');
+  if (!$('project-form').closest('dialog')) dialog.append($('project-form'), $('manual-panel'));
+  if (!dialog.open) dialog.showModal();
+}
 function openProject(project = null, restoreId = null) {
+  $('manual-panel').hidden = true;
+  showProjectDialog();
   clearFieldErrors('project-feedback');
   app.projectId = project?.id || null; app.restoreId = restoreId; $('project-form').hidden = false;
   $('project-form-title').textContent = restoreId ? '恢复未登记项目' : project ? '编辑项目' : '添加项目';
@@ -565,7 +573,7 @@ async function archiveProject(project) {
 }
 function openManual(project) {
   clearFieldErrors('manual-feedback');
-  if (!project) return; app.manualId = project.id || project.project_id; app.pages.history = 0;
+  if (!project) return; showProjectDialog(); app.manualId = project.id || project.project_id; app.pages.history = 0;
   $('manual-panel').hidden = false; $('manual-title').textContent = `人工记录 · ${project.name || app.manualId}`;
   $('manual-state').value = project.state || ''; $('manual-percent').value = Number.isFinite(project.percent) ? project.percent : ''; $('manual-note').value = project.note || '';
   const facts = $('project-facts'); facts.replaceChildren(el('p', '', `人工：${project.state || '未记录'} · ${Number.isFinite(project.percent) ? `${project.percent}%` : '未填写百分比'}`), el('p', '', taskSummary(project.task_counts)), el('p', '', observationSummary(project.observation)));

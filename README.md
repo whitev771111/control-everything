@@ -4,7 +4,9 @@
 
 ## 源码与测试目录
 
-后端保留 `session_panel` 包，内部按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 六个功能包组织。前端使用原生 HTML/CSS/JS，页面资源放在 `web/sessions`、`web/progress`、`web/workspace`，无需构建步骤。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+后端保留 `session_panel` 包，内部按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 六个功能包组织。前端使用原生 HTML/CSS 和普通脚本，页面资源放在 `web/sessions`、`web/progress`、`web/workspace`；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+
+本机观察与每日资讯分别以 `web/workspace/observation.ts`、`news.ts` 和邻近类型声明为手写源码，两个 JS 为同一固定 TypeScript 5.9.3 的生成物；其他模块继续手写 JS。修改对应 TS 后运行 `node scripts/build_observation.cjs build` 或 `node scripts/build_news.cjs build`，连同生成 JS 提交，再用对应 `check` 比较完整字节；不要手改生成物。Node24/项目内固定工具的显式准备、缺工具失败与全部验证命令见[观察前端 TypeScript 开发](CONTRIBUTING.md#观察前端-typescript-开发)。原 URL 和普通脚本相对顺序保留，新 `/news.js` 在页面主脚本前加载，不增加常驻 Node 服务。
 
 测试按 `tests/backend`（Python）、`tests/frontend`（纯 Node 合同）、`tests/e2e`（浏览器/协议 harness）和 `tests/fixtures`（合成替身）归类。新增功能放入所属功能目录，测试按类型放置；详细职责与验证命令见 [参与开发](CONTRIBUTING.md)。原有 `python -m session_panel.gateway` 等外部 CLI 继续使用，内部代码直接导入功能包实现。
 
@@ -31,7 +33,7 @@ python -m venv .venv
 & './scripts/open-workspace.ps1' -Port 14401
 ```
 
-随后访问 `http://127.0.0.1:14401/workspace` 或 `/progress`。网关只监听 `127.0.0.1`，端口范围为 1024–65535；占用即退出，不自动换端口、终止或接管旧服务。脚本只打开已经运行的服务。Ctrl+C 停止自己的实例；没有新增自动启动。
+随后访问 `http://127.0.0.1:14401/workspace` 或 `/progress`。网关只监听 `127.0.0.1`，端口范围为 1024–65535；占用即退出，不自动换端口、终止或接管旧服务。打开页面脚本只打开已经运行的服务。Ctrl+C停止Python网关；已构建的原生观察后台独立运行，显式停止方式见下节。
 
 在“添加项目”填写名称与真实的主目录，可添加最多七个附加目录；搬迁时编辑路径，项目 ID 和绑定 ID 保持。归档保留任务、人工记录及待办，随时可恢复。新增任务只能选择活动项目；已有归档或未登记项目的任务可以保留原项目继续编辑，兼容记录区也可按原 ID 恢复登记。任务和用量列表提供分页，不以首批展示条数代表全集。
 
@@ -45,7 +47,47 @@ python -m venv .venv
 
 “来源与导入”可显式填写 Codex 元数据库的绝对路径并启用。只读六字段元数据，不读会话正文；禁用后不访问该库，也不回退开发者个人路径。新 profile 的远端 SSH、终端、工作台和启动器均为未配置；下节介绍可选接入的登记方式。高级接入配置不会启用执行 owner。额度缓存、用户点击后的官方只读额度查询和公开资讯仍保留；每日 Token/费用与 Grok 额度仍可人工记录。执行、审批、模型费用试跑及 Orca 接入沿用原有暂停边界。
 
+## 每日 AI 资讯
+
+首页仅展示浏览器本地今天、未标为未来的默认 AI 来源前两条；资讯页展示本次返回窗口内的今日、较早、未知和未来文章。默认来源仍是 Google AI、OpenAI News、Hugging Face Blog（含社区文章），每源最多20条，显示扫描/过滤/重复和截断限制；“未见今日内容”只针对本次返回窗口。Hacker News 可显式选择，旧 `/progress` 也消费同一来源缓存，标为非AI筛选，并将HN收录时间与文章出版时间区分。
+
+卡片保留真实出版时间（缺失则未知）、来源更新、采样和上次成功时间；源有摘要才显示纯文本“来源摘要”或“来源摘要节选”。缓存15分钟，失败/过期保留旧日期并标旧；前端每分钟及恢复可见时重算，pending最多等待20秒，不表示后台被浏览器取消。资讯独立读取，不让待办或任务保存等待来源采集。公共源可能失败或变更格式，不能把缓存有效等同于来源有今日新闻。
+
+本批没有自定义信息流、账号连接、模型主动联网检索、有引用的每日简报、持久每日记录、预算或调度；这些明确留待后批。
+
+## Windows 本机观察与返回
+
+可选Rust观察后台按当前用户及profile隔离，Python网关绑定端口成功后才连接或启动固定的本机构建产物。缺少产物、身份或协议不匹配时，页面明确显示观察不可用，项目、任务和其他管理功能仍能使用。构建步骤和固定工具链准备见[参与开发](CONTRIBUTING.md#windows-原生观察开发)，HTTP不会临时编译或从PATH执行同名后台。
+
+安装发现、已核验运行进程、历史会话、待处理及返回能力分别展示。Codex、Claude Code、Hermes、Pi按公开安装入口核验；不支持的安装形态、权限不足或缺少会话来源保持未知，不因发现工具读取默认账户库。CPU首样本未知，100%表示一个逻辑核；内存是进程工作集，不代表独占物理内存或Token/费用。进程发现约5秒、资源约1秒、安装缓存最多60秒，页面标明来源和时间。
+
+“工具与环境登记”保留自动发现，支持确认内置Provider候选或手动填写本机非PATH入口，也可登记自定义EXE及终端GUI宿主。同一安装供多个项目使用；登记、安装核验、当前进程、会话来源与导航能力分别显示。自定义程序仅代表用户指定映像的进程/资源，不冒充官方Agent、会话或审批状态；通用解释器不按名字认领其所有脚本。登记和删除均不启动或结束工具。
+
+“选择工具窗口”仅对当前已应用并核验的登记开放：显式列出合格可见窗口、有限显示标题，用户选择后只尝试切回该窗口，不建立Agent/pane关联。默认观察不采集标题；关闭/到期即丢弃选择，不读正文、不执行终端CLI或Lua、不新建窗口。Windows前台策略可能拒绝切换，页面显示实际结果。当前自动绑定和classic console返回保持受限、无动作许可；Windows Terminal/IDE/ConPTY不因此获得标签页定位，WezTerm可作为普通GUI宿主登记。
+
+首次保存登记将profile配置升级为v3并先备份，旧四段集成仍使用原version2导入文件，Codex显式来源保持原语义。保存成功不等于后台已应用；待应用、失联或配置变化会撤销旧导航。备份含本机路径，恢复的新登记须重新确认定位，不恢复PID/窗口或动作许可。旧程序不读取v3，回退前保全新增意图并恢复升级前配置。
+
+关闭浏览器/Python只断开观察连接，不结束外部Agent。原生CLI只管理自身观察后台，不停止任何外部工具；使用与网关相同的绝对profile目录：
+
+```powershell
+$observerData = Join-Path (Get-Location) 'work/example-profile'
+& './work/native-observer/install/session-panel-observer.exe' status --data-dir $observerData
+& './work/native-observer/install/session-panel-observer.exe' start --data-dir $observerData
+& './work/native-observer/install/session-panel-observer.exe' stop --data-dir $observerData
+```
+
+该目录须已通过profile初始化；示例不会自动选择或接管其他服务。观察和导航不授予发送、审批、取消、启动Agent或读取正文的权限，真实工具版本/可见窗口覆盖需分别验收。
+
 ## 导入旧记录与恢复
+
+管理库使用schema2，配置仍独立兼容v1/v2/v3；备份manifest1对应schema1，manifest2对应schema2。新空profile直接初始化schema2，已有schema1不会随启动自动升级：先正常停止自己使用该profile的实例，再显式执行离线迁移。命令不会终止其他程序；锁忙、未知表/版本、校验失败或超预算会拒绝并保留原库及已生成备份，不截断历史值。
+
+```powershell
+& '.venv/Scripts/python.exe' -m session_panel.profile status --data-dir 'C:/example/SessionPanel/main'
+& '.venv/Scripts/python.exe' -m session_panel.profile migrate-tasks --data-dir 'C:/example/SessionPanel/main'
+```
+
+迁移将旧tasks/todos收为一个可写模型，保留来源及原ID（包括空待办ID）、重复标题、原顺序、时间和NULL；旧接口通过适配读写同一模型。数据库中的tasks/todos是只读兼容视图，不能再用旧程序或直接SQL写入。新列表的顺序单独保存，不伪造两种来源的历史先后。
 
 在空 profile 的“来源与导入”填写旧数据目录的绝对路径，例如 `C:/example/previous-panel`。固定读取 `progress-registry.json`，以及可选的 `progress-manual.json`、`progress-todos.json`、`workspace-state.sqlite3`。只导入全部合法项目、人工进度、待办、工作台任务和人工用量；保留原 ID、顺序、关联与已有时间。未登记项目的记录进入兼容区；没有原时间的导入快照显示“来源未提供时间”。
 
@@ -55,10 +97,14 @@ python -m venv .venv
 
 ```powershell
 & '.venv/Scripts/python.exe' -m session_panel.profile restore --backup 'C:/example/SessionPanel/main/backups/<备份目录>' --data-dir 'C:/example/SessionPanel/restored'
+# Only when restore reports schema1 / migration_required:
+& '.venv/Scripts/python.exe' -m session_panel.profile migrate-tasks --data-dir 'C:/example/SessionPanel/restored'
 & '.venv/Scripts/python.exe' -m session_panel.gateway --data-dir 'C:/example/SessionPanel/restored' --port 14401
 ```
 
 恢复会校验 manifest、文件大小/哈希、schema 与 SQLite 完整性。停止自己的旧实例后另行启动恢复目录；不在线切换，不删除原 profile 或导入后的新记录。真实个人数据是否符合导入合同需实际校验，隔离 fixture 验证不能替代个人迁移结果。
+
+恢复旧备份会先保留其schema1结构，再由上述命令显式迁移。需要退回旧程序时，先停新版实例并运行 `python -m session_panel.profile preserve-tasks --data-dir <绝对profile目录>`，验证包含升级后全部新增/变更的schema2私密备份，再把升级前旧备份恢复到另一个空目录。原schema2目录和保全件必须保留；保全不是把新语义自动反写旧库，单独回退代码不代表数据已无损降级。
 
 新记录保存在所选 profile，源码旁旧 JSON/SQLite 与既有服务保留原位。任务负责人表示人工分配，不向 Agent 发送命令。资讯含来源与采样时间，不是推送流。
 
@@ -193,11 +239,14 @@ enabled_tools = ["list_sessions", "get_session_status", "get_session_messages"]
 
 ## 验证与撤销
 
-基础开发验证使用 Windows、Python 3.12、Node.js 24；无需作者资源。浏览器 harness 的 Playwright/Edge 安装与 fixture 执行见 [参与开发](CONTRIBUTING.md)。以下浏览器命令由验收负责人执行，结果与单元测试分别记录：
+基础开发验证使用 Windows、Python 3.12、Node.js 24；无需作者资源。先按[参与开发](CONTRIBUTING.md#观察前端-typescript-开发)准备共享固定编译器，再运行两模块 check 和八份 Node 合同。浏览器 harness 的 Playwright/Edge 安装与 fixture 执行见 [参与开发](CONTRIBUTING.md)。以下浏览器命令由验收负责人执行，结果与单元测试分别记录：
 
 ```powershell
 & '.venv/Scripts/python.exe' -m unittest discover -s tests -v
-node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs
+node scripts/build_observation.cjs check
+node scripts/build_news.cjs typecheck
+node scripts/build_news.cjs check
+node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs tests/frontend/test_news_ui.cjs tests/frontend/test_news_build.cjs
 node tests/e2e/verify_workspace.cjs --fixture
 node tests/e2e/verify_session_panel.cjs --fixture
 ```

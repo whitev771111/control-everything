@@ -8,11 +8,13 @@ import os
 import sys
 import tempfile
 import threading
+from uuid import uuid4
 from contextlib import contextmanager
 from pathlib import Path
 
 from session_panel.sessions import codex_index
-from session_panel.workspace.store import WorkspaceStore
+from session_panel.profiles import observation_settings as observations
+from session_panel.workspace.store import WorkspaceStore, WorkspaceError
 from session_panel.profiles.integration_settings import (
     EMPTY_INTEGRATIONS, InvalidSettings, integration_summary, validate_integrations,
 )
@@ -74,9 +76,11 @@ def resolve_data_dir(data_dir=None, *, environ=None, platform=None, home=None):
 
 
 def validate_config(config):
-    if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] not in (1, 2):
+    if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] not in (1, 2, 3):
         raise ProfileError("invalid_config", "version")
     expected = {"version", "codex"} if config["version"] == 1 else {"version", "codex", "integrations"}
+    if config["version"] == 3:
+        expected.add("observations")
     if set(config) != expected:
         raise ProfileError("invalid_config", "version")
     codex = config["codex"]
@@ -85,8 +89,12 @@ def validate_config(config):
             or codex["db_path"] is not None and not absolute_path(codex["db_path"])
             or codex["enabled"] and codex["db_path"] is None):
         raise ProfileError("invalid_config", "codex")
-    if config["version"] == 2:
+    if config["version"] >= 2:
         checked_integrations(config["integrations"])
+    if config["version"] == 3:
+        observations.validate(config["observations"])
+        if config["observations"]["revision"] == 0:
+            raise ProfileError("invalid_config", "observations.revision")
     return config
 
 
@@ -100,7 +108,7 @@ def checked_integrations(value):
 def normalized_config(config):
     validate_config(config)
     result = copy.deepcopy(config)
-    result["version"] = 2
+    result["version"] = max(2, result["version"])
     result.setdefault("integrations", copy.deepcopy(EMPTY_INTEGRATIONS))
     return result
 
@@ -180,8 +188,15 @@ class Profile:
             if not profile.config_path.exists():
                 profile._write_config(DEFAULT_CONFIG)
             profile.config()
-        with profile.store.connection():
-            pass
+        try:
+            with profile.store.connection():
+                pass
+        except WorkspaceError as error:
+            if str(error) == 'migration_required':
+                raise ProfileError('migration_required', status=409, message='migrate-tasks') from error
+            reason = str(error)
+            raise ProfileError(reason, status=409 if reason == 'store_busy' else
+                               422 if reason == 'schema_error' else 500) from error
         return profile
 
     def config(self):
@@ -227,6 +242,53 @@ class Profile:
                 create_backup(self)
             self._write_config(config)
         return self.public()
+
+    @contextmanager
+    def observation_guard(self):
+        with self.config_lock, config_file_lock(self.data_dir):
+            yield
+
+    def observation_config(self):
+        return observations.from_config(self.config())
+
+    def observation_settings(self):
+        value = self.observation_config()
+        return {"revision": value["revision"], "hash": observations.pair(value)["config_hash"],
+                "registrations": value["registrations"]}
+
+    def save_observations(self, body, *, on_commit=None, duplicate_ids=()):
+        if (type(body) is not dict or set(body) != {"expected_revision", "expected_hash", "registrations"}
+                or type(body["expected_revision"]) is not int or type(body["expected_hash"]) is not str
+                or type(body["registrations"]) is not list):
+            raise ProfileError("invalid_config", "observations")
+        with self.config_lock, config_file_lock(self.data_dir):
+            original = self.config()
+            current = observations.from_config(original)
+            if (body["expected_revision"] != current["revision"]
+                    or body["expected_hash"] != observations.pair(current)["config_hash"]):
+                raise ProfileError("config_conflict", "observations", status=409)
+            rows = copy.deepcopy(body["registrations"])
+            for row in rows:
+                if type(row) is dict and row.get("id", False) is None:
+                    row["id"] = uuid4().hex
+            proposed = observations.validate({"revision": max(1, current["revision"]), "registrations": rows})
+            if any(row["id"] in duplicate_ids for row in proposed["registrations"]):
+                raise ProfileError("duplicate_installation", "observations", status=409)
+            if proposed["registrations"] == current["registrations"]:
+                return self.observation_settings()
+            if current["revision"] == observations.MAX_REVISION:
+                raise ProfileError("invalid_config", "observations.revision")
+            proposed["revision"] = current["revision"] + 1
+            config = normalized_config(original)
+            config.update(version=3, observations=proposed)
+            validate_config(config)
+            if original["version"] < 3:
+                from session_panel.profiles.profile_import import create_backup
+                create_backup(self)
+            self._write_config(config)
+            if on_commit:
+                on_commit(proposed)
+            return self.observation_settings()
 
     def import_settings(self, document):
         update = validate_settings_document(document)
@@ -281,6 +343,9 @@ def main(argv=None):
     restore = commands.add_parser("restore")
     restore.add_argument("--backup", required=True)
     restore.add_argument("--data-dir", required=True)
+    for name in ('migrate-tasks', 'preserve-tasks'):
+        command = commands.add_parser(name)
+        command.add_argument('--data-dir', required=True)
     for name in ("init", "status", "import-settings", "validate-settings"):
         command = commands.add_parser(name)
         if name != "validate-settings":
@@ -292,20 +357,37 @@ def main(argv=None):
     try:
         if args.command == "restore":
             path = restore_backup(args.backup, args.data_dir)
-            print(f'恢复目录：{path}\n启动：python -m session_panel.gateway --data-dir "{path}" --port 14401')
+            from session_panel.profiles.task_migration import migration_status
+            state = migration_status(str(path))
+            print(json.dumps({'restored': str(path), **state}, ensure_ascii=False))
+            if state['schema_version'] == 1:
+                print(f'先显式迁移：python -m session_panel.profile migrate-tasks --data-dir "{path}"')
+            else:
+                print(f'启动：python -m session_panel.gateway --data-dir "{path}" --port 14401')
+        elif args.command in ('migrate-tasks', 'preserve-tasks'):
+            from session_panel.profiles.task_migration import migrate_tasks, preserve_tasks
+            print(json.dumps((migrate_tasks if args.command == 'migrate-tasks' else preserve_tasks)(args.data_dir), ensure_ascii=False))
         elif args.command == "validate-settings":
             document = read_settings_document(args.file)
             print(json.dumps({"status": "valid", "integrations": integration_summary(document["integrations"])}, ensure_ascii=False))
         else:
             document = read_settings_document(args.file) if args.command == "import-settings" else None
-            profile = Profile.open(args.data_dir)
-            value = profile.import_settings(document) if document is not None else profile.status()
+            if args.command == 'status':
+                from session_panel.profiles.task_migration import migration_status
+                state = migration_status(args.data_dir)
+                value = state if state['schema_version'] == 1 else Profile.open(args.data_dir).status()
+            else:
+                profile = Profile.open(args.data_dir)
+                value = profile.import_settings(document) if document is not None else profile.status()
             print(json.dumps(value, ensure_ascii=False))
             if args.command in ("init", "import-settings"):
                 print(f'启动或重启后生效：python -m session_panel.gateway --data-dir "{profile.data_dir}"')
-    except (ProfileError, OSError, ValueError) as error:
+    except (ProfileError, WorkspaceError, OSError, ValueError) as error:
         detail = ({"reason": error.reason, "field": error.field, "message": error.message}
-                  if isinstance(error, ProfileError) else {"reason": "storage_error"})
+                  if isinstance(error, ProfileError) else {"reason": str(error) if isinstance(error, WorkspaceError) else "storage_error"})
+        for field in ('phase', 'backup', 'committed'):
+            if hasattr(error, field):
+                detail[field] = getattr(error, field)
         print(json.dumps(detail, ensure_ascii=False), file=sys.stderr)
         return 1
     return 0

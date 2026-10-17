@@ -1,10 +1,8 @@
 """Today's local activity and a short headline list. Missing sources stay empty."""
 
-import json
 import os
 import time
 from pathlib import Path
-from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
 HOME = Path.home()
@@ -14,7 +12,7 @@ PULSE_ROOTS = (
     ("Claude", HOME / ".claude" / "projects"),
 )
 FEEDS = ("https://hnrss.org/frontpage?count=5",)
-_NEWS = {"at": 0, "items": []}
+from session_panel.workspace.news_source import NewsSource
 
 
 def pulse(now=None):
@@ -55,21 +53,6 @@ def _titles(xml_text):
 
 
 def headlines(force=False):
-    if not force and time.time() - _NEWS["at"] < 900 and _NEWS["items"]:
-        return _NEWS["items"]
-    found = []
-    try:
-        request = Request("https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=4",
-                          headers={"User-Agent": "mianban-desk"})
-        with urlopen(request, timeout=4) as response:
-            payload = json.loads(response.read().decode("utf-8", "replace"))
-        for hit in payload.get("hits", []) if isinstance(payload, dict) else []:
-            title = hit.get("title") if isinstance(hit, dict) else None
-            link = hit.get("url") if isinstance(hit, dict) else None
-            if isinstance(title, str) and title.strip():
-                found.append({"title": title.strip(), "url": link if isinstance(link, str) and link.startswith("https://") else "https://news.ycombinator.com/"})
-    except Exception:
-        found = []
-    _NEWS["at"] = time.time()
-    _NEWS["items"] = found[:4]
-    return _NEWS["items"]
+    source = NewsSource()
+    value = source.refresh('hn') if force else source.cached('hn')
+    return [{'title': row['title'], 'url': row['url']} for row in value['items'][:4]]

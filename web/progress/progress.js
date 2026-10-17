@@ -1,6 +1,5 @@
 const statusLine = document.querySelector("#progress-status");
 const rail = document.querySelector("#progress-rail");
-const newsZone = document.querySelector("#news-zone");
 const todoZone = document.querySelector("#todo-zone");
 const launchZone = document.querySelector("#launch-zone");
 const glance = document.querySelector("#progress-board");
@@ -321,23 +320,6 @@ const launchGroups = [
 
 function paintSide(desk) {
   deskSnapshot = desk;
-  newsZone.replaceChildren();
-  const stories = desk.news || [];
-  if (!stories.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "这会儿没有拉到标题。";
-    newsZone.append(empty);
-  }
-  for (const item of stories) {
-    const link = document.createElement("a");
-    link.className = "story";
-    link.href = item.url;
-    link.target = "_blank";
-    link.rel = "noreferrer";
-    link.textContent = item.title;
-    newsZone.append(link);
-  }
   todoZone.replaceChildren();
   const form = document.createElement("form");
   form.className = "todo-form";
@@ -491,6 +473,11 @@ async function load() {
   paintBoard();
   showProject(false);
   if (profileMode) { const info = document.createElement('p'); info.className = 'profile-info'; info.textContent = `当前 data-dir：${profile.data_dir}`; glance.before(info); if (!projects.length) { const empty = document.createElement('div'); empty.className = 'profile-empty'; const title = document.createElement('p'); title.textContent = '还没有登记项目。添加项目后可记录人工进度与任务。'; empty.append(title, profileLink('添加项目', '/workspace#tasks'), profileLink('导入旧目录', '/workspace#settings'), profileLink('来源设置', '/workspace#settings')); glance.append(empty); } }
+  window.WorkspaceNews?.startLegacy({ fetchJson: async (url, options) => {
+    const response = await fetch(url, { ...options, headers: headers() });
+    if (!response.ok) throw new Error('资讯读取失败');
+    return response.json();
+  } });
   await refreshDesk();
 }
 

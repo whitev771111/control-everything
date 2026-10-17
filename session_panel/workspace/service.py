@@ -15,6 +15,7 @@ from session_panel.workspace.store import WorkspaceError, WorkspaceStore, path_k
 DEFAULT_DB = progress.REGISTRY.with_name("workspace-state.sqlite3")
 BEIJING = timezone(timedelta(hours=8))
 PROVIDERS = ("codex", "claude", "grok", "dsh", "opencode")
+TASK_PROVIDERS = (*PROVIDERS, "hermes", "pi")
 TASK_STATES = ("todo", "doing", "blocked", "review", "done")
 TASK_FIELDS = {"title", "project_id", "provider_id", "state", "session_key"}
 RECORD_FIELDS = {"id", "provider_id", "product", "day", "metric", "value", "currency", "window_label", "note"}
@@ -67,7 +68,7 @@ def observation_owner(cwd, projects):
     return next(iter(owners)) if len(owners) == 1 else None
 
 
-def discover_providers():
+def discover_providers(installations=None):
     definitions = (
         ("codex", "Codex", ("codex",), "/", "会话", "本机身份元数据；活动和任务完成状态未知"),
         ("claude", "Claude Code", ("claude",), "/", "原会话页", "原会话页远端观察，当前连接需在那里核验"),
@@ -77,10 +78,18 @@ def discover_providers():
     )
     result = []
     for provider_id, name, candidates, href, label, note in definitions:
+        if installations is not None:
+            installation = next((item for item in installations if item["provider_id"] == provider_id), None)
+            discovery = {"status": {"available": "found", "not_found": "not_found"}.get(installation["status"], "unknown") if installation else "unknown",
+                         "commands": installation["commands"] if installation else [],
+                         "reason": installation["reason"] if installation else "observation_unavailable"}
+        else:
+            discovery = None
         try:
-            commands = [command for command in candidates if shutil.which(command)]
-            discovery = {"status": "found" if commands else "not_found", "commands": commands,
-                         "reason": None if commands else "cli_not_found"}
+            if discovery is None:
+                commands = [command for command in candidates if shutil.which(command)]
+                discovery = {"status": "found" if commands else "not_found", "commands": commands,
+                             "reason": None if commands else "cli_not_found"}
         except OSError:
             discovery = {"status": "unknown", "commands": [], "reason": "discovery_unavailable"}
         result.append({"id": provider_id, "name": name, "discovery": discovery,
@@ -96,8 +105,9 @@ def discover_providers():
 class WorkspaceService:
     def __init__(self, db_path=DEFAULT_DB, *, registry_path=progress.REGISTRY,
                  manual_path=progress.MANUAL, todos_path=progress.TODOS,
-                 session_reader=None, quota_source=None, news_source=None, profile=None):
+                 session_reader=None, quota_source=None, news_source=None, profile=None, observer=None):
         self.profile = profile
+        self.observer = observer
         self.store = profile.store if profile is not None else WorkspaceStore(db_path)
         self.registry_path, self.manual_path, self.todos_path = registry_path, manual_path, todos_path
         self.session_reader = profile.codex_threads if profile is not None else session_reader or list_threads
@@ -109,6 +119,63 @@ class WorkspaceService:
             return self.session_reader()
         except Exception:
             return unavailable(0)
+
+    def observation_scope(self):
+        from session_panel.workspace.observations import scope_roots
+        return scope_roots(self.registered_projects())
+
+    def observation_settings(self):
+        value = self.profile.observation_settings()
+        observed = self.observations()
+        pair = (value["revision"], value["hash"])
+        matching = (observed.get("config_revision"), observed.get("config_hash")) == pair
+        value["application"] = {"status": observed["status"] if matching else "pending",
+                                "reason": observed["reason"] if matching else "config_pending"}
+        facts = {row["registration_id"]: row for row in observed.get("registrations", [])} if matching and observed["status"] == "available" else {}
+        value["validation"] = [facts.get(row["id"], {"registration_id": row["id"], "status": "unknown",
+                                "reason": "rebind_required" if row["binding_state"] == "rebind_required" else "config_pending",
+                                "source": "profile_intent", "sampled_at_ms": None, "duplicate_of_id": None})
+                               for row in value["registrations"]]
+        return value
+
+    def save_observation_settings(self, body):
+        from session_panel.sessions.observer_client import ObserverClient
+        observed = self.observation_settings()
+        duplicates = {row["registration_id"] for row in observed["validation"] if row["reason"] == "duplicate_installation"}
+        self.profile.save_observations(body, duplicate_ids=duplicates,
+            on_commit=lambda value: ObserverClient.invalidate_profile(self.profile.data_dir, value))
+        return self.observation_settings()
+
+    def observations(self):
+        return self._observations_with_projects()[0]
+
+    def _observations_with_projects(self):
+        from session_panel.workspace.observations import project_observations
+        cached = self.observer.cached() if self.observer else {
+            "status": "unavailable", "reason": "not_started", "snapshot": None, "scope_revision": 0, "scope_hash": ""}
+        configured = {}
+        if self.profile is not None:
+            from session_panel.profiles import observation_settings
+            try:
+                current = self.profile.observation_config()
+                configured = {row["id"]: row for row in current["registrations"]}
+                cached["config_pair"] = tuple(observation_settings.pair(current).values())
+            except ValueError:
+                cached["config_pair"] = None
+                cached["reason"] = "config_unavailable"
+        registry = self.registered_projects() if self.profile is not None else []
+        value = project_observations(cached, registry)
+        if self.profile is not None:
+            for row in value["registrations"]:
+                intent = configured.get(row["registration_id"], {})
+                row.update(label=intent.get("label", ""), category=intent.get("category"),
+                           enabled=intent.get("enabled", False), binding_state=intent.get("binding_state"),
+                           can_pick=(row["status"] == "available" and intent.get("enabled", False)
+                                     and intent.get("binding_state") == "confirmed"
+                                     and (intent.get("category") == "custom_exe" or intent.get("locator_kind") == "codex_desktop")))
+            for instance in value["instances"]:
+                instance["registration_labels"] = [configured[identity]["label"] for identity in instance["registration_ids"] if identity in configured]
+        return value, registry
 
     def registered_projects(self):
         if self.profile is not None:
@@ -181,8 +248,108 @@ class WorkspaceService:
     def page_tasks(self, **params):
         rows, total = self.store.list_tasks(**params)
         sessions, registry = self.sessions(), self.registered_projects()
+        return self._task_page(rows, total, sessions, registry,
+                               offset=params.get("offset", 0), limit=params.get("limit", 50))
+
+    def _task_page(self, rows, total, sessions, registry, *, offset=0, limit=50):
         return {"items": [{**row, "session_link_state": self.link_state(row, sessions, registry)} for row in rows],
-                "total": total, "offset": params.get("offset", 0), "limit": params.get("limit", 50)}
+                "total": total, "offset": offset, "limit": limit}
+
+    def page_items(self, **params):
+        if self.profile is None:
+            raise ValueError("profile_required")
+        if (params.get("provider_id") is not None and params["provider_id"] not in TASK_PROVIDERS
+                or params.get("state") is not None and params["state"] not in TASK_STATES
+                or "project_id" in params and not project_id_valid(params["project_id"])):
+            from session_panel.profiles.profile import ProfileError
+            raise ProfileError("invalid_query")
+        page = self.store.list_items(**params)
+        return self._item_page(page, self.sessions(), self.registered_projects())
+
+    def _item_page(self, page, sessions, registry):
+        return {**page, "items": [{**row, "session_link_state": self.link_state(row, sessions, registry)}
+                                  for row in page["items"]]}
+
+    def save_item(self, body, *, update=False):
+        from session_panel.profiles.profile import ProfileError
+        from session_panel.workspace.task_schema import MAX_REVISION
+        def invalid(field=None):
+            raise ProfileError("invalid_item", field)
+        if self.profile is None:
+            raise ValueError("profile_required")
+        if not isinstance(body, dict):
+            invalid()
+        if update:
+            if set(body) != {"id", "expected_revision", "changes"}:
+                invalid()
+            try:
+                item_id = canonical_uuid(body["id"])
+            except (ValueError, TypeError):
+                invalid("id")
+            revision = body["expected_revision"]
+            if type(revision) is not int or not 1 <= revision <= MAX_REVISION:
+                invalid("expected_revision")
+            fields = body["changes"]
+            if not isinstance(fields, dict) or not fields or set(fields) - TASK_FIELDS:
+                invalid("changes")
+            old = self.store.get_item(item_id)
+            # A stale request is never validated against a newer row's grandfather limits.
+            if old["revision"] != revision:
+                raise WorkspaceError("item_changed")
+            fields = {key: value for key, value in fields.items() if value != old[key]}
+        else:
+            if "title" not in body or set(body) - TASK_FIELDS:
+                invalid()
+            fields = {"project_id": None, "provider_id": None, "state": "todo", "session_key": None, **body}
+            old, item_id, revision = None, None, None
+        if "title" in fields:
+            title = fields["title"]
+            maximum = max(2000, len(old["title"])) if old else 2000
+            if not isinstance(title, str) or not title.strip() or len(title) > maximum:
+                invalid("title")
+            try:
+                self.store._check_title(title)
+            except WorkspaceError as error:
+                if str(error) == "invalid_item":
+                    invalid("title")
+                raise
+            if not update:
+                fields["title"] = title.strip()
+        for name, allowed in (("provider_id", (*TASK_PROVIDERS, None)), ("state", TASK_STATES)):
+            if name in fields and fields[name] not in allowed:
+                invalid(name)
+        if "project_id" in fields and fields["project_id"] is not None and not project_id_valid(fields["project_id"]):
+            invalid("project_id")
+        merged = {**old, **fields} if old else fields
+        registry = self.registered_projects()
+        if "project_id" in fields and fields["project_id"] is not None:
+            project = next((row for row in registry if row["id"] == fields["project_id"]), None)
+            if project is None or project["archived"]:
+                invalid("project_id")
+        link_changed = old is None or any(name in fields for name in ("project_id", "provider_id", "session_key"))
+        key = merged["session_key"]
+        sessions = self.sessions() if key is not None else unavailable(0)
+        session_cwd = None
+        if key is not None and link_changed:
+            if merged["provider_id"] != "codex" or merged["project_id"] is None or not isinstance(key, str) or not key.startswith("codex:"):
+                invalid("session_key")
+            try:
+                canonical_uuid(key[6:])
+            except (ValueError, TypeError):
+                invalid("session_key")
+            project = next((row for row in registry if row["id"] == merged["project_id"]), None)
+            if project is None or project["archived"]:
+                invalid("project_id")
+            session = next((row for row in sessions["items"] if row["session_key"] == key), None)
+            if session is None or not sessions["available"]:
+                raise WorkspaceError("session_not_in_sample")
+            if observation_owner(session["cwd"], registry) != merged["project_id"]:
+                raise WorkspaceError("session_project_mismatch")
+            session_cwd = session["cwd"]
+        # Preserve no-op CAS: the store receives an unchanged allowed field, never an empty patch.
+        item = self.store.save_item(fields or {"title": old["title"]}, item_id=item_id,
+                                    expected_revision=revision, session_cwd=session_cwd)
+        return {"item": {**item, "session_link_state": self.link_state(item, sessions, registry)}}
 
     def page_records(self, **params):
         rows, total = self.store.list_records(**params)
@@ -191,18 +358,24 @@ class WorkspaceService:
     def snapshot(self):
         sessions = self.sessions()
         if self.profile is not None:
-            registry = self.registered_projects()
+            observations, registry = self._observations_with_projects()
+            from session_panel.workspace.observations import summary
             todos = self.store.list_todos()
-            tasks = self.page_tasks()
+            rows, total = self.store.list_tasks()
+            tasks = self._task_page(rows, total, sessions, registry)
+            items = self._item_page(self.store.list_items(), sessions, registry)
             records = self.page_records()
             return {"status": "ok", "sampled_at": datetime.now(timezone.utc).isoformat(), "today": today(),
                     "projects": {"status": "available", "reason": None, "items": self.profile_projects(registry, sessions)},
                     "todos": {"status": "available", "reason": None, **todos},
-                    "tasks": {"status": "available", "reason": None, **tasks}, "records": records["items"],
+                    "tasks": {"status": "available", "reason": None, **tasks},
+                    "items": items["items"], "items_page": items, "task_providers": list(TASK_PROVIDERS),
+                    "records": records["items"],
                     "records_total": records["total"], "records_limit": records["limit"],
                     "providers": [{**item, "capabilities": {**item["capabilities"], "open_existing_ui": False,
                                                             "observe_sessions": item["id"] == "codex"}, "entrypoints": []}
-                                  for item in discover_providers()], "sessions": sessions,
+                                  for item in discover_providers(observations["installations"])], "sessions": sessions,
+                    "observations": summary(observations),
                     "entrypoints": [{"id": "progress", "label": "项目进度与待办", "href": "/progress"}],
                     "data_dir": str(self.profile.data_dir)}
         try:
@@ -234,7 +407,7 @@ class WorkspaceService:
         title, project_id, provider_id, state, key = (body[name] for name in
                                                      ("title", "project_id", "provider_id", "state", "session_key"))
         if (not isinstance(title, str) or not 1 <= len(title.strip()) <= 160
-                or not isinstance(project_id, str) or provider_id not in (*PROVIDERS, None)
+                or not isinstance(project_id, str) or provider_id not in (*TASK_PROVIDERS, None)
                 or state not in TASK_STATES):
             raise ValueError("invalid_request")
         if key is not None:
@@ -310,5 +483,9 @@ class WorkspaceService:
         return {"status": "ok", "codex": quota, "manual_records": records,
                 "manual_status": status, "manual_reason": reason, "manual_total": total, "manual_limit": 100}
 
-    def news(self):
-        return self.news_source.get()
+    def news(self, stream='ai', *, refresh=False):
+        if stream not in ('ai', 'hn'):
+            raise ValueError('invalid_stream')
+        if refresh:
+            return self.news_source.refresh(stream)
+        return self.news_source.get() if stream == 'ai' else self.news_source.get(stream)

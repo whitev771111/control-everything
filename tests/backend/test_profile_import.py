@@ -60,7 +60,8 @@ class ProfileImportTests(unittest.TestCase):
         original_backup = importer.create_backup
         def checked_backup(profile):
             with closing(real_connect(profile.store.path, timeout=0)) as competitor:
-                with self.assertRaises(sqlite3.OperationalError):
+                # Schema2 refuses an old writer even before the import transaction.
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'no such function'):
                     competitor.execute("INSERT INTO projects VALUES('race','Race',0,NULL,NULL,99)")
             return original_backup(profile)
         with patch.object(importer.sqlite3, "connect", side_effect=guarded_connect), patch.object(importer, "create_backup", side_effect=checked_backup):
@@ -193,7 +194,7 @@ class ProfileImportTests(unittest.TestCase):
             importer.restore_backup(str(backup), str(self.root / "restore"))
         self.assertFalse((self.root / "restore").exists())
 
-    def test_source_change_during_backup_rolls_back_and_begin_busy_never_backs_up(self):
+    def test_source_change_during_backup_rolls_back_and_final_begin_busy(self):
         original_backup = importer.create_backup
         def changed_source(profile):
             backup = original_backup(profile)
@@ -207,11 +208,12 @@ class ProfileImportTests(unittest.TestCase):
         writer = sqlite3.connect(self.profile.store.path, isolation_level=None)
         writer.execute("BEGIN IMMEDIATE")
         try:
-            with patch.object(importer, "create_backup") as backup:
+            with patch.object(importer, "create_backup", wraps=original_backup) as backup:
                 with self.assertRaises(ProfileError) as error:
                     importer.import_legacy(self.profile, str(self.source))
             self.assertEqual(error.exception.reason, "store_busy")
-            backup.assert_not_called()
+            # A valid consistent backup precedes the final write lock in schema2.
+            backup.assert_called_once()
         finally:
             writer.execute("ROLLBACK")
             writer.close()

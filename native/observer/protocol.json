@@ -1,0 +1,350 @@
+{
+  "protocol": 2,
+  "framing": "u32 little-endian payload byte length, strict UTF-8 JSON, no envelope",
+  "limits": {
+    "request_bytes": 65536,
+    "response_bytes": 524288,
+    "depth": 12,
+    "idle_first_byte_seconds": 15,
+    "frame_after_first_byte_seconds": 1,
+    "hello_first_byte_seconds": 1
+  },
+  "requests": {
+    "hello": {
+      "method": "hello",
+      "protocol": 2,
+      "profile_key": "sha256 hex",
+      "role": "python or cli",
+      "build": "manifest build"
+    },
+    "status": {
+      "method": "status"
+    },
+    "get_snapshot": {
+      "method": "get_snapshot"
+    },
+    "sync_scope_begin": {
+      "method": "sync_scope_begin",
+      "transaction_id": "opaque",
+      "base_revision": 0,
+      "scope_hash": "sha256 hex"
+    },
+    "sync_scope_chunk": {
+      "method": "sync_scope_chunk",
+      "transaction_id": "opaque",
+      "index": 0,
+      "roots": [
+        {
+          "directory_id": "opaque",
+          "path": "registered absolute root"
+        }
+      ]
+    },
+    "sync_scope_commit": {
+      "method": "sync_scope_commit",
+      "transaction_id": "opaque"
+    },
+    "list_window_choices": {
+      "method": "list_window_choices",
+      "registration_id": "32 lowercase hex",
+      "config_revision": 1,
+      "config_hash": "sha256 hex"
+    },
+    "dismiss_window_choices": {
+      "method": "dismiss_window_choices",
+      "selection_id": "opaque"
+    },
+    "return_window": {
+      "method": "return_window",
+      "action_id": "opaque",
+      "generation": "opaque",
+      "seq": 1,
+      "config_revision": 1,
+      "config_hash": "sha256 hex"
+    },
+    "stop": {
+      "method": "stop"
+    },
+    "sync_registrations": {
+      "method": "sync_registrations",
+      "base_revision": 0,
+      "base_hash": "sha256 hex",
+      "config_revision": 1,
+      "config_hash": "sha256 hex",
+      "observations": {
+        "revision": 1,
+        "registrations": []
+      }
+    },
+    "list_installation_candidates": {
+      "method": "list_installation_candidates"
+    }
+  },
+  "responses": {
+    "hello_status": {
+      "status": "available",
+      "protocol": 2,
+      "profile_key": "sha256 hex",
+      "generation": "opaque",
+      "build": "manifest build",
+      "scope_revision": 0,
+      "scope_hash": "empty initially, otherwise sha256 hex",
+      "config_revision": 0,
+      "config_hash": "empty observations vector hash"
+    },
+    "error": {
+      "status": "unavailable",
+      "reason": "fixed reason code"
+    },
+    "scope_begin": {
+      "status": "available",
+      "unchanged": false,
+      "scope_revision": 0
+    },
+    "scope_begin_unchanged": {
+      "status": "available",
+      "unchanged": true,
+      "scope_revision": 1,
+      "scope_hash": "sha256 hex"
+    },
+    "scope_chunk": {
+      "status": "available",
+      "index": 0
+    },
+    "scope_commit": {
+      "status": "available",
+      "scope_revision": 1,
+      "scope_hash": "sha256 hex"
+    },
+    "dismiss_stop": {
+      "status": "available"
+    },
+    "return": {
+      "status": "available or limited",
+      "reason": null,
+      "kind": "observed_instance or manual_navigation"
+    },
+    "choices": {
+      "status": "available or limited",
+      "reason": null,
+      "generation": "opaque",
+      "selection_id": "opaque",
+      "expires_at_ms": 1,
+      "coverage": {
+        "status": "complete or limited",
+        "omitted": 0
+      },
+      "choices": [],
+      "config_revision": 1,
+      "config_hash": "sha256 hex"
+    },
+    "registration_ack": {
+      "status": "available",
+      "config_revision": 1,
+      "config_hash": "sha256 hex"
+    },
+    "candidates": {
+      "status": "available or limited",
+      "reason": null,
+      "config_revision": 1,
+      "config_hash": "sha256 hex",
+      "candidates": [
+        {
+          "provider_id": "codex or claude or hermes or pi",
+          "locator_kind": "npm_command or hermes_launcher or codex_desktop",
+          "path": "explicit settings only absolute locator",
+          "version": null
+        }
+      ],
+      "coverage": {
+        "status": "complete or limited",
+        "omitted": 0
+      }
+    }
+  },
+  "snapshot_fields": [
+    "protocol",
+    "profile_key",
+    "generation",
+    "seq",
+    "scope_revision",
+    "environment_id",
+    "sampled_at_ms",
+    "metrics_interval_ms",
+    "status",
+    "reason",
+    "coverage",
+    "installations",
+    "instances",
+    "resources",
+    "config_revision",
+    "config_hash",
+    "registrations"
+  ],
+  "coverage_fields": [
+    "status",
+    "scanned",
+    "recognized",
+    "omitted",
+    "denied"
+  ],
+  "installation_fields": [
+    "provider_id",
+    "status",
+    "reason",
+    "source",
+    "commands",
+    "version"
+  ],
+  "instance_fields": [
+    "instance_id",
+    "provider_id",
+    "kind",
+    "pid",
+    "resource_id",
+    "directory_ids",
+    "status",
+    "reason",
+    "source",
+    "sampled_at_ms",
+    "session",
+    "pending",
+    "return_action",
+    "classification",
+    "registration_ids"
+  ],
+  "session_pending": {
+    "status": "unknown",
+    "reason": "no_session_source or no_pending_source"
+  },
+  "resource_fields": [
+    "resource_id",
+    "scope",
+    "cpu_percent_one_core",
+    "rss_bytes",
+    "threads",
+    "handles",
+    "metrics_interval_ms",
+    "source",
+    "sampled_at_ms"
+  ],
+  "grant_fields": [
+    "action_id",
+    "issued_seq",
+    "expires_at_ms",
+    "kind",
+    "status",
+    "reason",
+    "scope"
+  ],
+  "capacity_grant": {
+    "status": "limited",
+    "reason": "grant_capacity",
+    "action_id": null
+  },
+  "stale_grant": {
+    "status": "stale",
+    "reason": "sample_timeout",
+    "action_id": null
+  },
+  "choice_fields": [
+    "action_id",
+    "issued_seq",
+    "expires_at_ms",
+    "kind",
+    "status",
+    "reason",
+    "scope",
+    "title"
+  ],
+  "notes": [
+    "All request fields are exact; reject unknown and duplicate keys. A connection is bound at hello.",
+    "Unknown/pending or budget-limited snapshots may have coverage status only; all snapshot top-level fields remain present.",
+    "No title outside explicit choices, no raw cwd/argv/image path in ordinary snapshots. Explicit candidates disclose only bounded registered installation locators to local settings.",
+    "Snapshot status available only means sampler available. Instance status available only means verified process alive.",
+    "After scope commit, until the sampler publishes the new revision: full top-level snapshot, status unknown/reason scope_pending, current scope_revision, old sampling seq permitted, no instances/resources/grants. Never relabel old directory IDs. Repeated equal seq is permitted for the same cached sampling interval; seq cannot decrease within a generation.",
+    "No model/private source is queried. Session/pending remain unknown. CPU first sample and unreadable metrics are null.",
+    "Grant IDs are reused until expiry. seq in return is issued_seq, not latest snapshot seq.",
+    "Disconnect revokes that connection grants and staging. Scope commit revokes all grants. No action replay on reconnect.",
+    "scope_hash is SHA256 of UTF-8 JSON roots with ensure_ascii=false, sort_keys=true, separators comma/colon. Roots fields are directory_id,path in that order. Rust streams the same serialization into SHA256 and validates commit, without allocating another full scope buffer.",
+    "read/write each have a whole-frame deadline; idle readers must not be confused with partial-frame retries.",
+    "Protocol v2 does not change profile_key/profile/v1 or named-pipe identity domains.",
+    "Observations exact keys revision,registrations; normalize registrations sorted by id, recursively sorted JSON keys, UTF-8, no spaces/ascii escaping/slash escaping. revision0 allowed only for empty legacy state; v3 persistent revision starts1.",
+    "Configuration revision/hash differ from scope_revision. Sync registrations CAS on base pair; same target pair idempotent. ACK is receipt, not installation verification. Every sample carries its actual config pair. Pending full snapshot has empty registrations/instances/resources and current application pair.",
+    "category builtin uses fixed provider codex/claude/hermes/pi and compatible npm_command/hermes_launcher/codex_desktop; custom_exe uses null provider, executable locator. Windows local only; enabled bool; binding_state confirmed/rebind_required.",
+    "registration status: available/limited/not_found/not_configured/unknown; duplicate_of_id null except duplicate_installation. Instance classification provider/custom_exe; custom provider_id null, kind custom_exe, session/pending unknown. Unique process/resource regardless of registration references.",
+    "Default observed-instance/console returns limited, action_id null; first registration slice issues only verified registered GUI manual_navigation grants. Config commit revokes all grants; returns require exact current config pair.",
+    "Candidate query explicit only, existing catalog no additional scan; 64 rows/64KiB, no title/argv. Unavailable source does not prevent saving registration intent."
+  ],
+  "profile_key_encoding": "SHA256(ASCII session-panel-observer/profile/v1 + NUL + uint32LE raw SID length + raw binary SID + uint64LE FILE_ID_INFO.VolumeSerialNumber + FILE_ID_128.Identifier[16])",
+  "profile_key_vector": {
+    "sid_hex": "010100000000000515000000",
+    "volume_le_hex": "8877665544332211",
+    "file_id_hex": "000102030405060708090a0b0c0d0e0f",
+    "sha256": "74a358cb764c8e9afee9ca52562881972fc816ad20e2708f120f37c08f446aed"
+  },
+  "peer_credentials": "GetNamedPipeServerProcessId/client process ID plus held process handle, exact creation FILETIME, TOKEN_USER raw SID, TOKEN_STATISTICS.AuthenticationId LUID uint64, ProcessIdToSessionId. Python verifies server image file ID and SHA256 against the fixed installed artifact/manifest. Rust accepts same credentials Python client; CLI stop additionally requires exact observer image file ID.",
+  "registration_fields": [
+    "id",
+    "category",
+    "provider_id",
+    "environment_id",
+    "label",
+    "locator_kind",
+    "path",
+    "enabled",
+    "binding_state"
+  ],
+  "registration_status_fields": [
+    "registration_id",
+    "status",
+    "reason",
+    "source",
+    "sampled_at_ms",
+    "duplicate_of_id"
+  ],
+  "registration_limits": {
+    "records": 32,
+    "canonical_bytes": 49152,
+    "revision_max": 9007199254740991,
+    "label_scalars": 80,
+    "path_scalars": 2048,
+    "candidate_bytes": 65536,
+    "candidate_rows": 64
+  },
+  "registration_vectors": [
+    {
+      "observations": {
+        "revision": 0,
+        "registrations": []
+      },
+      "canonical_utf8": "{\"registrations\":[],\"revision\":0}",
+      "sha256": "d3b0686f84415930fc20e7b869a0d178859f3ce3e50f7285a189291217a6997f"
+    },
+    {
+      "observations": {
+        "revision": 1,
+        "registrations": [
+          {
+            "id": "0123456789abcdef0123456789abcdef",
+            "category": "custom_exe",
+            "provider_id": null,
+            "environment_id": "windows:local",
+            "label": "Example tool",
+            "locator_kind": "executable",
+            "path": "C:/example/tool.exe",
+            "enabled": true,
+            "binding_state": "confirmed"
+          }
+        ]
+      },
+      "canonical_utf8": "{\"registrations\":[{\"binding_state\":\"confirmed\",\"category\":\"custom_exe\",\"enabled\":true,\"environment_id\":\"windows:local\",\"id\":\"0123456789abcdef0123456789abcdef\",\"label\":\"Example tool\",\"locator_kind\":\"executable\",\"path\":\"C:/example/tool.exe\",\"provider_id\":null}],\"revision\":1}",
+      "sha256": "5642a57927e9759307e5cdb9a9f1f4b4b008a2b656a7b14c4e41affbedcaa4bd"
+    }
+  ],
+  "unverified_grant": {
+    "status": "limited",
+    "reason": "binding_unknown",
+    "action_id": null
+  }
+}

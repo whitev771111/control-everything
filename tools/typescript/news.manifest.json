@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "compiler": {
+    "name": "typescript",
+    "version": "5.9.3"
+  },
+  "inputs": [
+    "web/workspace/news.types.d.ts",
+    "web/workspace/news.ts"
+  ],
+  "outputs": [
+    {
+      "emitted": "news.js",
+      "path": "web/workspace/news.js",
+      "url": "/news.js"
+    }
+  ]
+}

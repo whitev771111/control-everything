@@ -13,6 +13,7 @@ from session_panel.profiles.profile import Profile
 from session_panel.workspace.service import WorkspaceService
 from tests.backend import test_execution_http
 from tests.backend.test_project_management import project_body
+from tests.backend.test_observation_settings import registration
 
 
 class ProfileHTTPTests(unittest.TestCase):
@@ -113,3 +114,28 @@ class ProfileHTTPTests(unittest.TestCase):
         with patch.object(codex_index, "list_threads", side_effect=AssertionError("disabled")):
             for route in ("/api/workspace", "/api/progress", "/api/codex/threads", "/api/profile"):
                 self.request(route)
+
+    def test_observation_settings_offline_crud_cas_and_safe_routes(self):
+        route = "/api/profile/observations"
+        for method in ("GET", "POST"):
+            self.assertEqual(self.request(route, method, {} if method == "POST" else None, {"X-Session-Client": ""})[1]["reason"], "client_header_required")
+        for headers, reason in (({"Origin": ""}, "origin_rejected"), ({"X-Session-CSRF": ""}, "csrf_rejected")):
+            self.assertEqual(self.request(route, "POST", {}, headers)[1]["reason"], reason)
+        for raw in (b'{"a":1,"a":2}', b'{"a":NaN}', b'[]'):
+            self.assertEqual(self.request(route, "POST", raw)[0], 400)
+        self.assertEqual(self.request(route, "POST", b" " * 65537)[0], 413)
+        current = self.request(route)[1]
+        self.assertEqual(current["revision"], 0)
+        payload = {"expected_revision": current["revision"], "expected_hash": current["hash"], "registrations": [registration()]}
+        status, current = self.request(route, "POST", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(current["application"]["status"], "pending")
+        self.assertEqual(current["registrations"][0]["path"], "C:/example/tool.exe")
+        self.assertEqual(self.request(route, "POST", payload)[0], 409)
+        self.assertEqual(self.request(route + "/candidates")[1]["status"], "unavailable")
+        self.assertNotIn("C:/example/tool.exe", repr(self.request("/api/workspace/observations")[1]))
+        for rows in ([registration(enabled=False)], []):
+            status, current = self.request(route, "POST", {"expected_revision": current["revision"], "expected_hash": current["hash"], "registrations": rows})
+            self.assertEqual(status, 200)
+            self.assertEqual(current["registrations"], rows)
+        self.assertTrue(self.profile.store.is_empty())

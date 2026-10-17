@@ -4,7 +4,7 @@
 
 ## 功能目录与新增代码归属
 
-沿用原生 Python 与 HTML/CSS/JS，不增加前端构建或包安装层。后端按实际职责组织，新增代码优先放入下表对应功能包；不为每个功能预建空的通用分层。
+管理后端沿用 Python，Windows 进程观察由 Rust 组件负责；前端保留 HTML/CSS 和普通脚本，本机观察与每日资讯使用 TypeScript 源码及已生成 JS，工具只在开发和验证时使用。普通启动无需 Node/npm，其他模块继续手写 JS。后端按实际职责组织，新增代码优先放入下表对应功能包；不为每个功能预建空的通用分层。
 
 | 后端目录 | 职责 |
 |---|---|
@@ -14,6 +14,7 @@
 | `session_panel/execution` | 执行准入、执行记录与受控进程 |
 | `session_panel/profiles` | 用户配置、导入备份与离线恢复 |
 | `session_panel/integrations` | 外部接入、固定启动器与旧只读 MCP |
+| `native/observer` | Windows 只读进程观察、受限本机管道及核验后的窗口返回；不写管理库 |
 
 `session_panel/paths.py` 统一固定仓库根路径。根包的四个旧 CLI 文件只保留兼容入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
 
@@ -23,17 +24,85 @@
 
 ## 环境和验证
 
-使用 Windows、Python 3.12 和 Node.js 24。Python 全套测试包含 Windows 原生接口；纯 Node 合同只依赖内置模块，无需根目录 npm 安装。以下创建命令仅适用于没有 `.venv` 的新检出；已有环境先确认归属和版本，不覆盖他人的环境，必要时选择独立工作树。再从仓库根目录执行：
+使用 Windows、Python 3.12 和 Node.js 24。Python 全套测试包含 Windows 原生接口；观察类型/构建合同另需下节固定项目编译器，没有根目录 npm 包或运行时 Node 桥接。以下创建命令仅适用于没有 `.venv` 的新检出；已有环境先确认归属和版本，不覆盖他人的环境，必要时选择独立工作树。再从仓库根目录执行：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs
 ```
 
 基础测试使用合成配置、临时文件和 mock，不需要作者服务器或个人工具。首次完整测试涉及固定 Gitleaks 检查时，先按下文安装已核验工具；不能把缺工具跳过称为完整检查通过。本机 requirements 固定 MCP 1.30.0，远端新 reader 环境另用 requirements-reader.txt，不能把两套环境混为一次升级。
+
+### 观察前端 TypeScript 开发
+
+观察输入仅 `web/workspace/observation.ts` 与 `observation.types.d.ts`，manifest固定唯一输出 `observation.js`。资讯另用 `news.ts/news.types.d.ts`、`tools/typescript/news.manifest.json`、`tsconfig.news.json`，固定唯一输出 `web/workspace/news.js`。两入口在 `scripts/frontend_compile.cjs` 复用同一小型编译流程，每个目标分别核完整输入/输出与窗口出口，不接任意路径或动态manifest参数。两配置开严格检查、禁止 map/inline源码及声明输出，保持普通 IIFE/Window API；不引入 React/Vite/模块加载器。任务中心等现有 JS 保留独立归属。
+
+固定官方 `typescript@5.9.3`，真实 package-lock.json 一起提交。已有正确项目工具不重复准备；缺失时 build/check 明确非零，不联网、不找全局 tsc。首次或干净复现的准备是单独显式动作，仅作用于自己检出的 `tools/typescript/node_modules`；`npm ci` 会清该工具包依赖目录，先确认归属。下面在专用 PowerShell 会话从仓库根执行，两个通用示例路径须替换为已安装的 Node24 和 npm CLI，不能让宿主 npm.cmd 偷换 Node：
+
+```powershell
+$tsNode = 'C:/example/node24/node.exe'
+$tsNpmCli = 'C:/example/npm/bin/npm-cli.js'
+Get-ChildItem Env:NPM_CONFIG_* | ForEach-Object { Remove-Item -LiteralPath "Env:$($_.Name)" }
+Remove-Item -LiteralPath Env:NODE_OPTIONS, Env:NODE_PATH -ErrorAction SilentlyContinue
+$tsPreparation = Join-Path (Get-Location) 'work/frontend-observation/npm-ci'
+New-Item -ItemType Directory -Path $tsPreparation -Force | Out-Null
+$env:NPM_CONFIG_CACHE = Join-Path $tsPreparation 'cache'
+$env:NPM_CONFIG_USERCONFIG = Join-Path $tsPreparation 'user.npmrc'
+$env:NPM_CONFIG_GLOBALCONFIG = Join-Path $tsPreparation 'global.npmrc'
+[System.IO.File]::WriteAllText($env:NPM_CONFIG_USERCONFIG, '')
+[System.IO.File]::WriteAllText($env:NPM_CONFIG_GLOBALCONFIG, '')
+& $tsNode --version
+& $tsNode $tsNpmCli --version
+# Confirm Node v24 before the explicit dependency preparation.
+& $tsNode $tsNpmCli ci --prefix tools/typescript --include=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
+if ($LASTEXITCODE -ne 0) { throw 'Fixed TypeScript preparation failed' }
+```
+
+日常复用已准备工具，从根目录执行；`node`须是上面核过的Node24（可用 `& $tsNode` 替换）：
+
+```powershell
+node scripts/build_observation.cjs typecheck
+node scripts/build_observation.cjs build
+node scripts/build_observation.cjs check
+node scripts/build_news.cjs typecheck
+node scripts/build_news.cjs build
+node scripts/build_news.cjs check
+node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs tests/frontend/test_news_ui.cjs tests/frontend/test_news_build.cjs
+```
+
+修改 TS 后先 build 并提交生成 JS；验证已有交付物时直接 check，不能先 build 洗掉手改字节。编译/emit/校验失败不会覆盖旧 JS；旧 JS 存在也不代表编译成功。check用fresh临时输出比较完整集合/字节，不修产物。源码、类型、配置、package/lock、manifest、builder及生成JS都须进入显式发布候选；缓存、node_modules、日志留ignored work，不能以子集扫描称整包通过。
+
+仅维护者在新建工具包或经审版本更新时重新生成锁：沿用上述隔离配置，`Push-Location tools/typescript` 后执行 `& $tsNode $tsNpmCli install --package-lock-only --include=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/`，检查退出码并在 `finally` 中 `Pop-Location`，随后核 package/lock diff。实际 npm10.9.8 的首次 install --prefix 曾出现路径错误及 file: 自依赖；已验证成功的首次锁生成形式是该专属cwd、**不传prefix**。不要把首次install与消费已有锁的 `npm ci --prefix` 混为一条已验命令；CI保留后一条命令，远端运行仍须另留证。
+
+采用[TypeScript Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API)的完整Program诊断与受控emit，及[npm ci](https://docs.npmjs.com/cli/v10/commands/npm-ci)的锁一致性/不改锁语义；不使用仅转译、全局工具或隐式安装。CI只准备同一个工具包、先观察check及资讯typecheck/check、再八份Node合同，缺工具或字节漂移即失败，不先build洗脏输出；普通用户启动Python仍只读取已交付JS。已有固定工具不因新增资讯再安装，原锁和版本不变。
+
+资讯 Node 合同使用合成DOM/时钟/来源投影，不能替代真实worker/HTTP/Edge验收。验收负责人可对自己已运行的合成profile执行 `node tests/e2e/verify_daily_news.cjs --base-url http://127.0.0.1:14401 --owned-fixture --output <本次绝对ignored证据目录>`；可选 `--legacy-base-url` 指向另一个自有legacy实例，`--synthetic-news` 只替新闻路由，以受控时间验证分组/摘要/过期与草稿。harness不建服务、不修改真实数据库；默认真实HTTP读取与合成新闻模式分别记证据，不把后者当真实公共源可用。真实待办写后隔离、失败采集清理与宽窄屏截图仍由验收负责人分别留证。
+
+### Windows 原生观察开发
+
+原生部分使用固定 Rust 1.97.1 x64 MSVC、rustfmt/clippy 和 Visual Studio C++ Build Tools。先在 VS Native Tools 环境进入项目。工具链首次准备是单独明确步骤，全部留在本检出 ignored `work/native-observer`，不修改宿主默认工具链或全局 PATH：
+
+```powershell
+$env:RUSTUP_HOME = Join-Path (Get-Location) 'work/native-observer/rustup-home'
+$env:CARGO_HOME = Join-Path (Get-Location) 'work/native-observer/cargo-home'
+$env:CARGO_TARGET_DIR = Join-Path (Get-Location) 'work/native-observer/target'
+rustup set auto-self-update disable
+rustup toolchain install 1.97.1-x86_64-pc-windows-msvc --profile minimal --component rustfmt --component clippy --no-self-update
+```
+
+已经准备好的检出不重复安装。普通构建入口只检查七个实际工具文件，缺失明确失败，不自动下载工具链、不回落宿主。各子进程继承固定项目 RUSTUP_HOME/CARGO_HOME/TARGET_DIR 与 RUSTUP_AUTO_INSTALL=0；项目 crate 可按 Cargo.lock 下载到项目缓存。不要手动用未隔离的 rustup/cargo 代替以下入口：
+
+```powershell
+.\.venv\Scripts\python.exe -B -X utf8 scripts/build_observer.py fmt
+.\.venv\Scripts\python.exe -B -X utf8 scripts/build_observer.py test
+.\.venv\Scripts\python.exe -B -X utf8 scripts/build_observer.py clippy
+.\.venv\Scripts\python.exe -B -X utf8 scripts/build_observer.py build
+node --test tests/frontend/test_observation_ui.cjs
+```
+
+应用 Cargo.lock 提交源码，EXE/PDB、安装 manifest、工具链和日志均不提交。产物固定在 `work/native-observer/install`；正在使用的后台应先通过其已核验 CLI 正常停止，再替换产物。HTTP 不搜索 PATH 中同名后台，不在请求中编译。`native/observer/protocol.json`记录跨语言字段与身份测试向量，`src/protocol.rs`为严格请求解析；修改协议必须同步 Python 消费与合同测试。消息协议为v2，profile身份哈希和管道命名空间仍为v1，避免同一profile并行两套采样者。升级须先用旧固定产物正常停止自有daemon再替换，身份/协议不匹配时明确失败。登记配置v3由Python唯一管理，原生只接收有界快照；原生schema变更由单一负责人维护后交Python消费。Rust 单元测试仅用纯输入和当前测试进程，不启动现场 Agent；真实管道/后台生命周期、可见窗口及浏览器验收另由验收负责人执行并留证。
 
 从干净检出验收正常开发时，在上述安装和测试之后，用独立目录验证初始化与示例校验：
 
@@ -66,6 +135,16 @@ node tests/e2e/verify_workspace.cjs --fixture
 清理时先列明本轮新建的临时目录和进程；仅移除已确认归属的一次性产物，保留验证日志、迁移备份和用户数据。不得递归清空整个 work/、docs/ 或 videos/，也不得清理其他任务内容。
 
 ## 协作和交接
+
+### 管理库schema2与离线迁移验证
+
+管理schema、profile配置和backup manifest分别版本化；schema1只能显式通过 `python -m session_panel.profile migrate-tasks --data-dir <绝对目录>` 升级。新库直接schema2；restore兼容manifest1/schema1与manifest2/schema2，旧结构恢复发布后仍须显式迁移。不得在HTTP启动、Profile.open或配置保存中隐式升级，不删除未知表或执行账本以适配schema。
+
+任务存储的唯一写表为task_items，tasks/todos仅为保留原ID的只读视图。所有管理连接严格核schema后注册无副作用writer版本函数，固定DML guards拒旧连接误写；这是版本兼容机制，不是对恶意DB编辑的安全认证。项目写入及事项写入要在同一事务失效列表revision，不能只修改项目归档状态而接受旧分页。
+
+迁移的SQLite一致备份在写事务外取得，EXCLUSIVE内重核源事实后逐条DDL/复制/校验/更新版本并提交，不能用executescript隐式提交。失败回滚并保留备份；回退旧程序前先 `preserve-tasks` 保全最新schema2，再恢复旧备份到新目录，不覆盖新库。备份包含私密路径和管理数据，不提交。
+
+实现者仅运行经代码核过的无listener合成合同；真实旧连接/多进程停写、CLI迁移恢复回退、HTTP/Edge以及全量discover由验收负责人承接并保存全部退出码、失败和清理收据。纯单测入口为 `tests.backend.test_task_store` 与 `tests.backend.test_task_migration`；它们只操作TemporaryDirectory，不是用户迁移验收。
 
 1. 任务说明记录目标、验收、负责人、分支/worktree、拟改文件和当前状态。开始、交接和结束均核对 `git status`、diff，注明阻塞与未验证项。
 2. 独立任务使用独立分支或 worktree；若共用工作树，先分配文件负责人。需要改同一文件时先协调；合并冲突保留双方意图和证据。

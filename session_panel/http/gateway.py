@@ -17,10 +17,13 @@ from urllib.parse import parse_qs, urlsplit
 
 from session_panel.sessions.source import HOST, PORT, canonical_uuid
 from session_panel.sessions.codex_index import list_threads as list_codex_threads
+from session_panel.sessions.observer_client import ObserverClient
+from session_panel.sessions import observer_protocol
 from session_panel.workspace.progress import MANUAL, REGISTRY, TODOS, add_todo, board, set_progress, toggle_todo, load_todos
 from session_panel.integrations.launchers import LauncherCatalog, catalog, start
 from session_panel.integrations.desk import headlines, pulse
 from session_panel.workspace.service import WorkspaceService
+from session_panel.workspace.news_source import NewsSource
 from session_panel.workspace.store import WorkspaceError
 from session_panel.profiles.profile import Profile, ProfileError, strict_json
 
@@ -29,8 +32,9 @@ WEB = REPOSITORY_ROOT / "web"
 SESSION_ROUTE = re.compile(r"/api/sessions/([^/]+)(?:/(messages|focus))?\Z")
 EXECUTION_RUN_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)\Z")
 EXECUTION_ACTION_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)/(cancel|approvals/([^/]+))\Z")
-PROFILE_POST = {"/api/profile/settings", "/api/profile/import", "/api/workspace/projects/save",
-                "/api/workspace/projects/restore", "/api/workspace/progress"}
+PROFILE_POST = {"/api/profile/settings", "/api/profile/import", "/api/profile/observations", "/api/workspace/projects/save",
+                "/api/workspace/projects/restore", "/api/workspace/progress",
+                "/api/workspace/items", "/api/workspace/items/update"}
 PROFILE_CAPABILITIES = {"profile": True, "project_management": True, "execution": False,
                         "personal_launchers": False, "remote_sessions": False, "terminal": False, "workbench": False,
                         "quota": True, "news": True}
@@ -75,6 +79,15 @@ def page_params(query, *, extra=(), default=50):
 
 def invalid_json_constant(_value):
     raise ValueError("invalid_json")
+
+
+def news_stream(query):
+    values = parse_qs(query, keep_blank_values=True, strict_parsing=True)
+    if not values:
+        return 'ai'
+    if set(values) != {'stream'} or len(values['stream']) != 1 or values['stream'][0] not in ('ai', 'hn'):
+        raise ValueError('invalid_query')
+    return values['stream'][0]
 
 
 def codex_offset(query):
@@ -198,6 +211,13 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         if path.path == "/health" and not path.query:
             return self.reply(200, {"app": APP, "protocol_version": 1})
+        if path.path == "/progress" and not path.query and self.profile() is not None:
+            self.send_response(302)
+            self.send_header("Location", "/workspace#projects")
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
         static = {
             "/": ("sessions/index.html", "text/html; charset=utf-8"),
             "/app.js": ("sessions/app.js", "text/javascript; charset=utf-8"),
@@ -207,7 +227,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/progress.css": ("progress/progress.css", "text/css; charset=utf-8"),
             "/workspace": ("workspace/workspace.html", "text/html; charset=utf-8"),
             "/workspace.js": ("workspace/workspace.js", "text/javascript; charset=utf-8"),
+            "/task-center.js": ("workspace/task-center.js", "text/javascript; charset=utf-8"),
             "/execution.js": ("workspace/execution.js", "text/javascript; charset=utf-8"),
+            "/observation.js": ("workspace/observation.js", "text/javascript; charset=utf-8"),
+            "/news.js": ("workspace/news.js", "text/javascript; charset=utf-8"),
             "/workspace.css": ("workspace/workspace.css", "text/css; charset=utf-8"),
         }
         if path.path in static and not path.query:
@@ -218,6 +241,17 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return self.reject(404, "route_not_found")
             return self.reply(200, body, mime)
         try:
+            if path.path == '/api/desk/news':
+                if path.query:
+                    raise ValueError('invalid_query')
+                source = self.server.__dict__.get('news_source') or NewsSource()
+                return self.reply(200, source.get('hn'))
+            if path.path == '/api/workspace/news':
+                return self.workspace_reply(path.path, stream=news_stream(path.query))
+            if path.path == "/api/workspace/observations":
+                if path.query:
+                    raise ValueError("invalid_query")
+                return self.reply(200, self.server.workspace.observations())
             if self.profile() is not None and self.profile_get(path):
                 return
             if (path.path in {"/api/workspace/execution", "/api/workspace/execution/context"}
@@ -234,7 +268,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.path == "/api/desk":
                 if path.query:
                     raise ValueError("invalid_query")
-                return self.reply(200, {"launchers": self.server.launchers.catalog() if self.server.launchers is not None else catalog(), "pulse": pulse(), "news": headlines(), "todos": load_todos(TODOS)})
+                return self.reply(200, {"launchers": self.server.launchers.catalog() if self.server.launchers is not None else catalog(), "pulse": pulse(), "news": headlines(), "news_state": NewsSource().cached('hn'), "todos": load_todos(TODOS)})
             if path.path == "/api/codex/threads":
                 result = list_codex_threads(codex_offset(path.query))
                 return self.reply(200 if result["available"] else 503, result)
@@ -273,6 +307,23 @@ class PanelHandler(BaseHTTPRequestHandler):
         if not self.allowed(api=True, focus=True):
             return
         path = urlsplit(self.path)
+        if path.path == '/api/workspace/news/refresh':
+            if self.server.workspace is None:
+                return self.reject(503, 'workspace_unavailable')
+            try:
+                if path.query:
+                    raise ValueError('invalid_query')
+                body = self.read_json_body(max_bytes=1024, strict=True)
+                if set(body) != {'stream'} or body['stream'] not in ('ai', 'hn'):
+                    raise ValueError('invalid_body')
+                return self.reply(200, self.server.workspace.news(body['stream'], refresh=True))
+            except BodyTooLarge:
+                return self.reject(413, 'body_too_large')
+            except (ValueError, TypeError, UnicodeError, OSError):
+                return self.reject(400, 'invalid_request')
+        if path.path in {"/api/workspace/observations/return", "/api/workspace/observations/window-choices",
+                         "/api/workspace/observations/window-choices/close"}:
+            return self.observation_post(path)
         if self.profile() is not None:
             if self.profile_post(path):
                 return
@@ -366,7 +417,39 @@ class PanelHandler(BaseHTTPRequestHandler):
         except Exception:
             self.reject(503, "workbench_launch_failed" if connect else "focus_failed")
 
-    def workspace_reply(self, path, body=None):
+    def observation_post(self, path):
+        try:
+            if path.query:
+                raise ValueError("invalid_request")
+            body = self.read_json_body(max_bytes=4096, strict=True)
+            if path.path.endswith("/return"):
+                observer_protocol.exact(body, {"action_id", "generation", "seq"})
+                observer_protocol.token(body["action_id"])
+                observer_protocol.token(body["generation"])
+                observer_protocol.integer(body["seq"])
+                method = "return_window"
+            elif path.path.endswith("/close"):
+                observer_protocol.exact(body, {"selection_id", "generation"})
+                observer_protocol.token(body["selection_id"])
+                observer_protocol.token(body["generation"])
+                method = "dismiss_window_choices"
+            else:
+                observer_protocol.exact(body, {"registration_id"})
+                observer_protocol.registration_id(body["registration_id"])
+                method = "list_window_choices"
+        except (ValueError, UnicodeError, OSError):
+            return self.reject(400, "invalid_request")
+        observer = self.server.__dict__.get("observer")
+        if observer is None:
+            return self.reply(503, {"status": "unavailable", "reason": "observer_unavailable"})
+        value = observer.request(method, body)
+        status = 200 if value["status"] == "available" else 503 if value["status"] == "unavailable" else 409
+        # A limited choice list remains a usable, explicitly bounded response.
+        if method == "list_window_choices" and "choices" in value:
+            status = 200
+        self.reply(status, value)
+
+    def workspace_reply(self, path, body=None, *, stream='ai'):
         workspace = self.server.workspace
         if workspace is None:
             return self.reject(503, "workspace_unavailable")
@@ -376,7 +459,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             elif path == "/api/workspace/usage":
                 value = workspace.usage()
             elif path == "/api/workspace/news":
-                value = workspace.news()
+                value = workspace.news() if stream == 'ai' else workspace.news(stream)
             elif path == "/api/workspace/usage/refresh":
                 if body != {}:
                     raise ValueError("invalid_request")
@@ -487,8 +570,13 @@ class PanelHandler(BaseHTTPRequestHandler):
             extra = {key: value for key, value in (("field", error.field), ("message", error.message)) if value is not None}
         else:
             reason = str(error)
-            status = 409 if reason == "store_busy" else 500
-            reason = reason if reason in {"store_busy", "storage_error"} else "storage_error"
+            status = (404 if reason == "item_not_found" else
+                      409 if reason in {"store_busy", "item_changed", "list_changed", "order_exhausted", "revision_exhausted",
+                                        "session_not_in_sample", "session_project_mismatch"} else
+                      422 if reason in {"invalid_item", "text_budget"} else 500)
+            reason = reason if reason in {"store_busy", "storage_error", "schema_error", "item_not_found", "item_changed",
+                "list_changed", "order_exhausted", "revision_exhausted", "session_not_in_sample", "session_project_mismatch",
+                "invalid_item", "text_budget"} else "storage_error"
             extra = {}
         self._discard_rejected_post_body()
         self.reply(status, {"status": "unknown", "reason": reason, "source": self.server.__dict__.get("source"),
@@ -505,6 +593,15 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.query:
                 raise ValueError("invalid_query")
             self.reply(200, profile.public(startup_integrations=self.server.startup_integrations))
+        elif route in ("/api/profile/observations", "/api/profile/observations/candidates"):
+            if path.query:
+                raise ValueError("invalid_query")
+            if route.endswith("/candidates"):
+                observer = self.server.__dict__.get("observer")
+                value = observer.request("list_installation_candidates", {}) if observer else {"status": "unavailable", "reason": "observer_unavailable"}
+            else:
+                value = workspace.observation_settings()
+            self.reply(200, value)
         elif route == "/api/progress":
             if path.query:
                 raise ValueError("invalid_query")
@@ -515,10 +612,24 @@ class PanelHandler(BaseHTTPRequestHandler):
             todos = profile.store.list_todos()
             self.reply(200, {"launchers": self.server.launchers.catalog() if self.server.launchers is not None else [],
                              "pulse": [], "personal_launchers_unavailable": not self.server.capabilities["personal_launchers"],
-                             "pulse_unavailable": True, "news": headlines(), "todos": todos["items"], "todos_total": todos["total"]})
+                             "pulse_unavailable": True, "news": headlines(), "news_state": NewsSource().cached('hn'), "todos": todos["items"], "todos_total": todos["total"]})
         elif route == "/api/codex/threads":
             value = profile.codex_threads(codex_offset(path.query))
             self.reply(200 if value["available"] else 503, value)
+        elif route == "/api/workspace/items":
+            try:
+                params = page_params(path.query, extra=("project_id", "scope", "provider_id", "state", "list_revision"))
+                if "list_revision" in params:
+                    if not re.fullmatch(r"[0-9]{1,16}", params["list_revision"]):
+                        raise ValueError("invalid_query")
+                    params["list_revision"] = int(params["list_revision"])
+                    if not 1 <= params["list_revision"] <= 9007199254740991:
+                        raise ValueError("invalid_query")
+                if params.get("scope", "all") not in ("all", "active", "archived", "orphan", "global"):
+                    raise ValueError("invalid_query")
+                self.reply(200, workspace.page_items(**params))
+            except ValueError:
+                raise ProfileError("invalid_query") from None
         elif route == "/api/workspace/tasks":
             params = page_params(path.query, extra=("project_id", "scope"))
             if params.get("scope", "all") not in ("all", "active", "archived", "orphan"):
@@ -564,10 +675,15 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.reject(400, "invalid_request")
             return True
         try:
-            body = self.read_json_body(max_bytes=16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
-            if route == "/api/profile/settings":
+            body = self.read_json_body(max_bytes=262144 if route in ("/api/workspace/items", "/api/workspace/items/update") else
+                65536 if route == "/api/profile/observations" else 16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
+            if route in ("/api/workspace/items", "/api/workspace/items/update"):
+                value = self.server.workspace.save_item(body, update=route.endswith("/update"))
+            elif route == "/api/profile/settings":
                 value = profile.settings(body)
                 value["restart_required"] = self.server.startup_integrations is not None and profile.integrations() != self.server.startup_integrations
+            elif route == "/api/profile/observations":
+                value = self.server.workspace.save_observation_settings(body)
             elif route == "/api/profile/import":
                 if set(body) != {"source_dir"}:
                     raise ProfileError("invalid_import", "source_dir")
@@ -592,7 +708,19 @@ class PanelHandler(BaseHTTPRequestHandler):
 
 
 class PanelServer(ThreadingHTTPServer):
+    def start_observer(self):
+        observer = self.__dict__.get("observer")
+        if observer is not None:
+            observer.start()
+
     def server_close(self):
+        source = self.__dict__.get('news_source')
+        lease = self.__dict__.pop('_news_lease', None)
+        if source is not None and lease is not None:
+            source.release(lease)
+        observer = self.__dict__.get("observer")
+        if observer is not None:
+            observer.close_client()
         execution = getattr(self, "execution", None)
         self.execution = None
         try:
@@ -610,7 +738,7 @@ class PanelServer(ThreadingHTTPServer):
 
 
 def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None, profile=None,
-                launchers=None, capabilities=None, startup_integrations=None, source=None):
+                launchers=None, capabilities=None, startup_integrations=None, source=None, observer=None):
     # The address injection exists for temporary fixture tests. Production is fixed.
     if address[0] != HOST:
         raise ValueError("loopback_only")
@@ -623,6 +751,7 @@ def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None
     server.daemon_threads = True
     server.service = service
     server.workspace = workspace
+    server.observer = observer
     server.execution = execution
     server.execution_reason = None
     server.profile = profile
@@ -634,12 +763,17 @@ def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None
     server.expected_host = f"{HOST}:{server.server_address[1]}"
     server.origin = f"http://{server.expected_host}"
     server.csrf_token = secrets.token_urlsafe(32)
+    server.news_source = workspace.news_source if workspace is not None else NewsSource()
+    server._news_lease = server.news_source.acquire()
     return server
 
 
 def build_profile_server(data_dir=None, port=8766, *, quota_source=None, news_source=None):
     profile = Profile.open(data_dir)
     workspace = WorkspaceService(profile=profile, quota_source=quota_source, news_source=news_source)
+    observer = ObserverClient(profile.data_dir, scope_supplier=workspace.observation_scope,
+                              config_supplier=profile.observation_config, config_guard=profile.observation_guard)
+    workspace.observer = observer
     integrations = profile.integrations()
     enabled = {name: value is not None and value["enabled"] for name, value in integrations.items()}
     service, launchers = None, None
@@ -657,7 +791,7 @@ def build_profile_server(data_dir=None, port=8766, *, quota_source=None, news_so
                     "terminal": enabled["terminal"], "workbench": enabled["workbench"],
                     "personal_launchers": enabled["launchers"]}
     return make_server(service, (HOST, port), workspace=workspace, profile=profile,
-                       launchers=launchers, capabilities=capabilities, startup_integrations=integrations)
+                       launchers=launchers, capabilities=capabilities, startup_integrations=integrations, observer=observer)
 
 
 def serve(data_dir=None, port=8766):
@@ -667,6 +801,7 @@ def serve(data_dir=None, port=8766):
         print(f"工作台启动失败（{type(error).__name__}）。请检查profile配置或端口 {port}，可显式选择另一端口。", file=sys.stderr)
         return 1
     print(f"工作台：http://{HOST}:{port}/workspace；项目进度：http://{HOST}:{port}/progress；profile：{server.profile.data_dir}。旧记录可在来源设置中显式导入；Ctrl+C 停止。", file=sys.stderr)
+    server.start_observer()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

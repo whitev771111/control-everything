@@ -158,7 +158,7 @@ class QuotaSourceTests(unittest.TestCase):
 
 
 def rss(items):
-    return ("<rss><channel>" + "".join(items) + "</channel></rss>").encode()
+    return ("<rss version=\"2.0\"><channel>" + "".join(items) + "</channel></rss>").encode()
 
 
 def item(url="https://example.com/story", title="AI news", day="Tue, 13 Oct 2026 10:00:00 GMT"):
@@ -166,6 +166,12 @@ def item(url="https://example.com/story", title="AI news", day="Tue, 13 Oct 2026
 
 
 class NewsSourceTests(unittest.TestCase):
+    def test_utf16_dtd_is_rejected_before_entity_expansion(self):
+        data = ('<!DOCTYPE rss [<!ENTITY x "unsafe">]><rss version="2.0"><channel>'
+                '<item><title>&x;</title><link>https://example.com/story</link></item></channel></rss>').encode('utf-16')
+        with self.assertRaisesRegex(ValueError, 'invalid_feed'):
+            parse_feed(data, 'openai', 'OpenAI', '2026-10-17T00:00:00+00:00')
+
     def test_parse_cdata_skip_unsafe_deduplicate_sort_and_cap(self):
         data = rss([item(title="<b>plain title</b>"), item(), item(url="http://example.com/insecure"),
                     item(url="https://localhost/secret"), item(url="https://example.com/unknown", day="unknown")] +
@@ -186,71 +192,41 @@ class NewsSourceTests(unittest.TestCase):
             with self.assertRaises(ValueError if b"<!DOCTYPE" in data or b"html" in data else Exception):
                 parse_feed(data, "openai", "OpenAI", "now")
 
-    def test_fixed_sources_timeout_limit_and_cache(self):
-        responses = []
-        def opener(request, timeout):
-            self.assertEqual(timeout, 10)
-            self.assertIn(request.full_url, [row[2] for row in FEEDS])
-            self.assertEqual(request.get_header("User-agent"), "MianbanWorkspace/1.0")
-            response = Mock()
-            response.__enter__ = Mock(return_value=response)
-            response.__exit__ = Mock(return_value=False)
-            response.read.return_value = rss([item()])
-            responses.append(response)
-            return response
-        source = NewsSource()
-        with patch("session_panel.workspace.sources.urlopen", side_effect=opener) as open_mock:
-            first = source.get()
-            second = source.get()
-        self.assertEqual((first["status"], len(first["items"])), ("available", 3))
-        self.assertEqual(first["items"], second["items"])
-        self.assertEqual(open_mock.call_count, 3)
-        for response in responses:
-            response.read.assert_called_once_with(MAX_FEED_BYTES + 1)
+    def test_facade_is_constructed_without_collection_and_default_get_compatible(self):
+        collector = Mock()
+        collector.get.return_value = {'status': 'pending', 'items': []}
+        source = NewsSource(collector)
+        collector.assert_not_called()
+        self.assertEqual(source.get()['status'], 'pending')
+        collector.get.assert_called_once_with('ai')
 
-    def test_partial_failure_preserves_old_feed_and_reports_attempt(self):
-        source = NewsSource()
-        with patch("session_panel.workspace.sources.urlopen", side_effect=lambda *args, **kwargs: io.BytesIO(rss([item()]))):
-            old = source.get()
-        old_times = {row["id"]: row["last_success_at"] for row in old["sources"]}
-        for entry in source._cache.values():
-            entry["checked"] -= 901
-        def opener(request, timeout):
-            if request.full_url == FEEDS[0][2]:
-                raise TimeoutError("private network detail")
-            return io.BytesIO(rss([item(url="https://example.com/new")]))
-        with patch("session_panel.workspace.sources.urlopen", side_effect=opener):
-            result = source.get()
-        self.assertEqual(result["status"], "stale")
-        first = result["sources"][0]
-        self.assertEqual((first["status"], first["reason"], first["last_success_at"]), ("stale", "timeout", old_times[first["id"]]))
-        self.assertNotIn("private", json.dumps(result))
-        self.assertIn("https://example.com/story", [row["url"] for row in result["items"]])
+    def test_cached_and_force_refresh_share_one_collector(self):
+        collector = Mock()
+        source = NewsSource(collector)
+        source.cached('hn')
+        collector.get.assert_called_with('hn', cached_only=True)
+        source.refresh('hn')
+        collector.get.assert_called_with('hn', refresh=True)
 
-    def test_feed_errors_are_explicit_and_empty_feeds_are_available(self):
-        failures = [(TimeoutError(), "timeout"), (URLError(TimeoutError()), "timeout"),
-                    (HTTPError("https://example.com", 500, "private", {}, None), "http_error"),
-                    (b"x" * (MAX_FEED_BYTES + 1), "oversize"), (b"invalid", "invalid_feed")]
-        for failure, reason in failures:
-            with self.subTest(reason=reason):
-                effect = failure if isinstance(failure, Exception) else lambda *args, **kwargs: io.BytesIO(failure)
-                with patch("session_panel.workspace.sources.urlopen", side_effect=effect):
-                    result = NewsSource().get()
-                self.assertEqual(result["status"], "unavailable")
-                self.assertEqual({row["reason"] for row in result["sources"]}, {reason})
-        with patch("session_panel.workspace.sources.urlopen", side_effect=lambda *args, **kwargs: io.BytesIO(rss([]))):
-            result = NewsSource().get()
-        self.assertEqual((result["status"], result["items"]), ("available", []))
+    def test_lease_lifetime_is_forwarded_without_own_process(self):
+        collector = Mock()
+        collector.acquire.return_value = 'opaque-lease'
+        source = NewsSource(collector)
+        lease = source.acquire()
+        source.release(lease)
+        collector.release.assert_called_once_with('opaque-lease')
 
-    def test_same_source_concurrent_requests_share_refresh(self):
-        source = NewsSource()
-        def opener(*args, **kwargs):
-            time.sleep(0.02)
-            return io.BytesIO(rss([item()]))
-        with patch("session_panel.workspace.sources.urlopen", side_effect=opener) as mock_open, ThreadPoolExecutor(max_workers=2) as pool:
-            results = list(pool.map(lambda _: source.get(), range(2)))
-        self.assertEqual(mock_open.call_count, 3)
-        self.assertEqual(results[0]["items"], results[1]["items"])
+    def test_legacy_headlines_reads_only_cached_hn_projection(self):
+        from session_panel.integrations.desk import headlines
+        collector = Mock()
+        collector.cached.return_value = {'items': [{'title': 'Synthetic public', 'url': 'https://example.com/story'}]}
+        collector.refresh.return_value = {'items': []}
+        with patch('session_panel.integrations.desk.NewsSource', return_value=collector):
+            self.assertEqual(headlines(), [{'title': 'Synthetic public', 'url': 'https://example.com/story'}])
+            collector.get.assert_not_called()
+            collector.cached.assert_called_once_with('hn')
+            headlines(force=True)
+            collector.refresh.assert_called_once_with('hn')
 
 
 if __name__ == "__main__":

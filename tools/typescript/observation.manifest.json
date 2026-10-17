@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "compiler": {
+    "name": "typescript",
+    "version": "5.9.3"
+  },
+  "inputs": [
+    "web/workspace/observation.types.d.ts",
+    "web/workspace/observation.ts"
+  ],
+  "outputs": [
+    {
+      "emitted": "observation.js",
+      "path": "web/workspace/observation.js",
+      "url": "/observation.js"
+    }
+  ]
+}

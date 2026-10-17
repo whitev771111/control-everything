@@ -292,4 +292,6 @@ node tests/e2e/verify_control_everything.cjs --fixture
 
 Ctrl+C 停网关即可停本批查询，原 Claude/SSH/Zellij 对话继续运行。代码回退需与对应 profile 版本配套，先保留备份，再在另一个空数据目录恢复并验证；真实 MCP 回退仅撤销本 server 表并由用户重载。删除本地 `.venv` 或远端 reader `.venv` 前确认绝对路径和本批归属。保留研究、方案和实施报告；不删除远端 `.claude`、项目或 Workbench。已经切换的 pane 由用户自行切回。
 
-项目工作空间由 `web/workspace/project-space.js` 负责项目导航、概览和项目上下文展示，任务编辑与分页继续复用 `task-center.js` 的同一份事项。`attention` 查询范围在数据库分页前筛选人工状态为阻塞或待验收的事项；进程运行和普通待办不属于该范围。项目会话仅展示来源返回的目录归属样本；资料页仅显示登记目录，不扫描文档。`workspace.js` 负责装配，主题偏好只保存在浏览器本机。
+项目工作空间由 `web/workspace/project-space.js` 负责项目导航、全部事项、待处理和会话展示，任务编辑与分页继续复用 `task-center.js` 的同一份事项。`attention` 查询范围在数据库分页前筛选人工状态为阻塞或待验收的事项；进程运行和普通待办不属于该范围。`workspace.js` 负责装配。
+
+本机 Codex 项目适配器为 `sessions/codex_desktop.py`：只读显式来源及相邻桌面配置，先合并归属再分页，不按目录合并项目。旧 `codex_index.py` 与六字段、12 条接口保持兼容。内部完整快照不直接返回工作台首页；会话页通过 `/api/workspace/codex/sessions` 分页获取。外部项目使用来源实例与项目 ID 的稳定身份，只读刷新不写管理库；首次事项保存才在同一事务内保存项目、目录、规范 `codex` 来源标记和事项。标记复用已有管理表与备份闭包，schema 和 manifest 版本保持；手工项目保存拒绝该来源，已有外部项目也不得通过伪造来源覆盖。来源陈旧、读取不完整或归属冲突不得授权新关联，原事项状态编辑须保留。

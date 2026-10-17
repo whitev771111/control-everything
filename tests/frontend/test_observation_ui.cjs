@@ -74,7 +74,8 @@ test('profile capability setup keeps local registration navigation visible when 
   const node = id => {
     if (!nodes.has(id)) {
       const value = new Element(); value.after = () => {}; value.parentElement = { prepend() {} };
-      value.previousElementSibling = { querySelector: () => node('session-index-link') };
+      // The actual Codex heading now has local session buttons, with no anchor.
+      value.previousElementSibling = { querySelector: () => null };
       nodes.set(id, value);
     }
     return nodes.get(id);
@@ -88,6 +89,8 @@ test('profile capability setup keeps local registration navigation visible when 
   vm.runInContext(setup + '\nsetupProfile();', context);
   assert.equal(node('open-registration-settings').hidden, false);
   assert.equal(node('provider-sessions-link').hidden, true);
+  assert.ok(html.includes('data-go="codex-sessions/projectless"'));
+  assert.ok(html.includes('data-go="codex-sessions/unknown"'));
 });
 
 test('default path only reads cache, 2 second polling never overlaps and renders unknown session independently', async () => {

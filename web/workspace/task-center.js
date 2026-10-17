@@ -6,8 +6,12 @@
   const issues = { item_changed: '这条事项已被另一处修改。草稿已保留；请核对列表，取消后重新打开最新事项。',
     list_changed: '记录或项目登记已变化，已重新读取第一页。编辑草稿仍保留。',
     body_too_large: '提交超过 256 KiB，请缩短修改内容。', text_budget: '内容超过可编辑预算，请缩短修改内容。',
-    invalid_item: '请检查事项名称、项目、工具和状态。', session_not_in_sample: '所选会话暂不在当前样本中，请重新核对关联。',
-    session_project_mismatch: '所选会话与项目不匹配，请核对关联。' };
+    invalid_item: '请检查事项名称、项目、工具和状态。', session_not_in_sample: '所选会话当前不可核验，或来源暂不可用，请重新读取会话并核对关联。',
+    session_project_mismatch: '所选会话与项目不匹配，请重新选择关联会话或明确取消关联。',
+    codex_source_unavailable: 'Codex 来源暂不可用，当前不能建立新关联。',
+    codex_project_read_only: 'Codex 项目名称与目录请在 Codex 中维护。',
+    codex_binding_unavailable: 'Codex 来源当前不能建立新关联，请检查来源设置。',
+    session_not_found: '所选会话暂不可核验，请重新读取会话。' };
   const fields = ['project_id', 'provider_id', 'state', 'session_key'];
   const codepoints = text => [...text].length;
   const bytes = body => new TextEncoder().encode(JSON.stringify(body)).byteLength;
@@ -30,6 +34,8 @@
     let projects = [], sessions = [], page = null, request = 0, reading = false, writing = false;
     let original = null, editingId = null, initialTitle = '', initialFields = {};
     let contextKey = '', contextProject = '', quickProject = null;
+    const pickedSessions = new Map();
+    let desktopStatus = null;
     const heading = node('div', 'section-heading'), title = node('h2', '', '任务中心');
     heading.append(title, button('详细新建', () => open(null), 'button secondary'));
     const hint = node('p', 'section-note', ''); hint.hidden = true;
@@ -37,7 +43,7 @@
     const quickTitle = named('textarea', 'item-quick-title'); quickTitle.rows = 2; quickTitle.maxLength = 4000; quickTitle.required = true;
     quickTitle.placeholder = '写下一个具体的下一步（可不选项目）';
     const quickSave = node('button', 'button primary', '快速记录'); quickSave.type = 'submit';
-    quickFields.append(label('快速记录', quickTitle), quickSave); quick.append(quickFields);
+    quickFields.append(label('快速记录', quickTitle), quickSave, button('取消草稿', () => { quickTitle.value = ''; quickProject = null; hint.hidden = true; feedback(quickFeedback, ''); syncBusy(); }, 'text-button')); quick.append(quickFields);
     const quickFeedback = named('p', 'item-quick-feedback', 'feedback'); quickFeedback.setAttribute('role', 'status');
     const toolbar = node('div', 'task-toolbar item-toolbar');
     const scope = named('select', 'item-scope'), project = named('select', 'item-project-filter');
@@ -76,6 +82,8 @@
     function syncBusy() {
       quickFields.disabled = editorFields.disabled = writing || !canWrite();
       heading.lastElementChild.disabled = writing || !canWrite();
+      if (!bindingAllowed(quickProject ?? contextProject)) quickSave.disabled = true;
+      else quickSave.disabled = writing || !canWrite();
       refreshButton.disabled = reading;
       for (const control of [scope, project, provider, state]) control.disabled = reading;
       for (const control of list.querySelectorAll('button')) control.disabled = writing || !canWrite();
@@ -125,9 +133,27 @@
     function sessionOptions(selected = controls.session_key.value) {
       const select = controls.session_key, codex = controls.provider_id.value === 'codex';
       const rows = [['', codex ? '不关联会话' : '仅 Codex 支持当前关联']];
-      if (codex) for (const session of sessions) rows.push([session.session_key, `${session.thread_id.slice(0, 8)} · ${session.cwd}`]);
+      const available = new Map([...sessions.map(session => [session.session_key, session]), ...pickedSessions]);
+      if (codex) for (const session of available.values()) rows.push([session.session_key, session.title || `${session.thread_id.slice(0, 8)} · ${session.cwd}`]);
       if (codex && original?.session_key && !rows.some(([id]) => id === original.session_key)) rows.push([original.session_key, '保留原关联（当前不可核验）']);
       options(select, rows, codex ? selected : ''); select.disabled = !codex;
+    }
+    function bindingAllowed(projectId) {
+      const target = projects.find(row => row.id === projectId);
+      return !(target?.read_only || target?.source?.kind === 'codex') || (target.binding_available !== false && (!desktopStatus || desktopStatus === 'available'));
+    }
+    function checkBinding() {
+      const target = controls.project_id.value;
+      const associationChanged = editingId === null || ['project_id', 'provider_id', 'session_key'].some(key => controls[key].value !== initialFields[key]);
+      if (associationChanged && !bindingAllowed(target)) throw new Error(issues.codex_binding_unavailable);
+      const key = controls.session_key.value, selected = pickedSessions.get(key) || sessions.find(row => row.session_key === key);
+      if (!associationChanged || !key || !selected) return;
+      if (selected.binding_available === false || ['unknown', 'conflict'].includes(selected.assignment_state) || (pickedSessions.has(key) && desktopStatus && desktopStatus !== 'available')) throw new Error(issues.codex_binding_unavailable);
+      const targetProject = projects.find(row => row.id === target);
+      const externalTarget = targetProject?.read_only || targetProject?.source?.kind === 'codex';
+      // Projectless sessions in a manual project are checked by the service's directory ownership rule.
+      if ((selected.assignment_state === 'assigned' && selected.project_id !== target) ||
+          (selected.assignment_state === 'projectless' && externalTarget)) throw new Error(issues.session_project_mismatch);
     }
     function open(item = null) {
       if (writing) return;
@@ -150,6 +176,24 @@
       feedback(editorFeedback, ''); updateMeter(); syncBusy();
       // A modeless editor keeps pagination usable without replacing its draft.
       if (!dialog.open) dialog.show(); editorTitle.focus();
+    }
+    function openSession(session, projectId = null) {
+      if (writing || dialog.open || quickTitle.value) {
+        hint.textContent = '已有未保存的事项草稿，请先保存或取消，再关联会话。'; hint.hidden = false;
+        if (dialog.open) feedback(editorFeedback, hint.textContent, true);
+        else feedback(quickFeedback, hint.textContent, true);
+        return false;
+      }
+      if (!bindingAllowed(projectId) || session.binding_available === false || ['unknown', 'conflict'].includes(session.assignment_state) || (desktopStatus && desktopStatus !== 'available')) {
+        hint.textContent = issues.codex_binding_unavailable; hint.hidden = false; return false;
+      }
+      pickedSessions.set(session.session_key, { ...session });
+      open(); editorTitle.value = session.title || '未命名会话';
+      controls.project_id.value = projectId || ''; controls.provider_id.value = 'codex'; sessionOptions(session.session_key); updateMeter();
+      feedback(editorFeedback, '已填入会话信息，保存后才会建立事项关联。');
+      // Navigation moves the live editor into the visible project panel first.
+      void Promise.resolve().then(() => editorTitle.focus());
+      return true;
     }
     function body() {
       const changes = {};
@@ -187,7 +231,7 @@
       const payload = { title: quickTitle.value.trim() };
       const targetProject = quickProject ?? contextProject;
       if (targetProject) payload.project_id = targetProject;
-      try { validate(payload, payload.title, 2000); }
+      try { if (!bindingAllowed(targetProject)) throw new Error(issues.codex_binding_unavailable); validate(payload, payload.title, 2000); }
       catch (error) { feedback(quickFeedback, `${error.message} 输入已保留。`, true); return; }
       await write(payload, quickFeedback, () => { quickTitle.value = ''; quickProject = null; hint.hidden = true; });
     });
@@ -196,7 +240,7 @@
       event.preventDefault(); if (writing) return;
       const payload = body();
       if (editingId !== null && !Object.keys(payload.changes).length) { feedback(editorFeedback, '没有修改；原值已保留。'); return; }
-      try { validate(payload, editingId === null ? payload.title : payload.changes.title, Math.max(2000, codepoints(original?.title ?? ''))); }
+      try { checkBinding(); validate(payload, editingId === null ? payload.title : payload.changes.title, Math.max(2000, codepoints(original?.title ?? ''))); }
       catch (error) { feedback(editorFeedback, `${error.message} 输入已保留。`, true); return; }
       await write(payload, editorFeedback, () => { dialog.close(); original = null; editingId = null; });
     });
@@ -204,9 +248,14 @@
     editorTitle.addEventListener('input', updateMeter);
     for (const control of Object.values(controls)) control.addEventListener('change', updateMeter);
     controls.provider_id.addEventListener('change', () => { sessionOptions(); updateMeter(); });
+    controls.project_id.addEventListener('change', () => {
+      try { checkBinding(); feedback(editorFeedback, ''); }
+      catch (error) { feedback(editorFeedback, `${error.message} 原关联已保留。`, true); }
+    });
     for (const control of [scope, project, provider, state]) control.addEventListener('change', () => refresh(0));
     function update(snapshot) {
       projects = snapshot.projects.items; sessions = snapshot.sessions.available ? snapshot.sessions.items : [];
+      desktopStatus = snapshot.codex_desktop?.status || null;
       const selected = project.value;
       options(project, [['', '全部项目'], ...projects.map(row => [row.id, `${row.name}${row.archived ? '（已归档）' : ''}`])], selected);
       if (selected && !projects.some(row => row.id === selected)) { const option = node('option', '', `未登记项目 · ${selected}`); option.value = selected; project.append(option); project.value = selected; }
@@ -237,7 +286,7 @@
       quickTitle.placeholder = projectId ? '写下这个项目的下一步' : '写下一个具体的下一步';
       return refresh(0);
     }
-    return { update, refresh, open, setContext,
+    return { update, refresh, open, openSession, setContext,
       filterState(value) { state.value = value; return refresh(0); },
       filterProject(id) { return setContext({ projectId: id }); } };
   }

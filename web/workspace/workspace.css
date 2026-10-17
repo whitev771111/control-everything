@@ -612,3 +612,10 @@ input,select,textarea { border-radius:7px; padding:10px 12px; }
 #project-space .item-row { padding:20px; margin:12px 0; border:1px solid #31455d; border-radius:9px; background:linear-gradient(110deg,#1b2e43,#172536); }
 #project-space .item-title-copy { font-size:16px; font-weight:600; }
 #project-space .item-row .task-actions { flex-direction:row; }
+.session-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:18px 0; }
+.session-toolbar [aria-pressed="true"] { color:var(--accent); border-color:var(--accent); background:var(--soft); }
+.codex-session-row { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:18px 0; }
+.session-copy { min-width:0; flex:1; }
+.session-copy h3,.session-copy .context-path { overflow-wrap:anywhere; }
+.codex-session-row > button { flex-shrink:0; }
+@media(max-width:540px) { .codex-session-row { align-items:flex-start; flex-direction:column; gap:8px; }.project-heading { flex-wrap:wrap; } }

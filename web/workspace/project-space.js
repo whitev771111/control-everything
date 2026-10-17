@@ -2,8 +2,9 @@
 'use strict';
 (() => {
   const tabs = { tasks: '全部事项', attention: '待处理', sessions: '会话' };
-  function create({ root, navigation, taskRoot, tasks, navigate, manage }) {
+  function create({ root, navigation, taskRoot, tasks, navigate, manage, readSessions, onSession }) {
     let snapshot = null, selected = null, tab = 'tasks', view = 'overview';
+    let sessionScope = 'active', sessionKey = '', sessionPage = null, sessionRequest = 0, sessionReading = false, sessionError = '', sampleKey = '';
     const taskHome = taskRoot.parentElement;
     const node = (tag, cls, text) => {
       const value = ['svg', 'rect'].includes(tag) ? document.createElementNS('http://www.w3.org/2000/svg', tag) : document.createElement(tag);
@@ -74,13 +75,76 @@
       root.append(grid);
       const actions = node('div', 'form-actions');
       actions.append(button('未归类事项', () => navigate('global')), button('管理与归档', () => navigate('projects')));
+      actions.append(button('未归类会话', () => navigate('codex-sessions/projectless')), button('待核对会话', () => navigate('codex-sessions/unknown')));
       root.append(actions);
+    }
+    function changeSessions(scope) {
+      sessionScope = scope; sessionKey = ''; sessionPage = null; sessionError = ''; sessionRequest++; render();
+    }
+    async function loadSessions(offset = 0) {
+      const current = ++sessionRequest, key = sessionKey;
+      sessionReading = true; sessionError = ''; render();
+      try {
+        const result = await readSessions({ ...(view === 'project' ? { project_id: selected } : {}), scope: sessionScope, offset, limit: 20 });
+        if (current !== sessionRequest || key !== sessionKey) return;
+        if (offset > 0 && sessionPage && (result.source_id !== sessionPage.source_id || result.revision !== sessionPage.revision)) {
+          sessionReading = false; return loadSessions(0);
+        }
+        sessionPage = result;
+      } catch (error) {
+        if (current !== sessionRequest) return;
+        sessionError = error.message || '读取失败';
+      } finally {
+        if (current === sessionRequest) { sessionReading = false; render(); }
+      }
+    }
+    function renderSessions(item = null) {
+      const key = JSON.stringify([item?.id || '', sessionScope]);
+      if (key !== sessionKey) {
+        sessionKey = key; sessionPage = null; sessionError = ''; sessionReading = false;
+        if (readSessions) { void loadSessions(); return; }
+      }
+      if (!readSessions) { root.append(blank('尚未接入可用的会话来源。')); return; }
+      const toolbar = node('div', 'session-toolbar');
+      if (item) for (const [scope, label] of [['active', '未归档'], ['archived', '已归档']]) {
+        const choice = button(label, () => changeSessions(scope), 'button secondary');
+        choice.setAttribute('aria-pressed', String(sessionScope === scope)); toolbar.append(choice);
+      }
+      const retry = button('重新读取会话', () => loadSessions(0)); retry.disabled = sessionReading; toolbar.append(retry); root.append(toolbar);
+      const available = sessionPage?.status === 'available' && sessionPage.complete !== false && !sessionError && !sessionReading && (!item || item.binding_available !== false) && (!snapshot?.codex_desktop || snapshot.codex_desktop.status === 'available');
+      const status = node('p', 'section-note session-source-status'); status.setAttribute('role', 'status');
+      status.textContent = sessionError ? `会话读取失败：${sessionError}。保留已读内容，暂不能新关联。` : sessionReading ? '正在读取会话…' : sessionPage?.status === 'stale' ? '来源暂不可用，显示上次读取内容；暂不能新关联。' : sessionPage?.status === 'not_configured' ? '尚未启用 Codex 项目与会话来源。' : sessionPage?.status !== 'available' ? '会话来源暂不可用，请检查来源设置。' : sessionPage.complete === false ? '来源读取受限，显示部分结果；暂不能新关联。' : `${sessionPage.total} 条会话 · 活动与完成状态未知`;
+      root.append(status);
+      if (sessionScope === 'projectless') root.append(node('p', 'section-note', '这些会话在 Codex 中明确未分配项目。'));
+      if (sessionScope === 'unknown') root.append(node('p', 'section-note', '这些会话的项目归属未知或有冲突，需要在 Codex 中核对。'));
+      for (const session of sessionPage?.items || []) {
+        const row = node('article', 'context-row codex-session-row'), copy = node('div', 'session-copy');
+        copy.append(node('h3', '', session.title || '未命名会话'));
+        if (session.title_truncated) copy.append(node('span', 'badge', '标题节选'));
+        const timestamp = Date.parse(session.updated_at);
+        const time = Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '时间未知';
+        copy.append(node('p', 'section-note', `${time} · ${session.archived ? '已归档' : '未归档'} · 活动未知`), node('p', 'context-path', session.cwd || '目录未知'));
+        const choose = button('关联为新事项', () => onSession?.(session, item?.id || null), 'button secondary');
+        choose.disabled = !available || session.binding_available === false || ['unknown', 'conflict'].includes(session.assignment_state);
+        row.append(copy, choose); root.append(row);
+      }
+      if (sessionPage && !sessionPage.items.length) root.append(blank('当前范围没有会话。'));
+      if (sessionPage) {
+        const pager = node('div', 'pager'), previous = button('上一页', () => loadSessions(Math.max(0, sessionPage.offset - sessionPage.limit))), next = button('下一页', () => loadSessions(sessionPage.offset + sessionPage.limit));
+        previous.disabled = sessionReading || !!sessionError || sessionPage.offset === 0;
+        next.disabled = sessionReading || !!sessionError || sessionPage.status !== 'available' || sessionPage.offset + sessionPage.limit >= sessionPage.total;
+        pager.append(previous, node('span', '', `${sessionPage.total ? sessionPage.offset + 1 : 0}–${Math.min(sessionPage.offset + sessionPage.items.length, sessionPage.total)} / ${sessionPage.total} 条`), next); root.append(pager);
+      }
+      if (!item?.read_only && item?.source?.kind !== 'codex') root.append(button('来源设置', () => navigate('settings')));
     }
     function renderProject() {
       const item = project();
       if (!item) { root.append(blank(snapshot ? '项目已不存在，请从左侧重新选择。' : '正在读取项目…')); return; }
       const header = node('div', 'section-heading');
-      header.append(node('h2', '', item.name), button('项目设置', () => manage(item)));
+      header.append(node('h2', '', item.name));
+      if (item.read_only || item.source?.kind === 'codex') {
+        header.append(node('span', 'badge', 'Codex · 只读'), button('来源设置', () => navigate('settings')));
+      } else header.append(button('项目设置', () => manage(item)));
       header.setAttribute('class', 'section-heading project-heading');
       root.append(header);
       const navigation = node('nav', 'project-tabs'); navigation.setAttribute('aria-label', '项目内容');
@@ -94,15 +158,7 @@
         root.append(taskRoot); taskRoot.hidden = false;
         tasks.setContext({ projectId: item.id, scope: tab === 'attention' ? 'attention' : 'all' });
       } else if (tab === 'sessions') {
-        root.append(node('p', 'section-note', '当前接入来源中，工作目录属于本项目的会话。'));
-        for (const hit of item.sessions || []) {
-          const session = snapshot.sessions.items.find(row => row.session_key === hit.session_key);
-          const row = node('article', 'context-row');
-          row.append(node('h3', '', session?.title || hit.tool), node('p', 'context-path', hit.place));
-          root.append(row);
-        }
-        if (!item.sessions?.length) root.append(blank(snapshot.sessions.available ? '当前样本中没有项目会话。' : '尚未接入可用的会话来源。'));
-        root.append(button('工具与接入', () => navigate('agents')));
+        renderSessions(item);
       }
     }
     function render() {
@@ -115,6 +171,9 @@
       root.replaceChildren(); renderNavigation();
       if (view === 'overview') renderOverview();
       else if (view === 'project') renderProject();
+      else if (view === 'codex-sessions') {
+        root.append(node('h2', '', sessionScope === 'unknown' ? '待核对会话' : '未归类会话')); renderSessions();
+      }
       else if (['tasks', 'attention', 'global'].includes(view)) {
         root.append(taskRoot); taskRoot.hidden = false;
         tasks.setContext({ scope: view === 'attention' ? 'attention' : view === 'global' ? 'global' : 'all' });
@@ -126,9 +185,16 @@
     }
     return {
       open,
-      route(id, next) { selected = id; tab = Object.hasOwn(tabs, next) ? next : 'tasks'; },
-      show(next) { view = next; root.hidden = !['overview', 'project', 'tasks', 'attention', 'global'].includes(view); render(); },
-      update(value) { snapshot = value; render(); },
+      route(id, next) { if (selected !== id || !['active', 'archived'].includes(sessionScope)) { sessionScope = 'active'; sessionKey = ''; sessionRequest++; } selected = id; tab = Object.hasOwn(tabs, next) ? next : 'tasks'; },
+      routeSessions(scope) { if (sessionScope !== scope) { sessionKey = ''; sessionRequest++; } sessionScope = scope === 'unknown' ? 'unknown' : 'projectless'; },
+      show(next) { if (view !== next) { sessionRequest++; sessionKey = ''; } view = next; root.hidden = !['overview', 'project', 'tasks', 'attention', 'global', 'codex-sessions'].includes(view); render(); },
+      update(value) {
+        const stamp = JSON.stringify([value.codex_desktop?.source_id, value.codex_desktop?.sampled_at, value.codex_desktop?.status]);
+        const changed = sampleKey !== stamp; sampleKey = stamp;
+        snapshot = value;
+        if (changed && sessionKey && readSessions && (view === 'codex-sessions' || (view === 'project' && tab === 'sessions'))) void loadSessions(0);
+        else render();
+      },
     };
   }
   function prepareChrome() {

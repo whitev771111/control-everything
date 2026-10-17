@@ -44,6 +44,7 @@ Object.assign(viewCopy, {
   overview: ['总览', '工作总览', '', ''], tasks: ['全部事项', '全部事项', '', ''],
   attention: ['待处理', '待处理', '', ''], global: ['未归类事项', '未归类事项', '', ''],
   project: ['项目', '项目工作空间', '', ''], projects: ['项目管理', '项目管理', '', ''],
+  'codex-sessions': ['Codex 会话', 'Codex 会话', '', ''],
   agents: ['工具与接入', '工具与接入', '', ''], usage: ['用量与额度', '用量与额度', '账户额度，直接读取。', ''],
   news: ['新闻', '新闻', '', ''], settings: ['设置与导入', '设置与导入', '', ''],
 });
@@ -113,6 +114,10 @@ function post(path, body, options = {}) {
 }
 
 function showView(view) {
+  if (view.startsWith('codex-sessions/')) {
+    app.sessionRoute = view; app.projectSpace?.routeSessions(view.split('/')[1]); view = 'codex-sessions';
+  }
+  if (view === 'codex-sessions' && app.sessionRoute) app.projectSpace?.routeSessions(app.sessionRoute.split('/')[1]);
   if (view.startsWith('project/')) { app.projectRoute = view; view = 'project'; }
   if (view === 'project' && app.projectRoute) {
     const [, id, tab] = app.projectRoute.split('/');
@@ -149,7 +154,7 @@ function showView(view) {
     app.projectSpace.show(view);
   }
   if (view !== 'settings') $('registration-settings').open = false;
-  history.replaceState(null, '', `#${view === 'project' ? (app.projectRoute || view) : view}`);
+  history.replaceState(null, '', `#${view === 'project' ? (app.projectRoute || view) : view === 'codex-sessions' ? (app.sessionRoute || 'codex-sessions/projectless') : view}`);
 }
 function renderStats() {
   const snapshot = app.snapshot;
@@ -189,10 +194,12 @@ function renderProjects() {
     row.append(el('span', 'project-mark', String(index + 1).padStart(2, '0')), copy, measure); root.append(row);
     if (app.profileMode) {
       const actions = el('div', 'project-actions');
-      actions.append(action('编辑项目 / 来源', () => openProject(project)), action('人工记录与历史', () => { showView('projects'); openManual(project); }), action('查看项目事项', () => {
+      if (project.read_only || project.source?.kind === 'codex') actions.append(el('span', 'badge', 'Codex · 只读'), action('来源设置', () => showView('settings')));
+      else actions.append(action('编辑项目 / 来源', () => openProject(project)), action('人工记录与历史', () => { showView('projects'); openManual(project); }), action(project.archived ? '恢复项目' : '归档项目', () => archiveProject(project)));
+      actions.append(action('查看项目事项', () => {
         if (app.projectSpace) app.projectSpace.open(project.id, 'tasks');
         else { showView('tasks'); app.taskCenter?.filterProject(project.id); }
-      }), action(project.archived ? '恢复项目' : '归档项目', () => archiveProject(project)));
+      }));
       row.append(actions);
       copy.append(el('p', '', taskSummary(project.task_counts)), el('p', '', observationSummary(project.observation)));
     }
@@ -431,7 +438,6 @@ function setupProfile() {
   document.querySelector('[data-view="runs"]').hidden = true;
   document.querySelector('.sidebar-links').replaceChildren(el('p', 'nav-label', '项目进度'));
   $('provider-sessions-link').hidden = !(app.capabilities.remote_sessions || app.capabilities.workbench);
-  document.querySelector('#sessions-status').previousElementSibling.querySelector('a').hidden = !app.capabilities.remote_sessions;
   for (const [after, id] of [['tasks-list', 'tasks-pager'], ['todos-list', 'todos-pager']]) { const root = el('div', 'pager'); root.id = id; $(after).after(root); }
   const scope = el('select'); scope.id = 'task-scope'; scope.setAttribute('aria-label', '项目登记状态');
   fillOptions(scope, [['all', '全部项目记录'], ['active', '活动项目'], ['archived', '归档项目'], ['orphan', '未登记项目']], 'all');
@@ -466,6 +472,11 @@ function setupTaskCenter() {
     root: $('project-space'), navigation: $('project-navigation'), taskRoot: $('task-center-root'), tasks: app.taskCenter,
     navigate: showView,
     manage: project => { openProject(project); },
+    readSessions: params => api(`/api/workspace/codex/sessions?${new URLSearchParams(params)}`),
+    onSession: (session, projectId) => {
+      if (!app.taskCenter.openSession(session, projectId)) return;
+      if (projectId) app.projectSpace.open(projectId, 'tasks'); else showView('tasks');
+    },
   });
   for (const name of ['tasks', 'attention', 'projects']) document.querySelector(`[data-view="${name}"]`).hidden = true;
   showView(app.view);
@@ -541,6 +552,7 @@ function showProjectDialog() {
   if (!dialog.open) dialog.showModal();
 }
 function openProject(project = null, restoreId = null) {
+  if (project?.read_only || project?.source?.kind === 'codex') { showView('settings'); return; }
   $('manual-panel').hidden = true;
   showProjectDialog();
   clearFieldErrors('project-feedback');

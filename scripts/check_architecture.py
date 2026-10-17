@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-ROOT_FILES = {'.gitattributes', '.gitignore', 'AGENTS.md', 'CONTRIBUTING.md', 'README.md',
+ROOT_FILES = {'.gitattributes', '.gitignore', 'AGENTS.md', 'README.md',
               'requirements.txt', 'rust-toolchain.toml', 'pyproject.toml', 'MANIFEST.in', 'setup.py'}
 PACKAGE_FILES = {'__init__.py', 'paths.py', 'input_validation.py', 'gateway.py',
                  'profile.py', 'native_processes.py', 'mcp_stdio.py'}
@@ -44,8 +44,10 @@ def ownership_error(value):
         return None if section == 'observer' and path.suffix in {'.rs', '.toml', '.lock', '.json'} else 'unknown_native_owner'
     if top == 'scripts':
         return None if len(parts) == 2 and path.suffix in {'.py', '.cjs', '.ps1'} else 'scripts_are_development_entries'
+    if top == 'guide':
+        return None if value in {'guide/usage.md', 'guide/integrations.md', 'guide/windows.md'} else 'unknown_public_guide'
     if top == '.github':
-        return None if value in {'.github/CODEOWNERS', '.github/pull_request_template.md'} or (
+        return None if value in {'.github/CODEOWNERS', '.github/pull_request_template.md', '.github/CONTRIBUTING.md'} or (
             section == 'workflows' and len(parts) == 3 and path.suffix in {'.yml', '.yaml'}) else 'unknown_repository_automation'
     if value in {'.cargo/config.toml', '.codex/config.toml.example'}:
         return None

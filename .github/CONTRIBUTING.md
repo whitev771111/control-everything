@@ -1,6 +1,8 @@
 # 参与开发
 
-仓库协作约定见 [AGENTS.md](AGENTS.md)。本指南约束共同交付结果，不要求成员使用同一助手、模型或个人技能。
+仓库协作约定见 [AGENTS.md](../AGENTS.md)。本指南约束共同交付结果，不要求成员使用同一助手、模型或个人技能。
+
+公开使用说明放在 `guide/`，贡献指南放在 `.github/CONTRIBUTING.md`；本机开发记录仍只放 ignored `docs/`。下文命令均从仓库根目录执行。
 
 ## 功能目录与新增代码归属
 
@@ -224,7 +226,7 @@ python scripts/check_repository.py changes --base <base-commit> --head <head-com
 未提交文件用严格的 `release` 模式，不虚构 changes 提交范围。手写一个 ignored JSON 清单，`files` 列出本次准备发布的全部相对文件路径，`excluded` 明确记录未纳入的路径（可为空）：
 
 ```json
-{"files": ["AGENTS.md", "CONTRIBUTING.md"], "excluded": []}
+{"files": ["AGENTS.md", ".github/CONTRIBUTING.md"], "excluded": []}
 ```
 
 ```powershell
@@ -250,3 +252,46 @@ python scripts/check_repository.py release --manifest work/checks/candidates.jso
 5. 读取 effective ruleset、实际 PR checks 和 CI 未通过时的受阻状态，才可记录“远端门禁已启用”。不能从本文或 CODEOWNERS 推断远端已经配置。
 
 采用 GitHub 原生 [贡献指南](https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/setting-guidelines-for-repository-contributors)、[分支规则](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets) 和官方 [Gitleaks CLI](https://github.com/gitleaks/gitleaks)。Actions 直接依赖固定完整 SHA；未采用仍在预览的 actions.lock，不声称具有传递依赖锁定。
+
+## 源码与测试目录
+
+后端生产源码在 `src/session_panel`，业务按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 组织，安装维护归 `installation`，Win32 适配归 `platform`。前端使用原生 HTML/CSS 和普通脚本，唯一资源源码放在 `web/sessions`、`web/progress`、`web/workspace`，构建 wheel 时按 HTTP 白名单收进包内；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+
+本机观察与每日资讯分别以 `web/workspace/observation.ts`、`news.ts` 和邻近类型声明为手写源码，两个 JS 为同一固定 TypeScript 5.9.3 的生成物；其他模块继续手写 JS。修改对应 TS 后运行 `node scripts/build_observation.cjs build` 或 `node scripts/build_news.cjs build`，连同生成 JS 提交，再用对应 `check` 比较完整字节；不要手改生成物。Node24/项目内固定工具的显式准备、缺工具失败与全部验证命令见[观察前端 TypeScript 开发](CONTRIBUTING.md#观察前端-typescript-开发)。原 URL 和普通脚本相对顺序保留，新 `/news.js` 在页面主脚本前加载，不增加常驻 Node 服务。
+
+测试按 `tests/backend`（Python）、`tests/frontend`（纯 Node 合同）、`tests/e2e`（浏览器/协议 harness）和 `tests/fixtures`（合成替身）归类。新增功能放入所属功能目录，测试按类型放置；详细职责与验证命令见 [参与开发](CONTRIBUTING.md)。原有 `python -m session_panel.gateway` 等外部 CLI 继续使用，内部代码直接导入功能包实现。
+
+公开接入样例放在 `examples/integrations`，旧格式导入样例放在 `examples/legacy`；TypeScript、架构检查和远端 reader 的开发配置分别放在 `tools` 的对应目录。根目录保留项目入口说明、共同依赖及工具自动发现需要的配置；`src/session_panel` 是后端 Python 包名，功能继续按所属子包开发，产品显示名称不改变导入和 CLI 合同。实际 profile、数据库和日志不属于源码树，不随目录整理搬迁。
+
+多人开发同时检查文件归属与 Python 依赖方向；新增构建单元须连同规则和指南审查。HTTP 网关和页面主脚本负责装配，完整业务处理及展示放入所属模块。检查命令、允许依赖和合并要求见[参与开发](CONTRIBUTING.md#模块边界与新增代码)。
+
+| 组成 | 使用边界 |
+|---|---|
+| Python 管理后端与前端资源 | 基础管理必需，负责项目、事项、进度与管理数据 |
+| Rust 原生观察后台 | Windows 标准安装必带；源码/wheel 缺少原生程序或运行故障时明确显示受限，基础管理仍可用 |
+| Codex 元数据库、项目文档来源 | 用户按需登记；不配置也可人工管理，不自动读取私人来源 |
+| SSH/远端 reader、终端、工作台、个人启动器 | 按需接入；终端依赖远端，工作台依赖终端，启动器可独立启用 |
+| 公开资讯与官方额度 | 资讯按源容忍超时；额度仅显式查询，未配置账号不影响管理 |
+| Node、TypeScript、Rust 编译器、浏览器测试工具 | 开发或验证工具，不属于普通用户的业务依赖 |
+
+当前产品不开放 Agent 执行、审批或费用试跑。Orca 不属于产品运行依赖；仓库中的 `scripts/orca_preflight.py` 及其测试仅为未接入工作台的历史离线预检工具。
+
+公开接入样例放在 `examples/integrations`；`examples/legacy` 的 [项目登记样例](../examples/legacy/progress-registry.example.json) 和 [人工进度样例](../examples/legacy/progress-manual.example.json) 说明仍受支持的旧记录格式，供显式导入时参考。正常使用的数据保存在所选 profile；整理样例不会移动源码旁已有的私人文件。固定 TypeScript 配置与编译器清单位于 `tools/typescript`，远端正文 reader 的依赖单独位于 `tools/remote-reader/requirements.txt`；本机依赖仍使用根 `requirements.txt`。
+
+## 验证与撤销
+
+基础开发验证使用 Windows、Python 3.12、Node.js 24；无需作者资源。先按[参与开发](CONTRIBUTING.md#观察前端-typescript-开发)准备共享固定编译器，再运行两模块 check 和全部 Node 合同。浏览器 harness 的 Playwright/Edge 安装与 fixture 执行见 [参与开发](CONTRIBUTING.md)。以下浏览器命令由验收负责人执行，结果与单元测试分别记录：
+
+```powershell
+& '.venv/Scripts/python.exe' -m unittest discover -s tests -v
+node scripts/build_observation.cjs check
+node scripts/build_news.cjs typecheck
+node scripts/build_news.cjs check
+node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs tests/frontend/test_news_ui.cjs tests/frontend/test_news_build.cjs tests/frontend/test_quota_ui.cjs
+node tests/e2e/verify_workspace.cjs --fixture
+node tests/e2e/verify_session_panel.cjs --fixture
+```
+
+真实 SSH 补绑、独立 SDK 合成链/空结果对照、选中真实 UUID 分页、Edge 桌面/360px、真实 focus 和 Codex 加载由协调者分别承接。fixture 自证不代表这些已验收；详细状态与所有失败保留在本地开发记录及 ignored `work/`，不提交仓库。
+
+Ctrl+C 停网关即可停本批查询，原 Claude/SSH/Zellij 对话继续运行。代码回退需与对应 profile 版本配套，先保留备份，再在另一个空数据目录恢复并验证；真实 MCP 回退仅撤销本 server 表并由用户重载。删除本地 `.venv` 或远端 reader `.venv` 前确认绝对路径和本批归属。保留研究、方案和实施报告；不删除远端 `.claude`、项目或 Workbench。已经切换的 pane 由用户自行切回。

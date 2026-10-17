@@ -1,6 +1,7 @@
 """Pure path contracts for checkouts, ordinary wheels, and fixed products."""
 
 import json
+import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -69,8 +70,12 @@ class PathsTests(TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             marker = root / "product.json"
+            native = root / 'native/observer/manifest.json'
+            native.parent.mkdir(parents=True)
+            native.write_bytes(b'original native manifest')
             manifest = {"schema": 1, "product": "session-panel", "target": "windows-x86_64",
-                        "native": {"relative": "native/observer/session-panel-observer.exe"}}
+                        "native": {"relative": "native/observer/session-panel-observer.exe",
+                                   "manifest_sha256": hashlib.sha256(native.read_bytes()).hexdigest()}}
             marker.write_text(json.dumps(manifest), encoding="utf-8")
             with patch.object(paths, "__file__", str(root / "runtime/Lib/site-packages/session_panel/paths.py")), \
                     patch.object(paths.sys, "executable", str(root / "runtime/python.exe")):
@@ -87,6 +92,31 @@ class PathsTests(TestCase):
                 with patch.object(paths, "__file__", str(root / "elsewhere/session_panel/paths.py")), \
                         self.assertRaises(ValueError):
                     paths.observer_install_dir()
+
+    def test_self_consistent_replaced_native_pair_cannot_bypass_product_pin(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            directory = root / 'native/observer'
+            directory.mkdir(parents=True)
+            binary = directory / 'session-panel-observer.exe'
+            native = directory / 'manifest.json'
+            binary.write_bytes(b'original binary')
+            native.write_text(json.dumps({'sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}), encoding='utf-8')
+            document = {'schema': 1, 'product': 'session-panel', 'target': 'windows-x86_64',
+                        'native': {'relative': 'native/observer/session-panel-observer.exe',
+                                   'manifest_sha256': hashlib.sha256(native.read_bytes()).hexdigest()}}
+            (root / 'product.json').write_text(json.dumps(document), encoding='utf-8')
+            binary.write_bytes(b'replaced binary')
+            native.write_text(json.dumps({'sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}), encoding='utf-8')
+            pipe = object.__new__(observer_pipe.WindowsPipe)
+            pipe.close, pipe.api = Mock(), Mock()
+            with patch.object(paths, '__file__', str(root / 'runtime/Lib/site-packages/session_panel/paths.py')), \
+                    patch.object(paths.sys, 'executable', str(root / 'runtime/python.exe')), \
+                    self.assertRaises(observer_pipe.PipeError) as caught:
+                pipe.connect()
+            self.assertEqual(caught.exception.reason, 'protocol_mismatch')
+            pipe.api.CreateFileW.assert_not_called()
+            pipe.api.process.assert_not_called()
 
     def test_missing_native_and_invalid_marker_fail_before_process_access(self):
         pipe = object.__new__(observer_pipe.WindowsPipe)

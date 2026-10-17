@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from session_panel.paths import web_root
+from session_panel.paths import web_root, product_version_dir
+from session_panel.installation.registry import ProductContext, register_http, default_api, RegistryError
+from session_panel.installation.manifest import ManifestError
+from session_panel.platform.windows_installation import InstallationError
 from urllib.parse import parse_qs, urlsplit
 
 from session_panel.sessions.source import HOST, PORT, canonical_uuid
@@ -683,23 +686,36 @@ class PanelServer(ThreadingHTTPServer):
     def start_observer(self):
         observer = self.__dict__.get("observer")
         if observer is not None:
-            observer.start()
+            version = product_version_dir()
+            if version is None:
+                observer.start()
+            else:
+                context = ProductContext.load(version)
+                api = default_api()
+                with api.install_mutex(context.install_root):
+                    self._installation_lease = register_http(context, self.profile.data_dir, api=api)
+                    observer.start()
 
     def server_close(self):
-        source = self.__dict__.get('news_source')
-        lease = self.__dict__.pop('_news_lease', None)
-        if source is not None and lease is not None:
-            source.release(lease)
-        observer = self.__dict__.get("observer")
-        if observer is not None:
-            observer.close_client()
-        execution = getattr(self, "execution", None)
-        self.execution = None
         try:
+            source = self.__dict__.get('news_source')
+            lease = self.__dict__.pop('_news_lease', None)
+            if source is not None and lease is not None:
+                source.release(lease)
+            observer = self.__dict__.get("observer")
+            if observer is not None:
+                observer.close_client()
+            execution = getattr(self, "execution", None)
+            self.execution = None
             if execution is not None:
                 execution.close()
         finally:
-            super().server_close()
+            try:
+                installation = self.__dict__.pop('_installation_lease', None)
+                if installation is not None:
+                    installation.close()
+            finally:
+                super().server_close()
 
     def server_bind(self):
         if sys.platform == "win32":
@@ -767,19 +783,23 @@ def build_profile_server(data_dir=None, port=8766, *, quota_source=None, news_so
 
 
 def serve(data_dir=None, port=8766):
+    server = None
     try:
         server = build_profile_server(data_dir, port)
-    except (OSError, ValueError, WorkspaceError) as error:
-        print(f"工作台启动失败（{type(error).__name__}）。请检查profile配置或端口 {port}，可显式选择另一端口。", file=sys.stderr)
-        return 1
-    print(f"工作台：http://{HOST}:{port}/workspace；项目进度：http://{HOST}:{port}/progress；profile：{server.profile.data_dir}。旧记录可在来源设置中显式导入；Ctrl+C 停止。", file=sys.stderr)
-    server.start_observer()
-    try:
+        server.start_observer()
+        print(f"工作台：http://{HOST}:{port}/workspace；项目进度：http://{HOST}:{port}/progress；profile：{server.profile.data_dir}。旧记录可在来源设置中显式导入；Ctrl+C 停止。", file=sys.stderr)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    except (RegistryError, ManifestError, InstallationError) as error:
+        print(f"安装版本无法启动（{error.reason}）。请等待安装维护结束；若文件损坏，请保留资料并用可信安装器修复此版本。", file=sys.stderr)
+        return 1
+    except (OSError, ValueError, WorkspaceError) as error:
+        print(f"工作台启动失败（{type(error).__name__}）。请检查profile配置或端口 {port}，可显式选择另一端口。", file=sys.stderr)
+        return 1
     finally:
-        server.server_close()
+        if server is not None:
+            server.server_close()
     return 0
 
 

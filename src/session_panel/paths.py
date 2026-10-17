@@ -1,10 +1,12 @@
 """Explicit checkout, installed resource, and user data locations."""
 
 from importlib.resources import files
+import hashlib
 import json
 import os
 from pathlib import Path
 import sys
+import re
 
 
 def source_root():
@@ -43,26 +45,54 @@ def execution_root():
     return root if root is not None else Path(__file__).resolve().parent
 
 
-def observer_install_dir():
-    root = source_root()
-    if root is not None:
-        return root / "work" / "native-observer" / "install"
-    runtime = Path(sys.executable).resolve().parent
+def _unlinked(path):
+    path = Path(path).absolute()
+    for item in (path, *path.parents):
+        if item.is_symlink() or item.is_junction():
+            raise ValueError("invalid_product_location")
+    return path
+
+
+def product_version_dir():
+    """Locate only the fixed product; the installation layer validates its full closure."""
+    runtime = Path(sys.executable).absolute().parent
     product = runtime.parent
     marker = product / "product.json"
-    if not marker.exists():
+    if not marker.exists() and not marker.is_symlink():
         return None
-    package = Path(__file__).resolve().parent
+    package = Path(__file__).absolute().parent
     if (runtime.name != "runtime" or package != runtime / "Lib" / "site-packages" / "session_panel"
-            or marker.is_symlink() or marker.is_junction() or marker.stat().st_size > 1024 * 1024):
+            or marker.stat().st_size > 16 * 1024 * 1024):
         raise ValueError("invalid_product_location")
-    manifest = json.loads(marker.read_text(encoding="utf-8"))
-    if (not isinstance(manifest, dict) or type(manifest.get("schema")) is not int
-            or manifest["schema"] != 1 or manifest.get("product") != "session-panel"
-            or manifest.get("target") != "windows-x86_64"
-            or not isinstance(manifest.get("native"), dict)
-            or manifest["native"].get("relative") != "native/observer/session-panel-observer.exe"):
+    _unlinked(marker)
+    _unlinked(package)
+    _unlinked(sys.executable)
+    return product
+
+
+def observer_install_dir():
+    product = product_version_dir()
+    if product is None:
+        root = source_root()
+        return root / "work" / "native-observer" / "install" if root is not None else None
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("invalid_product_manifest")
+            result[key] = value
+        return result
+    document = json.loads((product / "product.json").read_text(encoding="utf-8"), object_pairs_hook=pairs)
+    if (type(document) is not dict or type(document.get("schema")) is not int
+            or document["schema"] != 1 or document.get("product") != "session-panel"
+            or document.get("target") != "windows-x86_64" or type(document.get("native")) is not dict
+            or document["native"].get("relative") != "native/observer/session-panel-observer.exe"
+            or type(document["native"].get("manifest_sha256")) is not str
+            or not re.fullmatch('[0-9a-f]{64}', document["native"]["manifest_sha256"])):
         raise ValueError("invalid_product_manifest")
+    native = _unlinked(product / "native/observer/manifest.json")
+    if native.stat().st_size > 4096 or hashlib.sha256(native.read_bytes()).hexdigest() != document['native']['manifest_sha256']:
+        raise ValueError("invalid_product_native_pin")
     return product / "native" / "observer"
 
 

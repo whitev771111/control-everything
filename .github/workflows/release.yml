@@ -1,0 +1,248 @@
+name: windows-technical-prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Full 40-character commit SHA already merged into main and passing all three required checks'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-technical-prerelease
+  cancel-in-progress: false
+
+jobs:
+  build-and-verify:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      commit: ${{ steps.identity.outputs.commit }}
+      version: ${{ steps.assets.outputs.version }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind the exact merged, tested commit
+        id: identity
+        shell: pwsh
+        env:
+          TARGET_COMMIT: ${{ inputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TARGET_COMMIT -cnotmatch '^[0-9a-f]{40}$') { throw 'Use a full lowercase commit SHA' }
+          $actual = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:TARGET_COMMIT) { throw 'Checkout identity mismatch' }
+          git merge-base --is-ancestor $actual origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release commit must already be merged into main' }
+          $pages = gh api --paginate --slurp "repos/$env:GH_REPO/commits/$actual/check-runs?filter=latest&per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read required check evidence' }
+          foreach ($name in @('windows-tests', 'architecture-boundaries', 'new-content-checks')) {
+            $checks = @($pages.check_runs | Where-Object { $_.name -ceq $name -and $_.head_sha -ceq $actual -and $_.app.slug -ceq 'github-actions' })
+            if ($checks.Count -ne 1 -or $checks[0].status -ne 'completed' -or $checks[0].conclusion -ne 'success') { throw "Required check unavailable or failed: $name" }
+          }
+          "commit=$actual" >> $env:GITHUB_OUTPUT
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13.16'
+      - name: Prepare fixed Python build inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip --isolated install -r tools/packaging/requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip --isolated install -e .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m build --outdir work/release/dist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip --isolated download --only-binary=:all: --platform win_amd64 --python-version 313 --implementation cp --abi cp313 --no-deps --require-hashes -r tools/packaging/windows-cp313.lock --dest work/release/wheelhouse
+          exit $LASTEXITCODE
+      - name: Download and verify official runtime and installer compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prepared = Join-Path (Get-Location) 'work/release/prepared'
+          New-Item -ItemType Directory -Path $prepared | Out-Null
+          $pins = Get-Content -Raw tools/packaging/downloads.json | ConvertFrom-Json
+          foreach ($name in @('python','inno')) {
+            $pin = $pins.$name
+            $file = Join-Path $prepared ([System.IO.Path]::GetFileName(([uri]$pin.url).AbsolutePath))
+            Invoke-WebRequest -Uri $pin.url -OutFile $file
+            if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.sha256) { throw "Download hash mismatch: $name" }
+            if ($name -eq 'inno') {
+              $signature = Get-AuthenticodeSignature -LiteralPath $file
+              if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo('SimpleName',$false) -cne $pin.authenticode_publisher) { throw 'Inno publisher mismatch' }
+              $toolDir = Join-Path $prepared 'inno'
+              $p = Start-Process -FilePath $file -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER','/NOICONS','/PORTABLE=1',"/DIR=`"$toolDir`"") -WindowStyle Hidden -Wait -PassThru
+              if ($p.ExitCode -ne 0) { throw "Inno tool preparation failed: $($p.ExitCode)" }
+            } else {
+              $probeDir = Join-Path $prepared 'official-runtime-signature'
+              Expand-Archive -LiteralPath $file -DestinationPath $probeDir
+              $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $probeDir 'python.exe')
+              if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo('SimpleName',$false) -cne $pin.authenticode_publisher) { throw 'Python publisher mismatch' }
+            }
+          }
+      - name: Prepare isolated Rust toolchain
+        shell: pwsh
+        run: |
+          $env:RUSTUP_HOME = Join-Path (Get-Location) 'work/native-observer/rustup-home'
+          $env:CARGO_HOME = Join-Path (Get-Location) 'work/native-observer/cargo-home'
+          $env:CARGO_TARGET_DIR = Join-Path (Get-Location) 'work/native-observer/target'
+          rustup set auto-self-update disable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup toolchain install 1.97.1-x86_64-pc-windows-msvc --profile minimal --component rustfmt --component clippy --no-self-update
+          exit $LASTEXITCODE
+      - name: Build the production observer with a static CRT
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installation = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw 'MSVC build tools are required' }
+          Import-Module (Join-Path $installation 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          $env:RUSTUP_HOME = Join-Path (Get-Location) 'work/native-observer/rustup-home'
+          $env:CARGO_HOME = Join-Path (Get-Location) 'work/native-observer/cargo-home'
+          $env:CARGO_TARGET_DIR = Join-Path (Get-Location) 'work/native-observer/target'
+          foreach ($command in @('fmt','test','clippy')) {
+            python scripts/build_observer.py $command
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python scripts/build_observer.py build --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $metadata = rustup run 1.97.1-x86_64-pc-windows-msvc cargo metadata --manifest-path native/observer/Cargo.toml --locked --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo license metadata unavailable' }
+          $metadata.packages | ConvertTo-Json -Depth 100 | Set-Content -Encoding utf8 work/release/cargo-packages.json
+      - name: Build the strict clean Windows closure and compile Inno
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path (Get-Location) 'work/release'
+          $wheel = @(Get-ChildItem -LiteralPath "$base/dist" -Filter '*.whl')
+          if ($wheel.Count -ne 1) { throw 'Expected exactly one project wheel' }
+          python tools/packaging/build_windows.py --release --wheel $wheel[0].FullName --wheelhouse "$base/wheelhouse" --runtime-zip "$base/prepared/python-3.13.16-embed-amd64.zip" --observer-release "$(Get-Location)/work/native-observer/release-install" --output "$base/payload" --cargo-packages "$base/cargo-packages.json" --inno-license "$base/prepared/inno/license.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/packaging/inno_include.py --payload "$base/payload" --output "$base/inno-includes"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$base/prepared/inno/ISCC.exe" "/DPayloadIncludeDir=$base/inno-includes" "/DInstallerOutputDir=$base/installer" tools/packaging/session-panel.iss
+          exit $LASTEXITCODE
+      - name: Verify the installed product with no developer tools on PATH
+        shell: pwsh
+        run: |
+          $base = Join-Path (Get-Location) 'work/release'
+          $installer = @(Get-ChildItem -LiteralPath "$base/installer" -Filter '*.exe')
+          if ($installer.Count -ne 1) { throw 'Expected one product installer' }
+          python tests/e2e/verify_installed_product.py --payload "$base/payload" --installer $installer[0].FullName --evidence "$base/installed-evidence"
+          exit $LASTEXITCODE
+      - name: Assemble the reviewed public assets and their hashes
+        id: assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path (Get-Location) 'work/release'
+          $public = Join-Path $base 'public'
+          New-Item -ItemType Directory -Path $public | Out-Null
+          Copy-Item "$base/dist/*.whl", "$base/dist/*.tar.gz", "$base/installer/*.exe", "$base/payload/THIRD-PARTY-NOTICES.txt", "$base/payload/THIRD-PARTY-NOTICES.json", "$base/payload/BUILD-INPUTS.json", "$base/payload/product.json" -Destination $public
+          $product = Get-Content -Raw "$base/payload/product.json" | ConvertFrom-Json
+          $wheelVersion = python -c "import pathlib,zipfile,email; p=next(pathlib.Path('work/release/dist').glob('*.whl')); z=zipfile.ZipFile(p); m=next(n for n in z.namelist() if n.endswith('.dist-info/METADATA')); print(email.message_from_bytes(z.read(m))['Version'])"
+          if ($LASTEXITCODE -ne 0 -or $wheelVersion -cne $product.version -or $product.source.dirty -or $product.source.commit -cne '${{ steps.identity.outputs.commit }}') { throw 'Release metadata mismatch' }
+          git archive --format=zip --output="$public/session-panel-$wheelVersion-source.zip" HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @"
+          Windows x64 technical prerelease $wheelVersion
+
+          Source commit: $($product.source.commit)
+          Source input SHA-256: $($product.source.files_hash)
+          Product closure: $($product.closure)
+
+          Includes CPython 3.13.16, locked Python dependencies and the release Rust observer. End users do not install Python, Node or Rust.
+          Installer and observer are unsigned. Upstream signatures do not sign this combined product.
+          Target: Windows 10/11 x64. Hosted-runner controlled-PATH acceptance does not establish a full clean Windows 10/11 machine matrix.
+          This run checks one-version install/reinstall/uninstall, two profiles, NULL/zero, backup/restore, HTTP maintenance blocking, resources, native availability and suspended-news-Job cancellation. Separate two-version/rollback, normal-running news collection, desktop and optional SSH evidence remain release limitations unless independently recorded.
+          Project license is not declared; no open-source license has been selected. Third-party notices and exact hashes are attached.
+          Profiles and backups are separate from application files and are retained on uninstall. See README for normal shutdown and rollback.
+          "@ | Set-Content -Encoding utf8 "$public/RELEASE-NOTES.md"
+          $lines = @(Get-ChildItem -LiteralPath $public -File | Sort-Object Name | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $_.Name })
+          [System.IO.File]::WriteAllLines((Join-Path $public 'SHA256SUMS.txt'), $lines, [System.Text.UTF8Encoding]::new($false))
+          "version=$wheelVersion" >> $env:GITHUB_OUTPUT
+      - name: Retain synthetic acceptance evidence separately
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-acceptance-${{ steps.identity.outputs.commit }}
+          path: work/release/installed-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload only the fixed public release assets
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-release-${{ steps.identity.outputs.commit }}
+          path: work/release/public/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-prerelease:
+    needs: build-and-verify
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build-and-verify.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build-and-verify.outputs.artifact-id }}
+          path: work/release/public
+          merge-multiple: true
+      - name: Verify hashes and publish the technical prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ needs.build-and-verify.outputs.commit }}
+          RELEASE_VERSION: ${{ needs.build-and-verify.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $public = Join-Path (Get-Location) 'work/release/public'
+          $verified = @('SHA256SUMS.txt')
+          foreach ($line in [System.IO.File]::ReadAllLines((Join-Path $public 'SHA256SUMS.txt'))) {
+            if ($line -cnotmatch '^([0-9a-f]{64})  ([A-Za-z0-9_.-]+)$') { throw 'Malformed release hash list' }
+            $digest, $name = $Matches[1], $Matches[2]
+            if ($verified -contains $name -or $name -eq 'SHA256SUMS.txt') { throw 'Duplicate release hash entry' }
+            if ((Get-FileHash -LiteralPath (Join-Path $public $name) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $digest) { throw 'Release asset mismatch' }
+            $verified += $name
+          }
+          $actualNames = @(Get-ChildItem -LiteralPath $public -File | ForEach-Object { $_.Name })
+          if (@(Compare-Object $verified $actualNames).Count) { throw 'Unhashed public asset' }
+          $product = Get-Content -Raw "$public/product.json" | ConvertFrom-Json
+          if ($product.source.commit -cne $env:RELEASE_COMMIT -or $product.version -cne $env:RELEASE_VERSION -or $product.source.dirty) { throw 'Release source mismatch' }
+          $tag = 'v' + $env:RELEASE_VERSION
+          if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:a|b|rc)[0-9]+$') { throw 'Only technical prerelease versions are allowed' }
+          $tags = @(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect tags' }
+          if ($tags.Count) {
+            $peeled = @($tags | Where-Object { $_.EndsWith('^{}') })
+            $commit = if ($peeled.Count) { ($peeled[-1] -split '\s+')[0] } else { ($tags[0] -split '\s+')[0] }
+            if ($commit -cne $env:RELEASE_COMMIT) { throw 'Existing version tag points to another commit' }
+          }
+          $assets = @(Get-ChildItem -LiteralPath $public -File | ForEach-Object { $_.FullName })
+          gh release create $tag @assets --target $env:RELEASE_COMMIT --prerelease --latest=false --title "Session Panel $env:RELEASE_VERSION Windows technical prerelease" --notes-file "$public/RELEASE-NOTES.md"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $release = gh release view $tag --json url,isDraft,isPrerelease | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.isDraft -or -not $release.isPrerelease) { throw 'Prerelease publication was not confirmed' }
+          "Published technical prerelease: $($release.url)" >> $env:GITHUB_STEP_SUMMARY

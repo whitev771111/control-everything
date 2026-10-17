@@ -10,7 +10,7 @@ ROOT_FILES = {'.gitattributes', '.gitignore', 'AGENTS.md', 'CONTRIBUTING.md', 'R
               'requirements.txt', 'rust-toolchain.toml', 'pyproject.toml', 'MANIFEST.in', 'setup.py'}
 PACKAGE_FILES = {'__init__.py', 'paths.py', 'input_validation.py', 'gateway.py',
                  'profile.py', 'native_processes.py', 'mcp_stdio.py'}
-PACKAGES = {'http', 'sessions', 'workspace', 'execution', 'profiles', 'integrations', 'platform'}
+PACKAGES = {'http', 'sessions', 'workspace', 'execution', 'profiles', 'integrations', 'platform', 'installation'}
 
 
 def ownership_error(value):

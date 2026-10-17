@@ -2,9 +2,28 @@
 
 开发记录仅保留在本机 ignored `docs/`，不随仓库提交。默认启动使用当前用户独立的空 profile，通过页面登记项目，不再要求复制个人 registry 文件。已有本机文件保留，可显式导入。
 
+## Windows 标准安装
+
+普通用户从 [GitHub Releases](https://github.com/zxl123456123/control-everything/releases) 选择 Windows x64 技术预发布的 `session-panel-<版本>-windows-x64.exe`，先用 `Get-FileHash -Algorithm SHA256` 与该次发布的 `SHA256SUMS.txt` 核对，再运行安装器。标准产品自带 CPython 3.13.16、固定 Python 依赖、前端资源和 release Rust 原生观察后台，无需另外安装 Python、Node、npm 或 Rust 编译器。wheel 和源码归档供开发使用，不能代替完整安装器。
+
+安装目录支持中文和空格；当前产品按普通 Windows 路径工作，每个完整交付文件路径须少于260个UTF-16字符。安装器在写入目标前检查整个固定文件清单，超限时提示选择更短目录，不修改系统的长路径策略。
+
+安装按当前用户运行，无需管理员权限，默认位置为 `%LOCALAPPDATA%/Programs/SessionPanel`。从开始菜单的 **Session Panel** 打开网关控制台，再在浏览器访问 `http://127.0.0.1:8766/workspace`；安装不会自动启动网关或外部 Agent。端口被占用时明确退出，可从 PowerShell 指定自己的端口和 profile：
+
+```powershell
+$panel = Join-Path $env:LOCALAPPDATA 'Programs/SessionPanel/session-panel.cmd'
+& $panel --data-dir 'C:/example/SessionPanel/main' --port 14401
+```
+
+在所属控制台按 Ctrl+C 正常停止网关。关闭页面或网关不会终止独立原生观察后台，更不会终止外部 Agent。维护前先停止自己运行的全部网关；安装器会核对本安装登记的全部版本及 profile，并通过每个后台原来的 EXE 正常停止自有观察进程。未知身份、仍运行的 HTTP 或无法证实退出的进程会阻止维护，保留现有入口，不按程序名强杀，不接管其他安装或 profile。
+
+升级保留旧版本目录，安装文件核验和登记完成后才切换 `session-panel.cmd`。重新运行可信的原版本安装器可选择该版本的完整闭包；同版本可重新安装。回退前保留 profile 备份，并确认旧程序支持当前配置和管理库格式；安装器不会隐式迁移、降级或搬迁数据。卸载使用 Windows“已安装的应用”中的 **Session Panel**，只处理安装日志和严格核验的自有管理文件；profile、备份和未知用户文件保留。卸载不会替你关闭网关，遇到阻塞先正常退出自己运行的实例，再重试。
+
+目标平台为 Windows 10/11 x64；技术预发布的安装器与原生程序目前未签名，上游组件的数字签名不代表组合产品已签名。每次发布说明列出实际验收范围；开发机或托管 Windows runner 的受控 PATH 验收不能替代两种系统的完整干净机器验证。项目尚未声明源码许可证，不据此承诺任何开源许可；随产品附带实际依赖的第三方声明及摘要。
+
 ## 源码与测试目录
 
-后端生产源码在 `src/session_panel`，内部按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 六个功能包组织。前端使用原生 HTML/CSS 和普通脚本，唯一资源源码放在 `web/sessions`、`web/progress`、`web/workspace`，构建 wheel 时按 HTTP 白名单收进包内；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+后端生产源码在 `src/session_panel`，业务按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 组织，安装维护归 `installation`，Win32 适配归 `platform`。前端使用原生 HTML/CSS 和普通脚本，唯一资源源码放在 `web/sessions`、`web/progress`、`web/workspace`，构建 wheel 时按 HTTP 白名单收进包内；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
 
 本机观察与每日资讯分别以 `web/workspace/observation.ts`、`news.ts` 和邻近类型声明为手写源码，两个 JS 为同一固定 TypeScript 5.9.3 的生成物；其他模块继续手写 JS。修改对应 TS 后运行 `node scripts/build_observation.cjs build` 或 `node scripts/build_news.cjs build`，连同生成 JS 提交，再用对应 `check` 比较完整字节；不要手改生成物。Node24/项目内固定工具的显式准备、缺工具失败与全部验证命令见[观察前端 TypeScript 开发](CONTRIBUTING.md#观察前端-typescript-开发)。原 URL 和普通脚本相对顺序保留，新 `/news.js` 在页面主脚本前加载，不增加常驻 Node 服务。
 
@@ -17,7 +36,7 @@
 | 组成 | 使用边界 |
 |---|---|
 | Python 管理后端与前端资源 | 基础管理必需，负责项目、事项、进度与管理数据 |
-| Rust 原生观察后台 | 完整本机观察的标准组件；缺失或故障时明确显示受限，基础管理仍可用 |
+| Rust 原生观察后台 | Windows 标准安装必带；源码/wheel 缺少原生程序或运行故障时明确显示受限，基础管理仍可用 |
 | Codex 元数据库、项目文档来源 | 用户按需登记；不配置也可人工管理，不自动读取私人来源 |
 | SSH/远端 reader、终端、工作台、个人启动器 | 按需接入；终端依赖远端，工作台依赖终端，启动器可独立启用 |
 | 公开资讯与官方额度 | 资讯按源容忍超时；额度仅显式查询，未配置账号不影响管理 |
@@ -43,7 +62,7 @@ python -m venv .venv
 
 打开 `http://127.0.0.1:8766/workspace`。默认数据目录在 Windows 为 `%LOCALAPPDATA%/SessionPanel`（环境变量缺失时为当前用户 `AppData/Local/SessionPanel`）；目录内的 `profile.json` 保存来源设置，`workspace-state.sqlite3` 保存管理记录。路径优先级为 `--data-dir`、非空 `SESSION_PANEL_DATA_DIR`、当前用户默认目录；显式路径必须绝对。
 
-标准 Python wheel 包含后端和前端资源，可以离开检出目录使用。它不包含 Rust 原生程序，缺少该程序时观察显示 `native_missing`，基础管理仍可启动；完整 Windows 产品的运行闭包及安装验收另行交付。源码模式保留旧根数据位置；安装包的兼容旧记录默认目录为用户默认数据目录下的 `legacy`，不会写入 site-packages，也不会自动搬迁旧记录。
+标准 Python wheel 包含后端和前端资源，可以离开检出目录使用。它不包含 Rust 原生程序，缺少该程序时观察显示 `native_missing`，基础管理仍可启动；Windows 标准安装另外组合固定私有运行时和 release 原生程序，并严格核验产品闭包。源码模式保留旧根数据位置；安装包的兼容旧记录默认目录为用户默认数据目录下的 `legacy`，不会写入 site-packages，也不会自动搬迁旧记录。
 
 保留已有服务时明确选择另一个端口，例如：
 
@@ -76,7 +95,7 @@ python -m venv .venv
 
 ## Windows 本机观察与返回
 
-Rust观察后台是完整本机观察的标准组件，按当前用户及profile隔离，Python网关绑定端口成功后才连接或启动固定的本机构建产物。缺少产物、身份或协议不匹配时，页面明确显示观察不可用，项目、任务和其他管理功能仍能使用。构建步骤和固定工具链准备见[参与开发](CONTRIBUTING.md#windows-原生观察开发)，HTTP不会临时编译或从PATH执行同名后台。
+Rust观察后台是完整本机观察的标准组件，按当前用户及profile隔离，Python网关绑定端口成功后才连接或启动固定产物。标准产品只使用所属版本下已核验的 `native/observer`，源码开发使用固定的本机构建目录；不会临时编译或从PATH执行同名后台。源码/wheel 缺少产物时明确显示观察不可用；标准产品的基础运行文件损坏会阻止该版本启动，原生程序或其摘要文件缺失、损坏时基础管理仍可启动、观察明确受限。保留资料并使用可信安装器维护，安装与切换版本仍须完整核验所有交付文件。源码构建步骤和固定工具链准备见[参与开发](CONTRIBUTING.md#windows-原生观察开发)。
 
 安装发现、已核验运行进程、历史会话、待处理及返回能力分别展示。Codex、Claude Code、Hermes、Pi按公开安装入口核验；不支持的安装形态、权限不足或缺少会话来源保持未知，不因发现工具读取默认账户库。CPU首样本未知，100%表示一个逻辑核；内存是进程工作集，不代表独占物理内存或Token/费用。进程发现约5秒、资源约1秒、安装缓存最多60秒，页面标明来源和时间。
 
@@ -95,7 +114,7 @@ $observerData = Join-Path (Get-Location) 'work/example-profile'
 & './work/native-observer/install/session-panel-observer.exe' stop --data-dir $observerData
 ```
 
-该目录须已通过profile初始化；示例不会自动选择或接管其他服务。观察和导航不授予发送、审批、取消、启动Agent或读取正文的权限，真实工具版本/可见窗口覆盖需分别验收。
+以上为源码开发产物路径；安装用户需使用该 profile 原来所属的 `versions/<版本>-<闭包前16位>/native/observer/session-panel-observer.exe`，不要从 PATH 或另一版本选择同名程序。目录须已通过profile初始化；示例不会自动选择或接管其他服务。观察和导航不授予发送、审批、取消、启动Agent或读取正文的权限，真实工具版本/可见窗口覆盖需分别验收。
 
 ## 导入旧记录与恢复
 
@@ -127,7 +146,7 @@ $observerData = Join-Path (Get-Location) 'work/example-profile'
 
 新记录保存在所选 profile，源码旁旧 JSON/SQLite 与既有服务保留原位。任务负责人表示人工分配，不向 Agent 发送命令。资讯含来源与采样时间，不是推送流。
 
-历史桌面与移动尺寸验收证据仅保留在本地开发记录。手机远程访问、自动每日成本和原生安装包仍是后续能力。
+历史桌面与移动尺寸验收证据仅保留在本地开发记录。手机远程访问、自动每日成本仍是后续能力。
 
 ## 配置可选接入
 
@@ -258,14 +277,14 @@ enabled_tools = ["list_sessions", "get_session_status", "get_session_messages"]
 
 ## 验证与撤销
 
-基础开发验证使用 Windows、Python 3.12、Node.js 24；无需作者资源。先按[参与开发](CONTRIBUTING.md#观察前端-typescript-开发)准备共享固定编译器，再运行两模块 check 和八份 Node 合同。浏览器 harness 的 Playwright/Edge 安装与 fixture 执行见 [参与开发](CONTRIBUTING.md)。以下浏览器命令由验收负责人执行，结果与单元测试分别记录：
+基础开发验证使用 Windows、Python 3.12、Node.js 24；无需作者资源。先按[参与开发](CONTRIBUTING.md#观察前端-typescript-开发)准备共享固定编译器，再运行两模块 check 和全部 Node 合同。浏览器 harness 的 Playwright/Edge 安装与 fixture 执行见 [参与开发](CONTRIBUTING.md)。以下浏览器命令由验收负责人执行，结果与单元测试分别记录：
 
 ```powershell
 & '.venv/Scripts/python.exe' -m unittest discover -s tests -v
 node scripts/build_observation.cjs check
 node scripts/build_news.cjs typecheck
 node scripts/build_news.cjs check
-node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs tests/frontend/test_news_ui.cjs tests/frontend/test_news_build.cjs
+node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs tests/frontend/test_news_ui.cjs tests/frontend/test_news_build.cjs tests/frontend/test_quota_ui.cjs
 node tests/e2e/verify_workspace.cjs --fixture
 node tests/e2e/verify_session_panel.cjs --fixture
 ```
@@ -273,6 +292,22 @@ node tests/e2e/verify_session_panel.cjs --fixture
 真实 SSH 补绑、独立 SDK 合成链/空结果对照、选中真实 UUID 分页、Edge 桌面/360px、真实 focus 和 Codex 加载由协调者分别承接。fixture 自证不代表这些已验收；详细状态与所有失败保留在本地开发记录及 ignored `work/`，不提交仓库。
 
 Ctrl+C 停网关即可停本批查询，原 Claude/SSH/Zellij 对话继续运行。代码回退需与对应 profile 版本配套，先保留备份，再在另一个空数据目录恢复并验证；真实 MCP 回退仅撤销本 server 表并由用户重载。删除本地 `.venv` 或远端 reader `.venv` 前确认绝对路径和本批归属。保留研究、方案和实施报告；不删除远端 `.claude`、项目或 Workbench。已经切换的 pane 由用户自行切回。
+
+## 构建与技术预发布
+
+产品版本只定义于 `pyproject.toml`；wheel 元数据、产品闭包和安装器显示版本消费同一个值，Inno 文件数值版本按固定映射生成。`tools/packaging/downloads.json` 固定官方 CPython 和 Inno Setup 下载及 SHA-256，`windows-cp313.lock` 固定 Windows x64/CPython 3.13 的全部轮子，`rust-toolchain.toml` 固定 Rust。前端只有 `web` 这一份手写源码，wheel 构建按资源白名单收集；EXE、依赖轮子、安装器及真实用户资料不提交 Git。
+
+维护者使用 `.github/workflows/release.yml` 的手动入口，提交完整的已合入 main 的 40 位 commit SHA。流水线先检查该提交的 `windows-tests`、`architecture-boundaries`、`new-content-checks` 三项成功，再构建 sdist→wheel、静态 CRT release observer、严格 `--release` 产品闭包和 Inno 安装器。受测产物与源码提交、源码输入哈希、依赖锁、第三方声明及公开资产 SHA-256 绑定；独立发布 job 才获得写权限，发布 `v<版本>` 的技术 prerelease，不移动已有版本 tag。Actions artifact 上传与 GitHub Release 发布是两个独立结果，最终以 Release URL 和发布状态为准。
+
+安装验收入口只接受全新证据目录、合成 profile 和显式产品文件；存在同 AppId 安装或已有开始菜单入口时拒绝运行。它会真实安装、运行本次隔离实例并卸载，失败后保留证据和安装，不自动强杀或删除。以下命令由验收负责人在专用 Windows 用户环境执行，路径均为自己准备的绝对路径：
+
+```powershell
+python tests/e2e/verify_installed_product.py --payload 'C:/example/build/payload' --installer 'C:/example/build/session-panel-0.1.0a1-windows-x64.exe' --evidence 'C:/example/acceptance/new-run'
+# Add a different, real second closure to exercise upgrade and rollback:
+python tests/e2e/verify_installed_product.py --payload 'C:/example/build-a/payload' --installer 'C:/example/build-a/setup.exe' --second-payload 'C:/example/build-b/payload' --second-installer 'C:/example/build-b/setup.exe' --evidence 'C:/example/acceptance/new-two-version-run'
+```
+
+报告区分当前机器受控 PATH、14 个资源、运行时/原生状态、HTTP 维护阻塞、两个 profile、资料及备份保留等实际结果。第二组版本、真实资讯 Job 生命周期、桌面返回、可选 SSH、真实工具及干净 Win10/Win11 验证分别留证；某一项成功不能代替其他项。公开发布文件只取明确白名单，合成验收日志留在单独短期 Actions artifact，真实个人数据不上传。
 
 ## 公开内容与本机数据
 

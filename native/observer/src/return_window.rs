@@ -321,6 +321,24 @@ impl Actions {
             unsafe {
                 SetForegroundWindow(hwnd as HWND);
             }
+            // Cross-queue activation is asynchronous. Wait for its notification
+            // without joining input queues or retrying the foreground request.
+            let mut ignored = 0;
+            if unsafe {
+                SendMessageTimeoutW(
+                    hwnd as HWND,
+                    WM_NULL,
+                    0,
+                    0,
+                    SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT,
+                    100,
+                    &mut ignored,
+                )
+            } == 0
+            {
+                return Err("foreground_denied");
+            }
+            verify_window(&process, hwnd)?;
             if unsafe { GetForegroundWindow() } != hwnd as HWND {
                 return Err("foreground_denied");
             }

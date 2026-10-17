@@ -108,7 +108,7 @@ node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui
 
 仅维护者在新建工具包或经审版本更新时重新生成锁：沿用上述隔离配置，`Push-Location tools/typescript` 后执行 `& $tsNode $tsNpmCli install --package-lock-only --include=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/`，检查退出码并在 `finally` 中 `Pop-Location`，随后核 package/lock diff。实际 npm10.9.8 的首次 install --prefix 曾出现路径错误及 file: 自依赖；已验证成功的首次锁生成形式是该专属cwd、**不传prefix**。不要把首次install与消费已有锁的 `npm ci --prefix` 混为一条已验命令；CI保留后一条命令，远端运行仍须另留证。
 
-采用[TypeScript Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API)的完整Program诊断与受控emit，及[npm ci](https://docs.npmjs.com/cli/v10/commands/npm-ci)的锁一致性/不改锁语义；不使用仅转译、全局工具或隐式安装。CI只准备同一个工具包、先观察check及资讯typecheck/check、再八份Node合同，缺工具或字节漂移即失败，不先build洗脏输出；普通用户启动Python仍只读取已交付JS。已有固定工具不因新增资讯再安装，原锁和版本不变。
+采用[TypeScript Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API)的完整Program诊断与受控emit，及[npm ci](https://docs.npmjs.com/cli/v10/commands/npm-ci)的锁一致性/不改锁语义；不使用仅转译、全局工具或隐式安装。CI只准备同一个工具包、先观察check及资讯typecheck/check、再运行上述全部Node合同，缺工具或字节漂移即失败，不先build洗脏输出；普通用户启动Python仍只读取已交付JS。已有固定工具不因新增资讯再安装，原锁和版本不变。
 
 资讯 Node 合同使用合成DOM/时钟/来源投影，不能替代真实worker/HTTP/Edge验收。验收负责人可对自己已运行的合成profile执行 `node tests/e2e/verify_daily_news.cjs --base-url http://127.0.0.1:14401 --owned-fixture --output <本次绝对ignored证据目录>`；可选 `--legacy-base-url` 指向另一个自有legacy实例，`--synthetic-news` 只替新闻路由，以受控时间验证分组/摘要/过期与草稿。harness不建服务、不修改真实数据库；默认真实HTTP读取与合成新闻模式分别记证据，不把后者当真实公共源可用。真实待办写后隔离、失败采集清理与宽窄屏截图仍由验收负责人分别留证。
 

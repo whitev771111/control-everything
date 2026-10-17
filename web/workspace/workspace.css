@@ -316,6 +316,13 @@ footer span { padding:0 8px; }
   button,a { transition:color .15s ease,background-color .15s ease,border-color .15s ease; }
 }
 .directory-row { display:flex; align-items:end; gap:12px; margin:14px 0; }
+.native-project-facts { color:var(--accent); }
+.native-instance { border-top:1px solid var(--line); padding:18px 0; overflow-wrap:anywhere; }
+.native-instance p { margin:7px 0; font-size:13px; }
+.native-instance .button { margin-top:8px; }
+.window-choices-picker { margin-top:18px; padding:18px; border:1px solid var(--accent); border-radius:8px; background:var(--bg); }
+.window-choice { display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:14px 0; border-top:1px solid var(--line); }
+.window-choice-title { flex:1 1 200px; overflow-wrap:anywhere; white-space:pre-wrap; }
 .directory-row .field { flex:1; min-width:0; }
 .project-actions { grid-column:2 / -1; display:flex; gap:16px; flex-wrap:wrap; }
 .project-facts { display:grid; gap:10px; margin:14px 0; overflow-wrap:anywhere; }
@@ -333,6 +340,11 @@ textarea { display:block; width:100%; background:#0f1823; color:var(--text); bor
 .compatibility-row .text-button { margin-right:16px; }
 .restore-command { display:block; padding:14px; margin-top:12px; overflow-wrap:anywhere; white-space:pre-wrap; background:var(--bg); }
 #settings-view p,#profile-path,#project-identity { overflow-wrap:anywhere; }
+.registration-path,.registration-candidates { overflow-wrap:anywhere; }
+.registration-candidates { display:flex; flex-wrap:wrap; gap:8px; margin-block:12px; }
+.registration-candidates .button { min-width:0; max-width:100%; white-space:normal; overflow-wrap:anywhere; text-align:left; }
+#registration-settings summary { cursor:pointer; font-weight:700; }
+#registration-fields { min-width:0; }
 #import-result p { margin-top:10px; }
 @media(max-width:700px) {
   .directory-row { flex-wrap:wrap; gap:4px; }

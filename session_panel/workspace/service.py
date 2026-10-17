@@ -67,7 +67,7 @@ def observation_owner(cwd, projects):
     return next(iter(owners)) if len(owners) == 1 else None
 
 
-def discover_providers():
+def discover_providers(installations=None):
     definitions = (
         ("codex", "Codex", ("codex",), "/", "会话", "本机身份元数据；活动和任务完成状态未知"),
         ("claude", "Claude Code", ("claude",), "/", "原会话页", "原会话页远端观察，当前连接需在那里核验"),
@@ -77,10 +77,18 @@ def discover_providers():
     )
     result = []
     for provider_id, name, candidates, href, label, note in definitions:
+        if installations is not None:
+            installation = next((item for item in installations if item["provider_id"] == provider_id), None)
+            discovery = {"status": {"available": "found", "not_found": "not_found"}.get(installation["status"], "unknown") if installation else "unknown",
+                         "commands": installation["commands"] if installation else [],
+                         "reason": installation["reason"] if installation else "observation_unavailable"}
+        else:
+            discovery = None
         try:
-            commands = [command for command in candidates if shutil.which(command)]
-            discovery = {"status": "found" if commands else "not_found", "commands": commands,
-                         "reason": None if commands else "cli_not_found"}
+            if discovery is None:
+                commands = [command for command in candidates if shutil.which(command)]
+                discovery = {"status": "found" if commands else "not_found", "commands": commands,
+                             "reason": None if commands else "cli_not_found"}
         except OSError:
             discovery = {"status": "unknown", "commands": [], "reason": "discovery_unavailable"}
         result.append({"id": provider_id, "name": name, "discovery": discovery,
@@ -96,8 +104,9 @@ def discover_providers():
 class WorkspaceService:
     def __init__(self, db_path=DEFAULT_DB, *, registry_path=progress.REGISTRY,
                  manual_path=progress.MANUAL, todos_path=progress.TODOS,
-                 session_reader=None, quota_source=None, news_source=None, profile=None):
+                 session_reader=None, quota_source=None, news_source=None, profile=None, observer=None):
         self.profile = profile
+        self.observer = observer
         self.store = profile.store if profile is not None else WorkspaceStore(db_path)
         self.registry_path, self.manual_path, self.todos_path = registry_path, manual_path, todos_path
         self.session_reader = profile.codex_threads if profile is not None else session_reader or list_threads
@@ -109,6 +118,59 @@ class WorkspaceService:
             return self.session_reader()
         except Exception:
             return unavailable(0)
+
+    def observation_scope(self):
+        from session_panel.workspace.observations import scope_roots
+        return scope_roots(self.registered_projects())
+
+    def observation_settings(self):
+        value = self.profile.observation_settings()
+        observed = self.observations()
+        pair = (value["revision"], value["hash"])
+        matching = (observed.get("config_revision"), observed.get("config_hash")) == pair
+        value["application"] = {"status": observed["status"] if matching else "pending",
+                                "reason": observed["reason"] if matching else "config_pending"}
+        facts = {row["registration_id"]: row for row in observed.get("registrations", [])} if matching and observed["status"] == "available" else {}
+        value["validation"] = [facts.get(row["id"], {"registration_id": row["id"], "status": "unknown",
+                                "reason": "rebind_required" if row["binding_state"] == "rebind_required" else "config_pending",
+                                "source": "profile_intent", "sampled_at_ms": None, "duplicate_of_id": None})
+                               for row in value["registrations"]]
+        return value
+
+    def save_observation_settings(self, body):
+        from session_panel.sessions.observer_client import ObserverClient
+        observed = self.observation_settings()
+        duplicates = {row["registration_id"] for row in observed["validation"] if row["reason"] == "duplicate_installation"}
+        self.profile.save_observations(body, duplicate_ids=duplicates,
+            on_commit=lambda value: ObserverClient.invalidate_profile(self.profile.data_dir, value))
+        return self.observation_settings()
+
+    def observations(self):
+        from session_panel.workspace.observations import project_observations
+        cached = self.observer.cached() if self.observer else {
+            "status": "unavailable", "reason": "not_started", "snapshot": None, "scope_revision": 0, "scope_hash": ""}
+        configured = {}
+        if self.profile is not None:
+            from session_panel.profiles import observation_settings
+            try:
+                current = self.profile.observation_config()
+                configured = {row["id"]: row for row in current["registrations"]}
+                cached["config_pair"] = tuple(observation_settings.pair(current).values())
+            except ValueError:
+                cached["config_pair"] = None
+                cached["reason"] = "config_unavailable"
+        value = project_observations(cached, self.registered_projects() if self.profile is not None else [])
+        if self.profile is not None:
+            for row in value["registrations"]:
+                intent = configured.get(row["registration_id"], {})
+                row.update(label=intent.get("label", ""), category=intent.get("category"),
+                           enabled=intent.get("enabled", False), binding_state=intent.get("binding_state"),
+                           can_pick=(row["status"] == "available" and intent.get("enabled", False)
+                                     and intent.get("binding_state") == "confirmed"
+                                     and (intent.get("category") == "custom_exe" or intent.get("locator_kind") == "codex_desktop")))
+            for instance in value["instances"]:
+                instance["registration_labels"] = [configured[identity]["label"] for identity in instance["registration_ids"] if identity in configured]
+        return value
 
     def registered_projects(self):
         if self.profile is not None:
@@ -191,6 +253,8 @@ class WorkspaceService:
     def snapshot(self):
         sessions = self.sessions()
         if self.profile is not None:
+            observations = self.observations()
+            from session_panel.workspace.observations import summary
             registry = self.registered_projects()
             todos = self.store.list_todos()
             tasks = self.page_tasks()
@@ -202,7 +266,8 @@ class WorkspaceService:
                     "records_total": records["total"], "records_limit": records["limit"],
                     "providers": [{**item, "capabilities": {**item["capabilities"], "open_existing_ui": False,
                                                             "observe_sessions": item["id"] == "codex"}, "entrypoints": []}
-                                  for item in discover_providers()], "sessions": sessions,
+                                  for item in discover_providers(observations["installations"])], "sessions": sessions,
+                    "observations": summary(observations),
                     "entrypoints": [{"id": "progress", "label": "项目进度与待办", "href": "/progress"}],
                     "data_dir": str(self.profile.data_dir)}
         try:

@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from session_panel.profiles.profile import (CONFIG_MAX_BYTES, ProfileError, absolute_path,
                                           config_file_lock, strict_json, validate_config)
+from session_panel.profiles import observation_settings
 from session_panel.sessions.source import canonical_uuid
 from session_panel.workspace.service import WorkspaceService, TASK_STATES, PROVIDERS, finite_number
 from session_panel.workspace.store import (BASE_SCHEMA, MANAGEMENT_TABLES, WorkspaceError, WorkspaceStore,
@@ -424,6 +425,27 @@ def restore_backup(backup_dir, data_dir):
                 invalid("backup", "source_changed")
         # Recheck source before publishing; restoration never overwrites a profile.
         validate_backup(backup)
+        config_path = temporary / "profile.json"
+        config = validate_config(strict_json(config_path.read_text(encoding="utf-8")))
+        if config["version"] == 3:
+            config["observations"] = observation_settings.restore_intent(config["observations"])
+            from session_panel.profiles.profile import Profile
+            # The copied original was verified above; only the new intent is transformed.
+            Profile(temporary)._write_config(config)
+            if validate_config(strict_json(config_path.read_text(encoding="utf-8"))) != config:
+                invalid("backup", "restore_changed")
+            if digest(temporary / "workspace-state.sqlite3") != manifest["files"]["management.sqlite3"]["sha256"]:
+                invalid("backup", "source_changed")
+            connection = sqlite3.connect((temporary / "workspace-state.sqlite3").as_uri() + "?mode=ro", uri=True)
+            try:
+                WorkspaceStore(temporary / "workspace-state.sqlite3", profile=True).validate_schema(connection)
+                if (connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+                        or connection.execute("PRAGMA user_version").fetchone()[0] != 1
+                        or any(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] != count
+                               for table, count in manifest["counts"].items())):
+                    invalid("backup", "invalid_backup")
+            finally:
+                connection.close()
         if target.exists():
             target.rmdir()
         temporary.rename(target)

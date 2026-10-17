@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 node_modules/
 /work/
+/native/observer/target/
 
 # Private project documentation stays local
 /docs/

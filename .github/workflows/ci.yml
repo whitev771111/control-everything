@@ -27,8 +27,34 @@ jobs:
           package-manager-cache: false
       - run: python -m pip install -r requirements.txt
       - run: python -m pip check
+      - name: Prepare isolated observer toolchain
+        shell: pwsh
+        run: |
+          $env:RUSTUP_HOME = Join-Path (Get-Location) 'work/native-observer/rustup-home'
+          $env:CARGO_HOME = Join-Path (Get-Location) 'work/native-observer/cargo-home'
+          $env:CARGO_TARGET_DIR = Join-Path (Get-Location) 'work/native-observer/target'
+          rustup set auto-self-update disable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup toolchain install 1.97.1-x86_64-pc-windows-msvc --profile minimal --component rustfmt --component clippy --no-self-update
+          exit $LASTEXITCODE
+      - name: Observer format, tests, lint and build
+        shell: pwsh
+        run: |
+          $installation = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw 'MSVC build tools are required' }
+          Import-Module (Join-Path $installation 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          $env:RUSTUP_HOME = Join-Path (Get-Location) 'work/native-observer/rustup-home'
+          python scripts/build_observer.py fmt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/build_observer.py test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/build_observer.py clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/build_observer.py build
+          exit $LASTEXITCODE
       - run: python -m unittest discover -s tests -v
-      - run: node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs
+      - run: node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs
 
   new-content-checks:
     name: new-content-checks

@@ -8,10 +8,12 @@ import os
 import sys
 import tempfile
 import threading
+from uuid import uuid4
 from contextlib import contextmanager
 from pathlib import Path
 
 from session_panel.sessions import codex_index
+from session_panel.profiles import observation_settings as observations
 from session_panel.workspace.store import WorkspaceStore
 from session_panel.profiles.integration_settings import (
     EMPTY_INTEGRATIONS, InvalidSettings, integration_summary, validate_integrations,
@@ -74,9 +76,11 @@ def resolve_data_dir(data_dir=None, *, environ=None, platform=None, home=None):
 
 
 def validate_config(config):
-    if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] not in (1, 2):
+    if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] not in (1, 2, 3):
         raise ProfileError("invalid_config", "version")
     expected = {"version", "codex"} if config["version"] == 1 else {"version", "codex", "integrations"}
+    if config["version"] == 3:
+        expected.add("observations")
     if set(config) != expected:
         raise ProfileError("invalid_config", "version")
     codex = config["codex"]
@@ -85,8 +89,12 @@ def validate_config(config):
             or codex["db_path"] is not None and not absolute_path(codex["db_path"])
             or codex["enabled"] and codex["db_path"] is None):
         raise ProfileError("invalid_config", "codex")
-    if config["version"] == 2:
+    if config["version"] >= 2:
         checked_integrations(config["integrations"])
+    if config["version"] == 3:
+        observations.validate(config["observations"])
+        if config["observations"]["revision"] == 0:
+            raise ProfileError("invalid_config", "observations.revision")
     return config
 
 
@@ -100,7 +108,7 @@ def checked_integrations(value):
 def normalized_config(config):
     validate_config(config)
     result = copy.deepcopy(config)
-    result["version"] = 2
+    result["version"] = max(2, result["version"])
     result.setdefault("integrations", copy.deepcopy(EMPTY_INTEGRATIONS))
     return result
 
@@ -227,6 +235,53 @@ class Profile:
                 create_backup(self)
             self._write_config(config)
         return self.public()
+
+    @contextmanager
+    def observation_guard(self):
+        with self.config_lock, config_file_lock(self.data_dir):
+            yield
+
+    def observation_config(self):
+        return observations.from_config(self.config())
+
+    def observation_settings(self):
+        value = self.observation_config()
+        return {"revision": value["revision"], "hash": observations.pair(value)["config_hash"],
+                "registrations": value["registrations"]}
+
+    def save_observations(self, body, *, on_commit=None, duplicate_ids=()):
+        if (type(body) is not dict or set(body) != {"expected_revision", "expected_hash", "registrations"}
+                or type(body["expected_revision"]) is not int or type(body["expected_hash"]) is not str
+                or type(body["registrations"]) is not list):
+            raise ProfileError("invalid_config", "observations")
+        with self.config_lock, config_file_lock(self.data_dir):
+            original = self.config()
+            current = observations.from_config(original)
+            if (body["expected_revision"] != current["revision"]
+                    or body["expected_hash"] != observations.pair(current)["config_hash"]):
+                raise ProfileError("config_conflict", "observations", status=409)
+            rows = copy.deepcopy(body["registrations"])
+            for row in rows:
+                if type(row) is dict and row.get("id", False) is None:
+                    row["id"] = uuid4().hex
+            proposed = observations.validate({"revision": max(1, current["revision"]), "registrations": rows})
+            if any(row["id"] in duplicate_ids for row in proposed["registrations"]):
+                raise ProfileError("duplicate_installation", "observations", status=409)
+            if proposed["registrations"] == current["registrations"]:
+                return self.observation_settings()
+            if current["revision"] == observations.MAX_REVISION:
+                raise ProfileError("invalid_config", "observations.revision")
+            proposed["revision"] = current["revision"] + 1
+            config = normalized_config(original)
+            config.update(version=3, observations=proposed)
+            validate_config(config)
+            if original["version"] < 3:
+                from session_panel.profiles.profile_import import create_backup
+                create_backup(self)
+            self._write_config(config)
+            if on_commit:
+                on_commit(proposed)
+            return self.observation_settings()
 
     def import_settings(self, document):
         update = validate_settings_document(document)

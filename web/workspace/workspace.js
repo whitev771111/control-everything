@@ -124,6 +124,7 @@ function showView(view) {
   $('all-tasks').hidden = view !== 'overview';
   if (app.snapshot) { renderProjects(); renderTasks(); }
   $('settings-view').hidden = view !== 'settings' || !app.profileMode;
+  if (view !== 'settings') $('registration-settings').open = false;
   history.replaceState(null, '', `#${view}`);
 }
 function renderStats() {
@@ -169,6 +170,7 @@ function renderProjects() {
       copy.append(el('p', '', taskSummary(project.task_counts)), el('p', '', observationSummary(project.observation)));
     }
   }
+  if (app.profileMode) window.WorkspaceObservation?.renderProjectRefs();
 }
 function renderTasks() {
   const segment = app.snapshot.tasks, root = $('tasks-list'); root.replaceChildren();
@@ -222,7 +224,11 @@ function renderProviders() {
     heading.append(el('span', 'provider-icon', provider.id === 'claude' ? 'Cl' : provider.id === 'opencode' ? 'Oc' : provider.name.slice(0, 2)), name);
     for (const [key, label] of [['observe_sessions', '会话观察'], ['read_quota', '额度协议']]) {
       const supported = provider.capabilities[key] === true;
-      badges.append(el('span', `badge${supported ? ' available' : ''}`, `${label} · ${supported ? '已接入' : '未接入'}`));
+      if (app.profileMode && key === 'observe_sessions') {
+        const available = provider.id === 'codex' && app.snapshot.sessions.available;
+        badges.append(el('span', `badge${available ? ' available' : ''}`, `会话来源 · ${available ? '可读元数据' : '未提供可读来源'}`));
+      } else if (app.profileMode) badges.append(el('span', 'badge', `额度查询入口 · ${supported ? '可查询' : '未提供'}`));
+      else badges.append(el('span', `badge${supported ? ' available' : ''}`, `${label} · ${supported ? '已接入' : '未接入'}`));
     }
     if (provider.id === 'codex' && !app.profileMode) {
       const execution = el('span', 'badge', '执行功能 · 待读取'); execution.id = 'execution-provider-badge'; badges.append(execution);
@@ -248,6 +254,7 @@ async function loadBase() {
     const snapshot = await api('/api/workspace');
     if (snapshot.status !== 'ok') throw new Error('工作空间尚未返回可用数据');
     app.snapshot = snapshot;
+    if (app.profileMode && window.WorkspaceObservation) window.WorkspaceObservation.projects = snapshot.projects.items;
     $('today').textContent = `${snapshot.today} · 北京时间`;
     message('workspace-status', `本机信息采样于 ${dateTime(snapshot.sampled_at)} · 额度与资讯独立更新`);
     const selectedFilter = $('project-filter').value;
@@ -468,6 +475,7 @@ async function bootstrap() {
   if (app.profileMode) { setupProfile(); try { await loadProfile(); } catch (error) { message('workspace-status', error.message, true); } }
   else { window.WorkspaceExecution?.init({ api, post, showView, getSnapshot: () => app.snapshot });
     if (!window.WorkspaceExecution) message('execution-status', '执行页面资源尚未就绪；请在新版服务启动后刷新。现有任务仍可使用。', true); }
+  if (app.profileMode) window.WorkspaceObservation?.start({ fetchJson: api, postJson: post });
   await Promise.allSettled([loadBase(), loadUsage(), loadNews()]);
   if (!app.profileMode) window.WorkspaceExecution?.onView(app.view);
 }
@@ -518,7 +526,7 @@ function setupProfile() {
   $('new-project').hidden = false; document.querySelector('[data-view="settings"]').hidden = false;
   document.querySelector('[data-view="runs"]').hidden = true;
   document.querySelector('.sidebar-links').replaceChildren(el('p', 'nav-label', '项目进度'), link('进度与待办 ↗', '/progress'));
-  document.querySelector('#agents-view .section-heading a').hidden = !(app.capabilities.remote_sessions || app.capabilities.workbench);
+  $('provider-sessions-link').hidden = !(app.capabilities.remote_sessions || app.capabilities.workbench);
   document.querySelector('#sessions-status').previousElementSibling.querySelector('a').hidden = !app.capabilities.remote_sessions;
   for (const [after, id] of [['tasks-list', 'tasks-pager'], ['records-list', 'records-pager'], ['todos-list', 'todos-pager']]) { const root = el('div', 'pager'); root.id = id; $(after).after(root); }
   const scope = el('select'); scope.id = 'task-scope'; scope.setAttribute('aria-label', '项目登记状态');
@@ -535,6 +543,9 @@ function setupProfile() {
   $('clear-percent').addEventListener('click', () => { $('manual-percent').value = ''; });
   $('refresh-launchers').addEventListener('click', () => loadLaunchers().catch(error => message('integrations-feedback', error.message, true)));
   $('settings-form').addEventListener('submit', saveSettings); $('import-form').addEventListener('submit', importLegacy);
+  $('open-registration-settings').addEventListener('click', event => {
+    event.preventDefault(); showView('settings'); $('registration-settings').open = true;
+  });
   if (app.view === 'runs') showView('overview'); else showView(app.view);
 }
 async function loadProfile(preserveDraft = false) {

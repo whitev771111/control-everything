@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from session_panel.sessions.source import HOST, PORT, canonical_uuid
 from session_panel.sessions.codex_index import list_threads as list_codex_threads
+from session_panel.sessions.observer_client import ObserverClient
+from session_panel.sessions import observer_protocol
 from session_panel.workspace.progress import MANUAL, REGISTRY, TODOS, add_todo, board, set_progress, toggle_todo, load_todos
 from session_panel.integrations.launchers import LauncherCatalog, catalog, start
 from session_panel.integrations.desk import headlines, pulse
@@ -29,7 +31,7 @@ WEB = REPOSITORY_ROOT / "web"
 SESSION_ROUTE = re.compile(r"/api/sessions/([^/]+)(?:/(messages|focus))?\Z")
 EXECUTION_RUN_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)\Z")
 EXECUTION_ACTION_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)/(cancel|approvals/([^/]+))\Z")
-PROFILE_POST = {"/api/profile/settings", "/api/profile/import", "/api/workspace/projects/save",
+PROFILE_POST = {"/api/profile/settings", "/api/profile/import", "/api/profile/observations", "/api/workspace/projects/save",
                 "/api/workspace/projects/restore", "/api/workspace/progress"}
 PROFILE_CAPABILITIES = {"profile": True, "project_management": True, "execution": False,
                         "personal_launchers": False, "remote_sessions": False, "terminal": False, "workbench": False,
@@ -208,6 +210,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/workspace": ("workspace/workspace.html", "text/html; charset=utf-8"),
             "/workspace.js": ("workspace/workspace.js", "text/javascript; charset=utf-8"),
             "/execution.js": ("workspace/execution.js", "text/javascript; charset=utf-8"),
+            "/observation.js": ("workspace/observation.js", "text/javascript; charset=utf-8"),
             "/workspace.css": ("workspace/workspace.css", "text/css; charset=utf-8"),
         }
         if path.path in static and not path.query:
@@ -218,6 +221,10 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return self.reject(404, "route_not_found")
             return self.reply(200, body, mime)
         try:
+            if path.path == "/api/workspace/observations":
+                if path.query:
+                    raise ValueError("invalid_query")
+                return self.reply(200, self.server.workspace.observations())
             if self.profile() is not None and self.profile_get(path):
                 return
             if (path.path in {"/api/workspace/execution", "/api/workspace/execution/context"}
@@ -273,6 +280,9 @@ class PanelHandler(BaseHTTPRequestHandler):
         if not self.allowed(api=True, focus=True):
             return
         path = urlsplit(self.path)
+        if path.path in {"/api/workspace/observations/return", "/api/workspace/observations/window-choices",
+                         "/api/workspace/observations/window-choices/close"}:
+            return self.observation_post(path)
         if self.profile() is not None:
             if self.profile_post(path):
                 return
@@ -365,6 +375,38 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.reject(400, "invalid_request")
         except Exception:
             self.reject(503, "workbench_launch_failed" if connect else "focus_failed")
+
+    def observation_post(self, path):
+        try:
+            if path.query:
+                raise ValueError("invalid_request")
+            body = self.read_json_body(max_bytes=4096, strict=True)
+            if path.path.endswith("/return"):
+                observer_protocol.exact(body, {"action_id", "generation", "seq"})
+                observer_protocol.token(body["action_id"])
+                observer_protocol.token(body["generation"])
+                observer_protocol.integer(body["seq"])
+                method = "return_window"
+            elif path.path.endswith("/close"):
+                observer_protocol.exact(body, {"selection_id", "generation"})
+                observer_protocol.token(body["selection_id"])
+                observer_protocol.token(body["generation"])
+                method = "dismiss_window_choices"
+            else:
+                observer_protocol.exact(body, {"registration_id"})
+                observer_protocol.registration_id(body["registration_id"])
+                method = "list_window_choices"
+        except (ValueError, UnicodeError, OSError):
+            return self.reject(400, "invalid_request")
+        observer = self.server.__dict__.get("observer")
+        if observer is None:
+            return self.reply(503, {"status": "unavailable", "reason": "observer_unavailable"})
+        value = observer.request(method, body)
+        status = 200 if value["status"] == "available" else 503 if value["status"] == "unavailable" else 409
+        # A limited choice list remains a usable, explicitly bounded response.
+        if method == "list_window_choices" and "choices" in value:
+            status = 200
+        self.reply(status, value)
 
     def workspace_reply(self, path, body=None):
         workspace = self.server.workspace
@@ -505,6 +547,15 @@ class PanelHandler(BaseHTTPRequestHandler):
             if path.query:
                 raise ValueError("invalid_query")
             self.reply(200, profile.public(startup_integrations=self.server.startup_integrations))
+        elif route in ("/api/profile/observations", "/api/profile/observations/candidates"):
+            if path.query:
+                raise ValueError("invalid_query")
+            if route.endswith("/candidates"):
+                observer = self.server.__dict__.get("observer")
+                value = observer.request("list_installation_candidates", {}) if observer else {"status": "unavailable", "reason": "observer_unavailable"}
+            else:
+                value = workspace.observation_settings()
+            self.reply(200, value)
         elif route == "/api/progress":
             if path.query:
                 raise ValueError("invalid_query")
@@ -564,10 +615,12 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.reject(400, "invalid_request")
             return True
         try:
-            body = self.read_json_body(max_bytes=16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
+            body = self.read_json_body(max_bytes=65536 if route == "/api/profile/observations" else 16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
             if route == "/api/profile/settings":
                 value = profile.settings(body)
                 value["restart_required"] = self.server.startup_integrations is not None and profile.integrations() != self.server.startup_integrations
+            elif route == "/api/profile/observations":
+                value = self.server.workspace.save_observation_settings(body)
             elif route == "/api/profile/import":
                 if set(body) != {"source_dir"}:
                     raise ProfileError("invalid_import", "source_dir")
@@ -592,7 +645,15 @@ class PanelHandler(BaseHTTPRequestHandler):
 
 
 class PanelServer(ThreadingHTTPServer):
+    def start_observer(self):
+        observer = self.__dict__.get("observer")
+        if observer is not None:
+            observer.start()
+
     def server_close(self):
+        observer = self.__dict__.get("observer")
+        if observer is not None:
+            observer.close_client()
         execution = getattr(self, "execution", None)
         self.execution = None
         try:
@@ -610,7 +671,7 @@ class PanelServer(ThreadingHTTPServer):
 
 
 def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None, profile=None,
-                launchers=None, capabilities=None, startup_integrations=None, source=None):
+                launchers=None, capabilities=None, startup_integrations=None, source=None, observer=None):
     # The address injection exists for temporary fixture tests. Production is fixed.
     if address[0] != HOST:
         raise ValueError("loopback_only")
@@ -623,6 +684,7 @@ def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None
     server.daemon_threads = True
     server.service = service
     server.workspace = workspace
+    server.observer = observer
     server.execution = execution
     server.execution_reason = None
     server.profile = profile
@@ -640,6 +702,9 @@ def make_server(service, address=(HOST, PORT), *, workspace=None, execution=None
 def build_profile_server(data_dir=None, port=8766, *, quota_source=None, news_source=None):
     profile = Profile.open(data_dir)
     workspace = WorkspaceService(profile=profile, quota_source=quota_source, news_source=news_source)
+    observer = ObserverClient(profile.data_dir, scope_supplier=workspace.observation_scope,
+                              config_supplier=profile.observation_config, config_guard=profile.observation_guard)
+    workspace.observer = observer
     integrations = profile.integrations()
     enabled = {name: value is not None and value["enabled"] for name, value in integrations.items()}
     service, launchers = None, None
@@ -657,7 +722,7 @@ def build_profile_server(data_dir=None, port=8766, *, quota_source=None, news_so
                     "terminal": enabled["terminal"], "workbench": enabled["workbench"],
                     "personal_launchers": enabled["launchers"]}
     return make_server(service, (HOST, port), workspace=workspace, profile=profile,
-                       launchers=launchers, capabilities=capabilities, startup_integrations=integrations)
+                       launchers=launchers, capabilities=capabilities, startup_integrations=integrations, observer=observer)
 
 
 def serve(data_dir=None, port=8766):
@@ -667,6 +732,7 @@ def serve(data_dir=None, port=8766):
         print(f"工作台启动失败（{type(error).__name__}）。请检查profile配置或端口 {port}，可显式选择另一端口。", file=sys.stderr)
         return 1
     print(f"工作台：http://{HOST}:{port}/workspace；项目进度：http://{HOST}:{port}/progress；profile：{server.profile.data_dir}。旧记录可在来源设置中显式导入；Ctrl+C 停止。", file=sys.stderr)
+    server.start_observer()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

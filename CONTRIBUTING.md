@@ -4,7 +4,7 @@
 
 ## 功能目录与新增代码归属
 
-沿用原生 Python 与 HTML/CSS/JS，不增加前端构建或包安装层。后端按实际职责组织，新增代码优先放入下表对应功能包；不为每个功能预建空的通用分层。
+管理后端沿用 Python，Windows 进程观察由 Rust 组件负责；前端沿用 HTML/CSS/JS，不增加前端构建或包安装层。后端按实际职责组织，新增代码优先放入下表对应功能包；不为每个功能预建空的通用分层。
 
 | 后端目录 | 职责 |
 |---|---|
@@ -14,6 +14,7 @@
 | `session_panel/execution` | 执行准入、执行记录与受控进程 |
 | `session_panel/profiles` | 用户配置、导入备份与离线恢复 |
 | `session_panel/integrations` | 外部接入、固定启动器与旧只读 MCP |
+| `native/observer` | Windows 只读进程观察、受限本机管道及核验后的窗口返回；不写管理库 |
 
 `session_panel/paths.py` 统一固定仓库根路径。根包的四个旧 CLI 文件只保留兼容入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
 
@@ -34,6 +35,30 @@ node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui
 ```
 
 基础测试使用合成配置、临时文件和 mock，不需要作者服务器或个人工具。首次完整测试涉及固定 Gitleaks 检查时，先按下文安装已核验工具；不能把缺工具跳过称为完整检查通过。本机 requirements 固定 MCP 1.30.0，远端新 reader 环境另用 requirements-reader.txt，不能把两套环境混为一次升级。
+
+### Windows 原生观察开发
+
+原生部分使用固定 Rust 1.97.1 x64 MSVC、rustfmt/clippy 和 Visual Studio C++ Build Tools。先在 VS Native Tools 环境进入项目。工具链首次准备是单独明确步骤，全部留在本检出 ignored `work/native-observer`，不修改宿主默认工具链或全局 PATH：
+
+```powershell
+$env:RUSTUP_HOME = Join-Path (Get-Location) 'work/native-observer/rustup-home'
+$env:CARGO_HOME = Join-Path (Get-Location) 'work/native-observer/cargo-home'
+$env:CARGO_TARGET_DIR = Join-Path (Get-Location) 'work/native-observer/target'
+rustup set auto-self-update disable
+rustup toolchain install 1.97.1-x86_64-pc-windows-msvc --profile minimal --component rustfmt --component clippy --no-self-update
+```
+
+已经准备好的检出不重复安装。普通构建入口只检查七个实际工具文件，缺失明确失败，不自动下载工具链、不回落宿主。各子进程继承固定项目 RUSTUP_HOME/CARGO_HOME/TARGET_DIR 与 RUSTUP_AUTO_INSTALL=0；项目 crate 可按 Cargo.lock 下载到项目缓存。不要手动用未隔离的 rustup/cargo 代替以下入口：
+
+```powershell
+.\.venv\Scripts\python.exe -B -X utf8 scripts/build_observer.py fmt
+.\.venv\Scripts\python.exe -B -X utf8 scripts/build_observer.py test
+.\.venv\Scripts\python.exe -B -X utf8 scripts/build_observer.py clippy
+.\.venv\Scripts\python.exe -B -X utf8 scripts/build_observer.py build
+node --test tests/frontend/test_observation_ui.cjs
+```
+
+应用 Cargo.lock 提交源码，EXE/PDB、安装 manifest、工具链和日志均不提交。产物固定在 `work/native-observer/install`；正在使用的后台应先通过其已核验 CLI 正常停止，再替换产物。HTTP 不搜索 PATH 中同名后台，不在请求中编译。`native/observer/protocol.json`记录跨语言字段与身份测试向量，`src/protocol.rs`为严格请求解析；修改协议必须同步 Python 消费与合同测试。消息协议为v2，profile身份哈希和管道命名空间仍为v1，避免同一profile并行两套采样者。升级须先用旧固定产物正常停止自有daemon再替换，身份/协议不匹配时明确失败。登记配置v3由Python唯一管理，原生只接收有界快照；原生schema变更由单一负责人维护后交Python消费。Rust 单元测试仅用纯输入和当前测试进程，不启动现场 Agent；真实管道/后台生命周期、可见窗口及浏览器验收另由验收负责人执行并留证。
 
 从干净检出验收正常开发时，在上述安装和测试之后，用独立目录验证初始化与示例校验：
 

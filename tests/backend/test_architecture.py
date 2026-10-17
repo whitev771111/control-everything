@@ -1,6 +1,8 @@
 """Ownership policy examples; imports are checked by the real Import Linter."""
 
 import importlib.util
+import ast
+import sys
 from pathlib import Path
 from unittest import TestCase
 
@@ -10,9 +12,23 @@ spec.loader.exec_module(policy)
 
 
 class ArchitectureTests(TestCase):
+    def test_shared_manifest_has_only_standard_library_imports(self):
+        path = Path(__file__).resolve().parents[2] / 'src/session_panel/installation/manifest.py'
+        for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+            if isinstance(node, ast.Import):
+                names = [alias.name.split('.')[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                self.assertEqual(node.level, 0)
+                names = [node.module.split('.')[0]]
+            else:
+                continue
+            self.assertTrue(set(names).issubset(sys.stdlib_module_names))
+
     def test_known_owners_allow_legitimate_cross_feature_changes(self):
         for path in ['src/session_panel/workspace/validation.py', 'src/session_panel/profiles/profile_import.py',
                      'src/session_panel/platform/windows_jobs.py', 'src/session_panel/input_validation.py',
+                     'src/session_panel/platform/windows_installation.py', 'src/session_panel/installation/registry.py',
+                     'src/session_panel/installation/maintenance.py', 'src/session_panel/installation/manifest.py',
                      'web/workspace/quota.js', 'tools/typescript/tsconfig.news.json',
                      'tools/packaging/build_assets.py', 'pyproject.toml', 'MANIFEST.in', 'setup.py',
                      'examples/legacy/progress-manual.example.json', 'tests/e2e/verify_architecture.py',

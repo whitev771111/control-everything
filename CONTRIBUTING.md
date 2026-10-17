@@ -14,6 +14,8 @@
 | `src/session_panel/execution` | 执行准入、执行记录与受控进程 |
 | `src/session_panel/profiles` | 用户配置、导入备份与离线恢复 |
 | `src/session_panel/integrations` | 外部接入、固定启动器与旧只读 MCP |
+| `src/session_panel/installation` | Windows完整产品清单、所属登记与协作维护；不写业务库 |
+| `src/session_panel/platform` | Windows Job、安装身份及句柄原语；不依赖上层功能包 |
 | `native/observer` | Windows 只读进程观察、受限本机管道及核验后的窗口返回；不写管理库 |
 
 生产 Python 包只放在 `src/session_panel`，不要在根目录建立影子包。`src/session_panel/paths.py` 分别定位检出目录、包内资源和用户数据；源码模式保留旧根数据合同，安装模式不会把程序目录当数据目录。包根的四个旧 CLI 文件只保留兼容入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
@@ -37,9 +39,14 @@
 | integrations | workspace、sessions、基础模块 |
 | execution | workspace、sessions、基础模块 |
 | profiles | workspace、sessions、integrations、基础模块 |
+| installation | sessions 的窄身份/管道协议、基础模块；不依赖业务、配置或 HTTP |
 | http | 上述功能的装配与公开接口 |
 
 同域内 `workspace.validation` 不依赖 store/service，store 不依赖 service。项目和事项的关联判断继续使用原写连接和事务，不拆库或在检查后另开连接写入。旧 CLI 与兼容重导出供旧调用使用，新内部代码引用真实实现，不通过动态导入绕过边界。
+
+安装模块只有 HTTP 装配层可以调用；sessions、workspace、profiles、execution、integrations 和基础模块不得反向依赖它。`installation.manifest` 只用标准库，构建器与运行时共用；registry 不依赖 maintenance。完整产品在绑定成功后核基础闭包、持安装互斥登记 HTTP 与 profile、启动观察后释放，退出只清自己的 HTTP 活动记录。源码检出及普通 wheel 不登记这套安装；原生缺失或 pin 不匹配仍可管理并显示受限，基础闭包损坏会阻止启动。
+
+安装记录只提供所属线索，维护重新核 OS 创建时间、SID/session、规范映像与 fileID，再用实际旧原 EXE 正常 status/stop；HTTP 或未知安装进程仍运行时阻塞。Inno 自有 EXE/DAT/MSG 交其卸载日志处理，项目不夺锁；卸载仅清精确自有管理文件，业务数据与未知资料保留。临时 bootstrap 和直接 OS 父链用于防错归属与并发，不宣称认证安装脚本、证明父锁所有者或抵御同 SID 主动伪造整个未签名产品。安装现场与全新 Windows 兼容结论须单独留实际证据。
 
 额度 DOM 展示在 `web/workspace/quota.js`，观察动作处理在 `http/observation_routes.py`；主脚本、网关只委派相应职责。前端仍使用普通 Window 模块，依赖注入、DOM 合同、脚本顺序及独立代码审查共同约束；Python 导入检查不覆盖 JavaScript 或 SQL 的业务含义。
 

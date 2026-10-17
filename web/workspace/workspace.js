@@ -42,7 +42,7 @@ const viewCopy = {
 };
 Object.assign(viewCopy, {
   overview: ['总览', '工作总览', '', ''], tasks: ['全部事项', '全部事项', '', ''],
-  attention: ['待我处理', '待我处理', '', ''], global: ['未归类事项', '未归类事项', '', ''],
+  attention: ['待处理', '待处理', '', ''], global: ['未归类事项', '未归类事项', '', ''],
   project: ['项目', '项目工作空间', '', ''], projects: ['项目管理', '项目管理', '', ''],
   agents: ['工具与接入', '工具与接入', '', ''], usage: ['用量与额度', '用量与额度', '账户额度，直接读取。', ''],
   news: ['新闻', '新闻', '', ''], settings: ['设置与导入', '设置与导入', '', ''],
@@ -466,7 +466,6 @@ function setupTaskCenter() {
     root: $('project-space'), navigation: $('project-navigation'), taskRoot: $('task-center-root'), tasks: app.taskCenter,
     navigate: showView,
     manage: project => { openProject(project); },
-    record: project => { $('project-form').hidden = true; openManual(project); },
   });
   for (const name of ['tasks', 'attention', 'projects']) document.querySelector(`[data-view="${name}"]`).hidden = true;
   showView(app.view);

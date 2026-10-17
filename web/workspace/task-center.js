@@ -42,7 +42,7 @@
     const toolbar = node('div', 'task-toolbar item-toolbar');
     const scope = named('select', 'item-scope'), project = named('select', 'item-project-filter');
     const provider = named('select', 'item-provider-filter'), state = named('select', 'item-state-filter');
-    options(scope, [['all', '全部事项'], ['attention', '待我处理'], ['active', '活动项目'], ['archived', '归档项目'], ['orphan', '未登记项目'], ['global', '全局事项']], 'all');
+    options(scope, [['all', '全部事项'], ['attention', '待处理'], ['active', '活动项目'], ['archived', '归档项目'], ['orphan', '未登记项目'], ['global', '全局事项']], 'all');
     options(provider, [['', '全部工具'], ...Object.entries(providers)]);
     options(state, [['', '全部状态'], ...Object.entries(states)]);
     const scopeField = label('范围', scope), projectField = label('项目', project);
@@ -224,7 +224,7 @@
       quick.hidden = nextScope === 'attention' && !quickTitle.value;
       heading.lastElementChild.hidden = nextScope === 'attention';
       scopeField.hidden = Boolean(projectId) || nextScope !== 'all'; projectField.hidden = Boolean(projectId) || nextScope === 'global';
-      title.textContent = nextScope === 'attention' ? '待我处理' : nextScope === 'global' ? '未归类事项' : '任务';
+      title.textContent = nextScope === 'attention' ? '待处理' : nextScope === 'global' ? '未归类事项' : '任务';
       if (quickTitle.value) {
         if (quickProject === null) quickProject = '';
         hint.textContent = `未保存草稿属于：${projectName(quickProject)}`; hint.hidden = false;

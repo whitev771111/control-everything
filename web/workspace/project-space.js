@@ -1,9 +1,9 @@
 // Project navigation uses the existing snapshot and a single task editor.
 'use strict';
 (() => {
-  const tabs = { overview: '概览', tasks: '全部事项', attention: '待我处理', sessions: '会话', records: '成果与记录', materials: '资料' };
-  function create({ root, navigation, taskRoot, tasks, navigate, manage, record }) {
-    let snapshot = null, selected = null, tab = 'overview', view = 'overview';
+  const tabs = { tasks: '全部事项', attention: '待处理', sessions: '会话' };
+  function create({ root, navigation, taskRoot, tasks, navigate, manage }) {
+    let snapshot = null, selected = null, tab = 'tasks', view = 'overview';
     const taskHome = taskRoot.parentElement;
     const node = (tag, cls, text) => {
       const value = ['svg', 'rect'].includes(tag) ? document.createElementNS('http://www.w3.org/2000/svg', tag) : document.createElement(tag);
@@ -30,16 +30,6 @@
         value.title = item.name;
         if (view === 'project' && selected === item.id) value.setAttribute('aria-current', 'page');
         navigation.append(value);
-        if (view === 'project' && selected === item.id) {
-          const children = node('div', 'project-nav-children');
-          for (const [key, label] of [['tasks', '全部事项'], ['attention', '待我处理']]) {
-            const child = button(label, () => open(item.id, key), 'project-nav-child');
-            if (tab === key) child.setAttribute('aria-current', 'page');
-            children.append(child);
-          }
-          children.append(button('项目设置', () => manage(item), 'project-nav-child'));
-          navigation.append(children);
-        }
       }
       if (!navigation.children.length) navigation.append(node('p', 'section-note', '尚无项目'));
     }
@@ -103,18 +93,6 @@
       if (tab === 'tasks' || tab === 'attention') {
         root.append(taskRoot); taskRoot.hidden = false;
         tasks.setContext({ projectId: item.id, scope: tab === 'attention' ? 'attention' : 'all' });
-      } else if (tab === 'overview') {
-        const panel = node('section', 'project-summary');
-        panel.append(node('h3', '', '项目进展'), node('p', 'project-note', item.note || '从一条事项开始推进项目。'));
-        if (item.manual_recorded) panel.append(node('p', 'section-note', `人工状态：${item.state}${typeof item.percent === 'number' ? ` · ${item.percent}%` : ''}`));
-        panel.append(button('更新记录', () => record(item), 'text-button')); root.append(panel);
-        const counts = node('div', 'project-counts');
-        for (const [key, label] of [['todo', '待办'], ['doing', '进行中'], ['blocked', '阻塞'], ['review', '待验收'], ['done', '完成']]) {
-          counts.append(button(`${label} ${item.task_counts?.[key] || 0}`, () => {
-            open(item.id, 'tasks'); tasks.filterState(key);
-          }));
-        }
-        root.append(counts);
       } else if (tab === 'sessions') {
         root.append(node('p', 'section-note', '当前接入来源中，工作目录属于本项目的会话。'));
         for (const hit of item.sessions || []) {
@@ -125,22 +103,6 @@
         }
         if (!item.sessions?.length) root.append(blank(snapshot.sessions.available ? '当前样本中没有项目会话。' : '尚未接入可用的会话来源。'));
         root.append(button('工具与接入', () => navigate('agents')));
-      } else if (tab === 'records') {
-        root.append(button('人工记录与历史', () => record(item)));
-        for (const entry of item.records || []) {
-          const row = node('article', 'context-row');
-          row.append(node('h3', '', [entry.feature, entry.label].filter(Boolean).join(' · ') || '来源记录'), node('p', '', entry.text || '来源未提供内容'));
-          root.append(row);
-        }
-        if (!item.records?.length) root.append(blank('暂无来源记录；产物文件尚未接入。'));
-        if (item.observation?.truncated) root.append(node('p', 'section-note', `来源摘要 ${item.records.length} / ${item.observation.total} 条`));
-      } else {
-        root.append(node('h3', '', '项目目录'));
-        for (const directory of item.directories || []) {
-          const row = node('article', 'context-row');
-          row.append(node('p', 'context-path', directory.path)); root.append(row);
-        }
-        root.append(node('p', 'section-note', '展示已登记的目录；不扫描或上传本地文档。'), button('管理目录与来源', () => manage(item)));
       }
     }
     function render() {
@@ -164,7 +126,7 @@
     }
     return {
       open,
-      route(id, next) { selected = id; tab = Object.hasOwn(tabs, next) ? next : 'overview'; },
+      route(id, next) { selected = id; tab = Object.hasOwn(tabs, next) ? next : 'tasks'; },
       show(next) { view = next; root.hidden = !['overview', 'project', 'tasks', 'attention', 'global'].includes(view); render(); },
       update(value) { snapshot = value; render(); },
     };

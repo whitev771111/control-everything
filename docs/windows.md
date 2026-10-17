@@ -6,9 +6,9 @@
 
 ## Windows 标准安装
 
-截至 2026-10-17，公开 Releases 尚无安装包。以下说明适用于后续实际发布的安装器；当前请按[源码启动](../README.md#快速开始)使用。
+当前提供 [0.1.0a1 Windows x64 开发预览版](https://github.com/zxl123456123/control-everything/releases/tag/v0.1.0a1)。安装器尚未签名；实际验证范围和未覆盖项目见该版本说明。开发者也可按[源码启动指南](usage.md#多-agent-工作台)运行。
 
-安装器发布后，普通用户从 [GitHub Releases](https://github.com/zxl123456123/control-everything/releases) 选择 Windows x64 技术预发布的 `session-panel-<版本>-windows-x64.exe`，先用 `Get-FileHash -Algorithm SHA256` 与该次发布的 `SHA256SUMS.txt` 核对，再运行安装器。标准产品自带 CPython 3.13.16、固定 Python 依赖、前端资源和 release Rust 原生观察后台，无需另外安装 Python、Node、npm 或 Rust 编译器。wheel 和源码归档供开发使用，不能代替完整安装器。
+普通用户从 [GitHub Releases](https://github.com/zxl123456123/control-everything/releases) 下载 `session-panel-0.1.0a1-windows-x64.exe`，先用 `Get-FileHash -Algorithm SHA256` 与该次发布的 `SHA256SUMS.txt` 核对，再运行安装器。标准产品自带 CPython 3.13.16、固定 Python 依赖、前端资源和 release Rust 原生观察后台，无需另外安装 Python、Node、npm 或 Rust 编译器。源码归档供开发使用，不能代替完整安装器。
 
 安装目录支持中文和空格；当前产品按普通 Windows 路径工作，每个完整交付文件路径须少于260个UTF-16字符。安装器在写入目标前检查整个固定文件清单，超限时提示选择更短目录，不修改系统的长路径策略。
 
@@ -29,7 +29,7 @@ $panel = Join-Path $env:LOCALAPPDATA 'Programs/SessionPanel/session-panel.cmd'
 
 产品版本只定义于 `pyproject.toml`；wheel 元数据、产品闭包和安装器显示版本消费同一个值，Inno 文件数值版本按固定映射生成。`tools/packaging/downloads.json` 固定官方 CPython 和 Inno Setup 下载及 SHA-256，`windows-cp313.lock` 固定 Windows x64/CPython 3.13 的全部轮子，`rust-toolchain.toml` 固定 Rust。前端只有 `web` 这一份手写源码，wheel 构建按资源白名单收集；EXE、依赖轮子、安装器及真实用户资料不提交 Git。
 
-维护者使用 `.github/workflows/release.yml` 的手动入口，提交完整的已合入 main 的 40 位 commit SHA。流水线先检查该提交的 `windows-tests`、`architecture-boundaries`、`new-content-checks` 三项成功，再构建 sdist→wheel、静态 CRT release observer、严格 `--release` 产品闭包和 Inno 安装器。受测产物与源码提交、源码输入哈希、依赖锁、第三方声明及公开资产 SHA-256 绑定；独立发布 job 才获得写权限，发布 `v<版本>` 的技术 prerelease，不移动已有版本 tag。Actions artifact 上传与 GitHub Release 发布是两个独立结果，最终以 Release URL 和发布状态为准。
+自动发布可使用 `.github/workflows/release.yml` 的手动入口，提交完整的已合入 main 的 40 位 commit SHA。该流水线先检查该提交的 `windows-tests`、`architecture-boundaries`、`new-content-checks` 三项成功，再构建 sdist→wheel、静态 CRT release observer、严格 `--release` 产品闭包和 Inno 安装器。受测产物与源码提交、源码输入哈希、依赖锁、第三方声明及公开资产 SHA-256 绑定；独立发布 job 才获得写权限，发布 `v<版本>` 的技术 prerelease，不移动已有版本 tag。当前快速开发阶段也可在完成相应本地构建和验收后手动上传预览包，tag 指向安装包的实际源码提交，先核验附件再发布，并明确验证范围。Actions artifact 上传与 GitHub Release 发布是两个独立结果，最终以 Release URL 和发布状态为准。
 
 安装验收入口只接受全新证据目录、合成 profile 和显式产品文件；存在同 AppId 安装或已有开始菜单入口时拒绝运行。它会真实安装、运行本次隔离实例并卸载，失败后保留证据和安装，不自动强杀或删除。以下命令由验收负责人在专用 Windows 用户环境执行，路径均为自己准备的绝对路径：
 

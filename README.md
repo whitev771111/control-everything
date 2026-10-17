@@ -4,7 +4,7 @@
 
 适合同时使用多个开发工具、在不同项目之间切换的个人开发者。项目与任务保存在本机，基础管理无需配置 Agent、SSH 或远端服务。
 
-[快速开始](#快速开始) · [项目文档](docs/README.md) · [参与开发](.github/CONTRIBUTING.md)
+[下载安装包](https://github.com/zxl123456123/control-everything/releases/tag/v0.1.0a1) · [项目文档](docs/README.md) · [参与开发](.github/CONTRIBUTING.md)
 
 ## 产品展示
 
@@ -24,13 +24,13 @@ https://github.com/user-attachments/assets/be96cc58-6bd8-4221-b0aa-77c0f9e31804
 
 ## 快速开始
 
-当前提供源码启动方式。**截至 2026-10-17，公开 Releases 尚无安装包**；后续安装器及维护说明见 [Windows 安装指南](docs/windows.md)。
+**Windows x64 开发预览版 0.1.0a1**：[下载安装包](https://github.com/zxl123456123/control-everything/releases/download/v0.1.0a1/session-panel-0.1.0a1-windows-x64.exe) · [版本说明与校验值](https://github.com/zxl123456123/control-everything/releases/tag/v0.1.0a1)。安装包自带运行环境，无需另装 Python、Node.js 或 Rust。
 
-1. 在 Windows 上准备 Python 3.12 或更新版本。
-2. 按[源码启动指南](docs/usage.md#多-agent-工作台)安装并启动服务。
+1. 下载并运行安装器。
+2. 从开始菜单的 **Session Panel** 启动程序（安装入口暂沿用此名称）。
 3. 打开 **http://127.0.0.1:8766/workspace**，点击“添加项目”开始使用。
 
-基础网页启动无需 Node.js 或 Rust 编译器。数据保存在本机；独立数据目录、端口设置、导入与备份见[使用指南](docs/usage.md)。
+也可按[源码启动指南](docs/usage.md#多-agent-工作台)运行。数据保存在本机；安装维护见 [Windows 安装指南](docs/windows.md)，独立数据目录、端口设置、导入与备份见[使用指南](docs/usage.md)。
 
 ## 当前边界
 
@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/be96cc58-6bd8-4221-b0aa-77c0f9e31804
 - 会话身份、进程运行和人工任务进度分别展示；进程存在不代表 Agent 正在工作或任务已经完成。
 - 当前不开放 Agent 自动执行、审批或模型费用试跑；远端服务和个人工具需自行配置。
 - 服务只监听本机；关闭网页或 Python 网关不会结束外部 Agent，也不会停止独立观察后台。
-- 后续 Windows 技术预发布的目标平台为 Windows 10/11 x64，安装器与原生程序目前未签名。
+- 当前为开发预览版，目标平台 Windows 10/11 x64；安装器与原生程序未签名，已做本机安装验证，尚未完成干净 Win10/Win11 环境矩阵测试。
 
 ## 详细说明
 

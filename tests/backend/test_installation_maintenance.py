@@ -10,6 +10,55 @@ from tests.backend.test_installation_registry import InstallationFixture, REGIST
 
 
 class MaintenanceTests(InstallationFixture):
+    def test_temp_reparse_is_rejected_before_alias_resolution(self):
+        import stat
+        from types import SimpleNamespace
+        raw = self.root / 'synthetic temp junction'
+        original_lstat = Path.lstat
+        def lstat(path, *args, **kwargs):
+            if path == raw:
+                return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+            return original_lstat(path, *args, **kwargs)
+        with patch.object(MAINTENANCE.tempfile, 'gettempdir', return_value=str(raw)), \
+                patch.object(Path, 'lstat', lstat), \
+                patch.object(Path, 'resolve', side_effect=AssertionError('reparse must be rejected before resolve')) as resolve, \
+                self.assertRaises(MAINTENANCE.manifest.ManifestError) as caught:
+            MAINTENANCE.canonical_temp_root()
+        self.assertEqual(caught.exception.reason, 'linked_path')
+        resolve.assert_not_called()
+
+    def test_short_temp_alias_keeps_prepare_and_uninstall_chain_valid(self):
+        import ctypes as C
+        from ctypes import wintypes as W
+        import os
+        import tempfile
+        if os.name != 'nt':
+            self.skipTest('Windows 8.3 path alias contract')
+        with tempfile.TemporaryDirectory(prefix='Session Panel canonical temp ', dir=self.root) as directory:
+            canonical = Path(directory).resolve()
+            shorten = C.WinDLL('kernel32', use_last_error=True).GetShortPathNameW
+            shorten.argtypes, shorten.restype = [W.LPCWSTR, W.LPWSTR, W.DWORD], W.DWORD
+            buffer = C.create_unicode_buffer(32768)
+            size = shorten(str(canonical), buffer, len(buffer))
+            self.assertTrue(0 < size < len(buffer))
+            short = Path(buffer.value)
+            if str(short).casefold() == str(canonical).casefold():
+                self.skipTest('Test volume does not provide a distinct 8.3 alias')
+            self.assertEqual(short.resolve(), canonical)
+            self.assertEqual((short.stat().st_dev, short.stat().st_ino),
+                             (canonical.stat().st_dev, canonical.stat().st_ino))
+            with patch.object(tempfile, 'tempdir', str(short)):
+                case = MaintenanceTests(methodName='test_exact_inno_two_stage_chain_does_not_wait_or_lock_own_dat')
+                case.setUp()
+                try:
+                    invocation = case.invocation(uninstall=True)
+                    code, receipt = case.run_preflight('uninstall', invocation=invocation)
+                    self.assertEqual((code, receipt['status']), (0, 'ready'))
+                    self.assertTrue(Path(invocation['bootstrap']).is_relative_to(canonical))
+                    self.assertEqual(case.api.mutex_waits, 0)
+                finally:
+                    case.doCleanups()
+
     def installation_bytes(self, root=None):
         root = self.install if root is None else root
         return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob('*') if path.is_file()}

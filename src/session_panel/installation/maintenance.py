@@ -52,12 +52,17 @@ def same_process(actual, expected):
     return actual.identity == expected and actual.alive()
 
 
+def canonical_temp_root():
+    original = registry.checked_path(str(Path(tempfile.gettempdir()).absolute()))
+    return registry.checked_path(str(original.resolve(strict=True)))
+
+
 def bootstrap_context(api):
     process = api.current_identity()
     context = registry.ProductContext.load(Path(process['image']['path']).parent.parent)
     manifest.verify_payload(context.version_dir, strict_native=True)
     if (process['image'] != api.file_identity(context.version_dir / 'runtime/python.exe')
-            or context.version_dir.is_relative_to(Path(tempfile.gettempdir())) is False
+            or context.version_dir.is_relative_to(canonical_temp_root()) is False
             or context.install_root.name != '{app}'):
         raise Blocked(21, 'bootstrap_location')
     return context
@@ -113,7 +118,7 @@ def verify_maintenance_invocation(invocation, api, stack):
         if (not same_process(original, invocation['original']) or registered != invocation['uninstaller']
                 or original.identity['image'] != registered
                 or any(original.identity[key] != own[key] for key in ('sid', 'authentication', 'session'))
-                or not Path(parent.identity['image']['path']).is_relative_to(Path(tempfile.gettempdir()))
+                or not Path(parent.identity['image']['path']).is_relative_to(canonical_temp_root())
                 or manifest.sha256(parent.identity['image']['path']) != manifest.sha256(registered['path'])):
             raise Blocked(21, 'uninstaller_chain')
         participants.append(original)

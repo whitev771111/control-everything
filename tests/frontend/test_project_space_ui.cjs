@@ -20,7 +20,7 @@ class Element {
   get all() { return [this, ...this.children.flatMap(value => value.all)]; }
 }
 function fixture() {
-  const context = vm.createContext({ window: {}, document: { createElement: tag => new Element(tag) } });
+  const context = vm.createContext({ window: {}, document: { createElement: tag => new Element(tag), createElementNS: (_ns, tag) => new Element(tag) } });
   vm.runInContext(fs.readFileSync(path.resolve(__dirname, '../../web/workspace/project-space.js'), 'utf8'), context);
   const root = new Element('section'), navigation = new Element('nav'), home = new Element('div'), taskRoot = new Element('div');
   home.append(taskRoot); const contexts = [], routes = [], managed = [], records = [];

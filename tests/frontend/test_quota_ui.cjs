@@ -73,3 +73,28 @@ test('the real controller injects dependencies and the page loads quota before t
   assert.ok(html.indexOf('src="/quota.js" defer') < html.indexOf('src="/workspace.js" defer'));
   assert.equal((html.match(/src="\/quota.js"/g) || []).length, 1);
 });
+
+test('quota dials distinguish actual zero usage from missing data', () => {
+  const f = fixture();
+  f.render(quota({ status: 'available', buckets: [{ id: 'default', primary: { used_percent: 0, window_minutes: 300, resets_at: null }, secondary: { used_percent: null, window_minutes: 10080, resets_at: null } }] }));
+  const dials = descendants(f.dependencies.root).filter(node => node.className === 'quota-dial');
+  assert.equal(dials[0].dataset.known, 'true'); assert.match(dials[0].textContent, /100%/);
+  assert.equal(dials[0].style, undefined);
+  assert.equal(descendants(dials[0]).find(node => node.class === 'quota-ring-value')['stroke-dasharray'], '100 100');
+  assert.equal(dials[1].dataset.known, 'false'); assert.doesNotMatch(dials[1].textContent, /0%|100%/);
+  f.render(quota({})); assert.equal(descendants(f.dependencies.root).filter(node => node.className === 'quota-dial').length, 0);
+});
+
+test('usage page has no manual ledger form or record requests', async () => {
+  const html = fs.readFileSync(path.join(repo, 'web/workspace/workspace.html'), 'utf8');
+  const controller = fs.readFileSync(path.join(repo, 'web/workspace/workspace.js'), 'utf8');
+  assert.doesNotMatch(html, /id="(?:new-record|record-form|records-list)"/);
+  assert.doesNotMatch(controller, /\/api\/workspace\/records|function saveRecord|function openRecord/);
+  const reads = [], nodes = new Map();
+  const context = vm.createContext({ app: { csrf: 'test', profileMode: true },
+    $: id => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); },
+    api: async url => { reads.push(url); return { status: 'ok', codex: quota({}) }; }, renderQuota() {} });
+  const fn = controller.match(/async function loadUsage\([^]*?\n\}/)[0];
+  await vm.runInContext(fn + '\nloadUsage()', context);
+  assert.deepEqual(reads, ['/api/workspace/usage']);
+});

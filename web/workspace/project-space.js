@@ -6,7 +6,8 @@
     let snapshot = null, selected = null, tab = 'overview', view = 'overview';
     const taskHome = taskRoot.parentElement;
     const node = (tag, cls, text) => {
-      const value = document.createElement(tag); value.className = cls || '';
+      const value = ['svg', 'rect'].includes(tag) ? document.createElementNS('http://www.w3.org/2000/svg', tag) : document.createElement(tag);
+      value.setAttribute('class', cls || '');
       if (text !== undefined) value.textContent = text;
       return value;
     };
@@ -24,6 +25,8 @@
       for (const item of snapshot?.projects.items || []) {
         if (item.archived && item.id !== selected) continue;
         const value = button(item.name, () => open(item.id), 'project-nav-button');
+        value.dataset.initial = [...item.name][0] || 'P';
+        value.setAttribute('aria-label', item.name);
         value.title = item.name;
         if (view === 'project' && selected === item.id) value.setAttribute('aria-current', 'page');
         navigation.append(value);
@@ -42,11 +45,28 @@
       for (const item of items) {
         const card = node('article', 'project-card');
         const heading = node('div', 'section-heading');
-        heading.append(button(item.name, () => open(item.id), 'project-card-title'));
+        const title = button(item.name, () => open(item.id), 'project-card-title'); title.dataset.initial = [...item.name][0] || 'P';
+        title.setAttribute('aria-label', item.name);
+        heading.append(title);
         if (attention(item)) heading.append(node('span', 'attention-count', `${attention(item)} 待处理`));
-        card.append(heading, node('p', 'project-note', item.note || '还没有人工记录'));
+        card.append(heading);
+        if (item.note) card.append(node('p', 'project-note', item.note));
+        const distribution = node('svg', 'project-distribution'); distribution.setAttribute('aria-label', '任务状态分布');
+        distribution.setAttribute('viewBox', '0 0 100 6'); distribution.setAttribute('preserveAspectRatio', 'none');
+        let position = 0;
+        for (const [state, label] of [['done', '完成'], ['doing', '进行中'], ['review', '待验收'], ['blocked', '阻塞'], ['todo', '待办']]) {
+          const count = item.task_counts?.[state] || 0;
+          if (!count) continue;
+          const width = count / Math.max(1, item.task_counts?.total || 0) * 100;
+          const segment = node('rect', `distribution-${state}`); segment.setAttribute('x', String(position)); segment.setAttribute('width', String(width)); segment.setAttribute('height', '6');
+          segment.setAttribute('aria-label', `${label} ${count}`); distribution.append(segment); position += width;
+        }
+        card.append(distribution);
         const meta = node('div', 'project-card-meta');
         meta.append(node('span', '', `${item.task_counts?.total || 0} 项任务`));
+        const states = [['doing', '进行中'], ['review', '待验收'], ['blocked', '阻塞'], ['done', '完成'], ['todo', '待办']];
+        const distributionLabel = states.filter(([key]) => item.task_counts?.[key]).map(([key, label]) => `${label} ${item.task_counts[key]}`).join(' · ');
+        if (distributionLabel) meta.append(node('span', 'project-state-caption', distributionLabel));
         if (item.manual_recorded) meta.append(node('span', '', `人工 · ${item.state}${typeof item.percent === 'number' ? ` ${item.percent}%` : ''}`));
         meta.append(button('进入项目 →', () => open(item.id), 'text-button'));
         card.append(meta); grid.append(card);

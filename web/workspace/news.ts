@@ -124,14 +124,18 @@
     const article = element('article', 'daily-news-card'); article.dataset.newsId = item.id;
     const old = !!warnings[sample.value.stream] || !!rechecks[sample.value.stream] || !source || isOld(source, age);
     article.dataset.freshness = old ? 'stale' : 'available';
+    article.append(element('span', 'news-source-label', item.source_name));
     const heading = element('h3'); heading.append(safeLink(item.title, item.url)); article.append(heading);
     const published = item.content_origin === 'hn_submission' ? `文章发布时间未知 · HN收录 ${displayTime(item.submitted_at, local)}` : `发布 ${displayTime(item.published_at, local)}`;
-    article.append(element('p', 'news-meta', `${item.source_name} · ${published} · ${old ? '旧缓存或状态未确认' : '缓存有效'}`));
-    if (item.title_truncated) article.append(element('p', 'news-meta', '标题节选'));
-    if (item.published_at === null && item.content_origin !== 'hn_submission') article.append(element('p', 'news-meta', `出版日期未知${item.date_reason === 'timezone_unknown' ? '：来源未给出可判定时区' : ''}${item.published_raw ? ` · 来源日期：${item.published_raw}` : ''}`));
-    if (item.updated_at) article.append(element('p', 'news-meta', `来源更新 ${displayTime(item.updated_at, local)}（不作出版时间）`));
+    const compactDate = local ? published.replace(/（[^）]*）/g, '').trim() : published;
+    article.append(element('p', 'news-meta', `${compactDate}${old ? ' · 旧缓存或状态未确认' : ''}`));
+    const details = element('details', 'news-article-details'); details.append(element('summary', '', '文章详情'));
+    if (item.title_truncated) details.append(element('p', 'news-meta', '标题节选'));
+    if (item.published_at === null && item.content_origin !== 'hn_submission') details.append(element('p', 'news-meta', `出版日期未知${item.date_reason === 'timezone_unknown' ? '：来源未给出可判定时区' : ''}${item.published_raw ? ` · 来源日期：${item.published_raw}` : ''}`));
+    if (item.updated_at) details.append(element('p', 'news-meta', `来源更新 ${displayTime(item.updated_at, local)}（不作出版时间）`));
     if (item.summary !== null && item.summary_kind !== null) article.append(element('p', 'news-summary', `${item.summary_truncated ? '来源摘要节选' : '来源摘要'}：${item.summary}`));
-    article.append(element('p', 'news-meta', `采样 ${displayTime(item.fetched_at, local)} · 上次成功 ${displayTime(source?.last_success_at ?? null, local)}`));
+    details.append(element('p', 'news-meta', `采样 ${displayTime(item.fetched_at, local)} · 上次成功 ${displayTime(source?.last_success_at ?? null, local)}`));
+    article.append(details);
     return article;
   }
   function render(): void {
@@ -143,7 +147,8 @@
     if (!sample) { status.textContent = warning || '尚无完成样本 · 正在读取公开来源'; }
     else {
       const age = sampleAge(sample), value = sample.value, old = value.sources.some(source => isOld(source, age));
-      status.textContent = `${warning || (rechecking ? '恢复可见，状态重核中' : statusText[old && value.status === 'available' ? 'stale' : value.status])} · 最近尝试 ${displayTime(value.sampled_at, local)}${value.refresh.state === 'pending' ? ' · 正在刷新（不表示新鲜成功）' : ''}${value.refresh.state === 'blocked' ? ' · 采集已停止' : ''}${value.refresh.reason ? ` · ${reasonText[value.refresh.reason] || '状态未知'}` : ''}${value.refresh.retry_after_ms ? ` · ${Math.ceil(value.refresh.retry_after_ms / 1000)}秒后可再尝试` : ''}`;
+      status.textContent = `${warning || (rechecking ? '状态更新中' : statusText[old && value.status === 'available' ? 'stale' : value.status])}${value.refresh.state === 'pending' ? ' · 刷新中' : ''}${value.refresh.state === 'blocked' ? ' · 采集已停止' : ''}${value.refresh.reason ? ` · ${reasonText[value.refresh.reason] || '状态未知'}` : ''}${value.refresh.retry_after_ms ? ` · ${Math.ceil(value.refresh.retry_after_ms / 1000)}秒后可再尝试` : ''}`;
+      sources.append(element('p', 'news-limit', `最近尝试 ${displayTime(value.sampled_at, local)}`));
       for (const source of value.sources) sources.append(element('p', 'source-chip', `${source.name} · ${isOld(source, age) ? '陈旧/不可用' : '缓存有效'} · ${source.reason ? reasonText[source.reason] || '未知原因' : statusText[source.status]} · 扫描${source.scanned_count} / 有效${source.valid_count} / 过滤${source.filtered_count} / 重复${source.duplicate_count} / 返回${source.returned_count}${source.truncated ? '（输出已截断）' : ''} · 采样${displayTime(source.sampled_at, local)} · 上次成功${displayTime(source.last_success_at, local)}`));
       if (!local) list.append(element('p', 'news-notice', '无法判定本地日期；以下日期不计入今日。'));
       if (!value.items.length) list.append(element('p', 'news-notice', value.status === 'available' ? '本次源响应为空。' : '本次没有可展示条目，来源状态见上。'));

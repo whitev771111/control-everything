@@ -3,7 +3,6 @@
 const $ = id => document.getElementById(id);
 const providerNames = { codex: 'Codex', claude: 'Claude Code', grok: 'Grok', dsh: 'DSH', opencode: 'OpenCode' };
 const stateNames = { todo: '待办', doing: '进行中', blocked: '阻塞', review: '待验收', done: '完成' };
-const productNames = { subscription: '订阅', cli: 'CLI credits', api: 'xAI API', local: '本地工具' };
 const statusNames = { not_checked: '未查询', available: '可用', unavailable: '不可用', stale: '旧缓存' };
 const reasons = {
   directory_conflict: '这个目录已绑定到活动项目，请调整路径或先归档原项目', source_binding_missing: '来源仍引用待删除目录，请先更换来源目录',
@@ -45,13 +44,13 @@ Object.assign(viewCopy, {
   overview: ['总览', '工作总览', '', ''], tasks: ['全部事项', '全部事项', '', ''],
   attention: ['待我处理', '待我处理', '', ''], global: ['未归类事项', '未归类事项', '', ''],
   project: ['项目', '项目工作空间', '', ''], projects: ['项目管理', '项目管理', '', ''],
-  agents: ['工具与接入', '工具与接入', '', ''], usage: ['用量与额度', '用量与额度', '', ''],
-  news: ['信息流', '信息流', '', ''], settings: ['设置与导入', '设置与导入', '', ''],
+  agents: ['工具与接入', '工具与接入', '', ''], usage: ['用量与额度', '用量与额度', '账户额度，直接读取。', ''],
+  news: ['新闻', '新闻', '', ''], settings: ['设置与导入', '设置与导入', '', ''],
 });
-const app = { view: 'overview', csrf: '', snapshot: null, usage: null, taskId: null, recordId: null, profileMode: false, profile: null, capabilities: {}, projectId: null, restoreId: null, manualId: null, historyRequest: 0, pages: { tasks: 0, records: 0, todos: 0, history: 0, compatibility: 0 } };
+const app = { view: 'overview', csrf: '', snapshot: null, usage: null, taskId: null, profileMode: false, profile: null, capabilities: {}, projectId: null, restoreId: null, manualId: null, historyRequest: 0, pages: { tasks: 0, todos: 0, history: 0, compatibility: 0 } };
 
 function el(tag, className, text) {
-  const node = document.createElement(tag);
+  const node = ['svg', 'circle', 'rect'].includes(tag) ? document.createElementNS('http://www.w3.org/2000/svg', tag) : document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined && text !== null) node.textContent = String(text);
   return node;
@@ -252,17 +251,21 @@ function renderProviders() {
     heading.append(el('span', 'provider-icon', provider.id === 'claude' ? 'Cl' : provider.id === 'opencode' ? 'Oc' : provider.name.slice(0, 2)), name);
     for (const [key, label] of [['observe_sessions', '会话观察'], ['read_quota', '额度协议']]) {
       const supported = provider.capabilities[key] === true;
+      if (app.profileMode && !supported) continue;
       if (app.profileMode && key === 'observe_sessions') {
         const available = provider.id === 'codex' && app.snapshot.sessions.available;
-        badges.append(el('span', `badge${available ? ' available' : ''}`, `会话来源 · ${available ? '可读元数据' : '未提供可读来源'}`));
-      } else if (app.profileMode) badges.append(el('span', 'badge', `额度查询入口 · ${supported ? '可查询' : '未提供'}`));
+        badges.append(el('span', `badge${available ? ' available' : ''}`, available ? '会话已连接' : '会话未连接'));
+      } else if (app.profileMode) badges.append(el('span', 'badge available', '支持额度查询'));
       else badges.append(el('span', `badge${supported ? ' available' : ''}`, `${label} · ${supported ? '已接入' : '未接入'}`));
     }
     if (provider.id === 'codex' && !app.profileMode) {
       const execution = el('span', 'badge', '执行功能 · 待读取'); execution.id = 'execution-provider-badge'; badges.append(execution);
       const preparation = el('p', '', '本机准备条件待读取；发现命令不代表账号可推理。'); preparation.id = 'execution-provider-status'; detail.append(preparation);
-    } else badges.append(el('span', 'badge', '派发 / 审批 / 取消 · 未接入'));
-    detail.append(badges, el('p', '', provider.observation_note));
+    } else if (!app.profileMode) badges.append(el('span', 'badge', '派发 / 审批 / 取消 · 未接入'));
+    detail.append(badges);
+    if (app.profileMode) {
+      const explanation = el('details', 'provider-explanation'); explanation.append(el('summary', '', '能力说明'), el('p', '', provider.observation_note)); detail.append(explanation);
+    } else detail.append(el('p', '', provider.observation_note));
     if (!app.profileMode) for (const entry of provider.entrypoints || []) links.append(link(`${entry.label} ↗`, entry.href));
     row.append(heading, detail, links); root.append(row);
   }
@@ -295,7 +298,6 @@ async function loadBase() {
     if (!app.projectSpace || app.view === 'projects') renderProjects();
     if (!app.profileMode) { renderTasks(); renderTodos(); }
     renderProviders();
-    if (!$('record-form').hidden && !$('record-day').value) $('record-day').value = snapshot.today;
   } catch (error) { message('workspace-status', error.message, true); }
   finally { $('refresh-workspace').disabled = false; }
 }
@@ -346,21 +348,6 @@ function renderQuota(quota) {
   window.WorkspaceQuota.render(quota, { root: $('quota-detail'), summary: $('quota-summary'),
     refreshButton: $('refresh-quota'), el, dateTime, reason, statusNames });
 }
-function renderRecords() {
-  const usage = app.usage, root = $('records-list'); root.replaceChildren();
-  if (app.profileMode) pager('records-pager', { items: usage.manual_records, total: usage.manual_total, offset: app.pages.records, limit: 50 }, 'records', () => loadRecords());
-  $('new-record').disabled = !app.csrf || usage.manual_status !== 'available';
-  $('records-status').textContent = usage.manual_status === 'available' ? `手工记录 · ${app.profileMode ? '当前页' : '最近'} ${usage.manual_records.length} / ${usage.manual_total} 条（每页最多 ${usage.manual_limit} 条）· 不自动汇总` : reason(usage.manual_reason);
-  if (usage.manual_status !== 'available') { empty(root, '人工记录暂时不可用', '原有记录不会因为读取失败被清空。'); return; }
-  if (!usage.manual_records.length) { empty(root, '还没有用量记录', '记录原服务上的观察值，并留下日期、窗口和产品范围。'); return; }
-  for (const record of usage.manual_records) {
-    const row = el('article', 'record-row'), copy = el('div'); row.dataset.recordId = record.id;
-    copy.append(el('strong', '', `${providerNames[record.provider_id]} · ${productNames[record.product]}`), el('small', '', `${record.metric === 'quota_used_percent' ? `额度已用 · ${record.window_label}` : record.metric === 'daily_tokens' ? '当日 Token' : '当日费用'} · 手工记录${record.note ? ` · ${record.note}` : ''}`));
-    const value = `${Number(record.value).toLocaleString('zh-CN')}${record.metric === 'quota_used_percent' ? '%' : record.metric === 'daily_tokens' ? ' Token' : ` ${record.currency}`}`;
-    const edit = el('button', 'text-button', '编辑'); edit.type = 'button'; edit.disabled = !app.csrf; edit.setAttribute('aria-label', `编辑 ${record.day} ${providerNames[record.provider_id]} 记录`); edit.addEventListener('click', () => openRecord(record));
-    row.append(el('span', '', record.day), copy, el('span', 'record-value', value), edit); root.append(row);
-  }
-}
 async function loadUsage(refresh = false) {
   if (refresh && $('refresh-quota').disabled) return;
   $('refresh-quota').disabled = true;
@@ -369,62 +356,13 @@ async function loadUsage(refresh = false) {
     const result = await (refresh ? post('/api/workspace/usage/refresh', {}) : api('/api/workspace/usage'));
     if (result.status !== 'ok') throw new Error('用量来源未返回可用结果');
     app.usage = result; renderQuota(result.codex);
-    if (app.profileMode) await loadRecords(); else renderRecords();
   } catch (error) {
     const note = el('p', 'quota-error', error.message); $('quota-detail').replaceChildren(note);
     $('quota-summary').dataset.status = 'unavailable';
     $('quota-summary').replaceChildren(el('h2', '', '来源不可用'), el('p', 'muted', error.message));
     $('refresh-quota').textContent = '重新查询';
-    if (!app.usage) $('records-status').textContent = '人工记录未读取，不能判断是否为空。';
   } finally { $('refresh-quota').disabled = !app.csrf; }
 }
-function recordProducts(selected) {
-  const provider = $('record-provider').value;
-  const choices = provider === 'grok' ? ['subscription', 'cli', 'api'] : ['dsh', 'opencode'].includes(provider) ? ['local'] : ['subscription'];
-  fillOptions($('record-product'), choices.map(value => [value, productNames[value]]), choices.includes(selected) ? selected : choices[0]);
-}
-function recordMetric() {
-  const metric = $('record-metric').value;
-  $('record-window-field').hidden = metric !== 'quota_used_percent'; $('record-window').required = metric === 'quota_used_percent';
-  $('record-currency-field').hidden = metric !== 'daily_cost';
-  $('record-value').step = metric === 'daily_tokens' ? '1' : 'any';
-  if (metric === 'quota_used_percent') $('record-value').max = '100'; else $('record-value').removeAttribute('max');
-}
-function openRecord(record = null) {
-  if ($('record-fields').disabled) return;
-  app.recordId = record?.id || null; $('record-form').hidden = false;
-  $('record-form-title').textContent = record ? '编辑人工记录' : '新增人工记录';
-  $('record-provider').value = record?.provider_id || 'codex'; recordProducts(record?.product);
-  $('record-day').value = record?.day || app.snapshot?.today || '';
-  if (app.snapshot?.today) $('record-day').max = app.snapshot.today;
-  $('record-metric').value = record?.metric || 'quota_used_percent'; $('record-value').value = record?.value ?? '';
-  $('record-window').value = record?.window_label || ''; $('record-currency').value = record?.currency || 'USD'; $('record-note').value = record?.note || '';
-  recordMetric(); message('record-feedback', ''); $('record-provider').focus(); $('record-form').scrollIntoView({ block: 'nearest', behavior: 'auto' });
-}
-async function saveRecord(event) {
-  event.preventDefault(); if ($('record-fields').disabled) return;
-  const metric = $('record-metric').value;
-  const value = Number($('record-value').value);
-  if (metric === 'daily_tokens' && !Number.isSafeInteger(value)) {
-    message('record-feedback', 'Token 必须是浏览器可精确表示的整数（最多 9,007,199,254,740,991）。输入已保留，未提交。', true);
-    $('record-value').focus(); return;
-  }
-  const body = { id: app.recordId, provider_id: $('record-provider').value, product: $('record-product').value, day: $('record-day').value, metric, value, currency: metric === 'daily_cost' ? $('record-currency').value : null, window_label: metric === 'quota_used_percent' ? $('record-window').value.trim() : null, note: $('record-note').value.trim() };
-  $('record-fields').disabled = true; message('record-feedback', '正在保存…');
-  try {
-    const result = await post('/api/workspace/records', body);
-    if (result.status !== 'ok' || !result.record) throw new Error('服务未确认保存，草稿已保留');
-    const oldIndex = app.usage.manual_records.findIndex(item => item.id === result.record.id);
-    if (oldIndex >= 0) app.usage.manual_records.splice(oldIndex, 1); else app.usage.manual_total++;
-    app.usage.manual_records.unshift(result.record);
-    app.usage.manual_records = app.usage.manual_records.slice(0, app.usage.manual_limit); renderRecords();
-    $('record-form').reset(); $('record-form').hidden = true; app.recordId = null; $('new-record').focus();
-    message('workspace-status', '人工用量记录已保存 · 未调用外部服务');
-    if (app.profileMode) await loadRecords();
-  } catch (error) { message('record-feedback', `${error.message}。输入已保留。`, true); }
-  finally { $('record-fields').disabled = false; }
-}
-
 for (const button of document.querySelectorAll('[data-view]')) button.addEventListener('click', () => showView(button.dataset.view));
 for (const button of document.querySelectorAll('[data-go]')) button.addEventListener('click', () => showView(button.dataset.go));
 $('refresh-workspace').addEventListener('click', loadBase);
@@ -436,13 +374,7 @@ $('cancel-task').addEventListener('click', () => { $('task-form').hidden = true;
 $('task-provider').addEventListener('change', () => { if (!app.profileMode) sessionOptions($('task-session').value); });
 $('task-form').addEventListener('submit', event => { if (!app.profileMode) return saveTask(event); event.preventDefault(); });
 $('refresh-quota').addEventListener('click', () => loadUsage(true));
-$('new-record').addEventListener('click', () => openRecord());
-$('cancel-record').addEventListener('click', () => { $('record-form').hidden = true; app.recordId = null; $('new-record').focus(); });
-$('record-provider').addEventListener('change', () => recordProducts());
-$('record-metric').addEventListener('change', recordMetric);
-$('record-form').addEventListener('submit', saveRecord);
 fillOptions($('task-provider'), [['', '暂不分配'], ...Object.entries(providerNames)]);
-fillOptions($('record-provider'), Object.entries(providerNames), 'codex');
 window.addEventListener('hashchange', () => showView(location.hash.slice(1) || 'overview'));
 showView(location.hash.slice(1) || 'overview');
 async function bootstrap() {
@@ -491,11 +423,6 @@ async function loadTasks() {
   if ($('project-filter').value) query.set('project_id', $('project-filter').value);
   app.snapshot.tasks = { ...app.snapshot.tasks, ...await api(`/api/workspace/tasks?${query}`) }; renderTasks();
 }
-async function loadRecords() {
-  const value = await api(`/api/workspace/records?offset=${app.pages.records}&limit=50`);
-  app.usage.manual_records = value.items; app.usage.manual_total = value.total; app.usage.manual_limit = value.limit;
-  renderRecords();
-}
 async function loadTodos() {
   app.snapshot.todos = { ...app.snapshot.todos, ...await api(`/api/workspace/todos?offset=${app.pages.todos}&limit=20`) }; renderTodos();
 }
@@ -505,7 +432,7 @@ function setupProfile() {
   document.querySelector('.sidebar-links').replaceChildren(el('p', 'nav-label', '项目进度'));
   $('provider-sessions-link').hidden = !(app.capabilities.remote_sessions || app.capabilities.workbench);
   document.querySelector('#sessions-status').previousElementSibling.querySelector('a').hidden = !app.capabilities.remote_sessions;
-  for (const [after, id] of [['tasks-list', 'tasks-pager'], ['records-list', 'records-pager'], ['todos-list', 'todos-pager']]) { const root = el('div', 'pager'); root.id = id; $(after).after(root); }
+  for (const [after, id] of [['tasks-list', 'tasks-pager'], ['todos-list', 'todos-pager']]) { const root = el('div', 'pager'); root.id = id; $(after).after(root); }
   const scope = el('select'); scope.id = 'task-scope'; scope.setAttribute('aria-label', '项目登记状态');
   fillOptions(scope, [['all', '全部项目记录'], ['active', '活动项目'], ['archived', '归档项目'], ['orphan', '未登记项目']], 'all');
   $('project-filter').parentElement.prepend(scope);
@@ -526,7 +453,6 @@ function setupProfile() {
   if (app.view === 'runs') showView('overview'); else showView(app.view);
 }
 function setupTaskCenter() {
-  document.querySelector('.sidebar-links').append(action('人工记录与历史', () => showView('projects')));
   document.querySelector('[data-view="projects"]').hidden = false;
   const navigation = document.querySelector('[data-view="tasks"]'); navigation.textContent = '全部事项';
   $('legacy-tasks').hidden = true;

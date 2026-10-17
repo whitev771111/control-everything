@@ -11,9 +11,10 @@ spec.loader.exec_module(policy)
 
 class ArchitectureTests(TestCase):
     def test_known_owners_allow_legitimate_cross_feature_changes(self):
-        for path in ['session_panel/workspace/validation.py', 'session_panel/profiles/profile_import.py',
-                     'session_panel/platform/windows_jobs.py', 'session_panel/input_validation.py',
+        for path in ['src/session_panel/workspace/validation.py', 'src/session_panel/profiles/profile_import.py',
+                     'src/session_panel/platform/windows_jobs.py', 'src/session_panel/input_validation.py',
                      'web/workspace/quota.js', 'tools/typescript/tsconfig.news.json',
+                     'tools/packaging/build_assets.py', 'pyproject.toml', 'MANIFEST.in', 'setup.py',
                      'examples/legacy/progress-manual.example.json', 'tests/e2e/verify_architecture.py',
                      '.github/CODEOWNERS', 'rust-toolchain.toml']:
             with self.subTest(path=path):
@@ -21,8 +22,10 @@ class ArchitectureTests(TestCase):
 
     def test_new_business_files_cannot_accumulate_in_undeclared_locations(self):
         for path, reason in [('new_feature.py', 'root_file_has_no_owner'),
-                             ('session_panel/new_feature.py', 'package_root_is_for_entries_and_foundations'),
-                             ('session_panel/utils/feature.py', 'unknown_backend_owner'),
+                             ('src/session_panel/new_feature.py', 'package_root_is_for_entries_and_foundations'),
+                             ('src/session_panel/utils/feature.py', 'unknown_backend_owner'),
+                             ('src/another_app/main.py', 'unknown_backend_owner'),
+                             ('session_panel/workspace/service.py', 'unregistered_top_level_directory'),
                              ('tools/misc/check.py', 'unknown_development_tool'),
                              ('another_app/main.py', 'unregistered_top_level_directory'),
                              ('tests/random/test_feature.py', 'unknown_test_type')]:

@@ -12,7 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-# Isolated script execution adds only the fixed repository containing this file.
+# Isolated script execution adds only this file's fixed package import root.
 if __name__ == '__main__':
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 

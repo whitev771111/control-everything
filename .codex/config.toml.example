@@ -1,4 +1,5 @@
 [mcp_servers.remote_claude_sessions]
+# Install this checkout with .venv/Scripts/python.exe -m pip install -e . first.
 command = "C:/example/session-panel/.venv/Scripts/python.exe"
 args = ["-m", "session_panel.mcp_stdio"]
 cwd = "C:/example/session-panel"

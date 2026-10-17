@@ -16,7 +16,7 @@ def source_files():
                             cwd=ROOT, capture_output=True, check=True)
     names = []
     for name in sorted(set(result.stdout.decode('utf-8').split('\0'))):
-        if not name.startswith('session_panel/') or not name.endswith('.py'):
+        if not name.startswith('src/session_panel/') or not name.endswith('.py'):
             continue
         path = ROOT.joinpath(*PurePosixPath(name).parts)
         if not path.is_file():
@@ -51,12 +51,12 @@ def main():
     names = source_files()
     cases = [
         ('legal', {}, 0),
-        ('direct', {'session_panel/workspace/service.py': '\nfrom session_panel.profiles import profile\n'}, 1),
-        ('function_local', {'session_panel/workspace/service.py': '\ndef _architecture_probe():\n    from session_panel.profiles import profile\n'}, 1),
-        ('descendant', {'session_panel/workspace/architecture_probe.py': 'from session_panel.profiles import profile\n'}, 1),
-        ('indirect', {'session_panel/workspace/service.py': '\nfrom session_panel.sessions import architecture_probe\n',
-                      'session_panel/sessions/architecture_probe.py': 'from session_panel.profiles import profile\n'}, 1),
-        ('legal_cross_module', {'session_panel/profiles/profile_import.py': '\nfrom session_panel.workspace.validation import finite_number as _architecture_probe\n'}, 0),
+        ('direct', {'src/session_panel/workspace/service.py': '\nfrom session_panel.profiles import profile\n'}, 1),
+        ('function_local', {'src/session_panel/workspace/service.py': '\ndef _architecture_probe():\n    from session_panel.profiles import profile\n'}, 1),
+        ('descendant', {'src/session_panel/workspace/architecture_probe.py': 'from session_panel.profiles import profile\n'}, 1),
+        ('indirect', {'src/session_panel/workspace/service.py': '\nfrom session_panel.sessions import architecture_probe\n',
+                      'src/session_panel/sessions/architecture_probe.py': 'from session_panel.profiles import profile\n'}, 1),
+        ('legal_cross_module', {'src/session_panel/profiles/profile_import.py': '\nfrom session_panel.workspace.validation import finite_number as _architecture_probe\n'}, 0),
     ]
     rows = []
     for label, changes, expected in cases:
@@ -71,7 +71,7 @@ def main():
                 stream.write(text)
         environment = os.environ.copy()
         environment.pop('PYTHONHOME', None)
-        environment['PYTHONPATH'] = str(case)
+        environment['PYTHONPATH'] = str(case / 'src')
         result = subprocess.run([linter, '--config', str(config), '--no-cache', '--no-logo'],
                                 cwd=case, env=environment, capture_output=True, encoding='utf-8')
         log = result.stdout + result.stderr

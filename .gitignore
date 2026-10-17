@@ -6,6 +6,9 @@ __pycache__/
 node_modules/
 /work/
 /native/observer/target/
+/build/
+/dist/
+*.egg-info/
 
 # Private project documentation stays local
 /docs/

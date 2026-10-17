@@ -4,7 +4,7 @@
 
 ## 源码与测试目录
 
-后端保留 `session_panel` 包，内部按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 六个功能包组织。前端使用原生 HTML/CSS 和普通脚本，页面资源放在 `web/sessions`、`web/progress`、`web/workspace`；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+后端生产源码在 `src/session_panel`，内部按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 六个功能包组织。前端使用原生 HTML/CSS 和普通脚本，唯一资源源码放在 `web/sessions`、`web/progress`、`web/workspace`，构建 wheel 时按 HTTP 白名单收进包内；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
 
 本机观察与每日资讯分别以 `web/workspace/observation.ts`、`news.ts` 和邻近类型声明为手写源码，两个 JS 为同一固定 TypeScript 5.9.3 的生成物；其他模块继续手写 JS。修改对应 TS 后运行 `node scripts/build_observation.cjs build` 或 `node scripts/build_news.cjs build`，连同生成 JS 提交，再用对应 `check` 比较完整字节；不要手改生成物。Node24/项目内固定工具的显式准备、缺工具失败与全部验证命令见[观察前端 TypeScript 开发](CONTRIBUTING.md#观察前端-typescript-开发)。原 URL 和普通脚本相对顺序保留，新 `/news.js` 在页面主脚本前加载，不增加常驻 Node 服务。
 
@@ -31,17 +31,19 @@
 
 统一入口 `/workspace` 提供项目登记、多个工作目录、人工进度与历史、任务和待办、可选文档进度来源、Codex 官方订阅额度、人工每日用量和固定来源 AI 资讯。项目不要求 Git 或特定工作流。人工进度、任务统计、文档观察分别展示；未填写百分比与真实 0 不混用，文档 PASS 或来源报告完成不会改写人工状态。
 
-在自己的干净检出目录使用 Windows 与 Python 3.12 创建环境；已有 `.venv` 时核对归属与版本，不覆盖：
+以下为源码开发入口，使用 Windows 与 Python 3.12 及以上版本。先安装 editable 包，再使用原模块 CLI；仅安装 requirements 不会安装 `src` 下的程序。已有 `.venv` 时核对归属与版本，不覆盖：
 
 ```powershell
 python -m venv .venv
-& '.venv/Scripts/python.exe' -m pip install -r requirements.txt
+& '.venv/Scripts/python.exe' -m pip install -e .
 & '.venv/Scripts/python.exe' -m pip check
 & '.venv/Scripts/python.exe' -m session_panel.profile init
 & '.venv/Scripts/python.exe' -m session_panel.gateway
 ```
 
 打开 `http://127.0.0.1:8766/workspace`。默认数据目录在 Windows 为 `%LOCALAPPDATA%/SessionPanel`（环境变量缺失时为当前用户 `AppData/Local/SessionPanel`）；目录内的 `profile.json` 保存来源设置，`workspace-state.sqlite3` 保存管理记录。路径优先级为 `--data-dir`、非空 `SESSION_PANEL_DATA_DIR`、当前用户默认目录；显式路径必须绝对。
+
+标准 Python wheel 包含后端和前端资源，可以离开检出目录使用。它不包含 Rust 原生程序，缺少该程序时观察显示 `native_missing`，基础管理仍可启动；完整 Windows 产品的运行闭包及安装验收另行交付。源码模式保留旧根数据位置；安装包的兼容旧记录默认目录为用户默认数据目录下的 `legacy`，不会写入 site-packages，也不会自动搬迁旧记录。
 
 保留已有服务时明确选择另一个端口，例如：
 

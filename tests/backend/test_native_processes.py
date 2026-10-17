@@ -346,10 +346,34 @@ class NativeRunnerTests(unittest.TestCase):
         with patch.object(workbench, "_native_interpreter", return_value="C:/example/fixed/python.exe"):
             self.assertEqual(self.workbench._processes(3), [])
         argv = self.runner.call_args.args[0]; options = self.runner.call_args.kwargs
-        self.assertEqual(argv, ["C:/example/fixed/python.exe", "-X", "utf8", "-B", "-m", "session_panel.native_processes"])
-        self.assertEqual(options["cwd"], str(Path(__file__).resolve().parents[2]))
+        script = Path(workbench.__file__).resolve().with_name("native_processes.py")
+        self.assertEqual(argv, ["C:/example/fixed/python.exe", "-I", "-B", "-X", "utf8", str(script)])
+        self.assertEqual(options["cwd"], str(workbench.execution_root()))
         self.assertEqual(options["timeout"], 2); self.assertFalse(options["shell"])
         self.assertEqual(options["creationflags"], subprocess.CREATE_NO_WINDOW)
+
+    def test_base_without_installed_package_runs_fixed_stdlib_script(self):
+        import ast
+        import sys
+
+        installed = Path("C:/example/product/runtime/Lib/site-packages/session_panel")
+        with patch.object(workbench, "_native_interpreter", return_value="C:/example/base/python.exe"), \
+                patch.object(workbench.sys, "executable", "C:/example/venv/Scripts/python.exe"), \
+                patch.object(workbench, "execution_root", return_value=installed):
+            self.assertEqual(self.workbench._processes(3), [])
+        argv = self.runner.call_args.args[0]
+        self.assertEqual(argv[0], "C:/example/base/python.exe")
+        self.assertNotIn("-m", argv)
+        script = Path(argv[-1])
+        self.assertEqual(script, Path(workbench.__file__).resolve().with_name("native_processes.py"))
+        self.assertEqual(self.runner.call_args.kwargs["cwd"], str(installed))
+        tree = ast.parse(script.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                self.assertTrue(all(alias.name.split(".")[0] in sys.stdlib_module_names for alias in node.names))
+            elif isinstance(node, ast.ImportFrom):
+                self.assertEqual(node.level, 0)
+                self.assertIn(node.module.split(".")[0], sys.stdlib_module_names)
 
     def test_expired_deadline_and_bad_interpreter_never_run(self):
         with patch.object(workbench, "_native_interpreter", return_value="C:/example/fixed/python.exe"):

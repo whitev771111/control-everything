@@ -1,7 +1,5 @@
 """Local workspace projections and validation; never dispatches an agent task."""
 
-import math
-import ntpath
 import re
 import shutil
 from datetime import date, datetime, timedelta, timezone
@@ -10,7 +8,11 @@ from session_panel.workspace import progress
 from session_panel.sessions.codex_index import list_threads, unavailable
 from session_panel.sessions.source import canonical_uuid
 from session_panel.workspace.sources import CodexQuotaSource, NewsSource
-from session_panel.workspace.store import WorkspaceError, WorkspaceStore, path_key, project_id_valid
+from session_panel.input_validation import ProfileError
+from session_panel.workspace.store import WorkspaceError, WorkspaceStore
+from session_panel.workspace.validation import (
+    finite_number, windows_path, inside_project, observation_owner, path_key, project_id_valid,
+)
 
 DEFAULT_DB = progress.REGISTRY.with_name("workspace-state.sqlite3")
 BEIJING = timezone(timedelta(hours=8))
@@ -25,47 +27,6 @@ PRODUCTS = {"codex": ("subscription",), "claude": ("subscription",),
 
 def today():
     return datetime.now(BEIJING).date().isoformat()
-
-
-def finite_number(value):
-    try:
-        return type(value) in (int, float) and math.isfinite(value)
-    except OverflowError:
-        return False
-
-
-def windows_path(value):
-    value = ntpath.normcase(ntpath.normpath(value))
-    if value.startswith("\\\\?\\unc\\"):
-        return "\\\\" + value[8:]
-    if value.startswith("\\\\?\\") and re.match(r"[a-z]:\\", value[4:]):
-        return value[4:]
-    return value
-
-
-def inside_project(cwd, root):
-    if not isinstance(cwd, str) or not ntpath.isabs(cwd):
-        return False
-    try:
-        cwd, root = windows_path(cwd), windows_path(root)
-        return ntpath.commonpath((cwd, root)) == root
-    except ValueError:
-        return False
-
-
-def observation_owner(cwd, projects):
-    matches = []
-    for project in projects:
-        if project.get("archived"):
-            continue
-        for binding in project["directories"]:
-            if inside_project(cwd, binding["path"]):
-                matches.append((len(path_key(binding["path"])), project["id"]))
-    if not matches:
-        return None
-    longest = max(length for length, _identity in matches)
-    owners = {identity for length, identity in matches if length == longest}
-    return next(iter(owners)) if len(owners) == 1 else None
 
 
 def discover_providers(installations=None):
@@ -155,7 +116,7 @@ class WorkspaceService:
             "status": "unavailable", "reason": "not_started", "snapshot": None, "scope_revision": 0, "scope_hash": ""}
         configured = {}
         if self.profile is not None:
-            from session_panel.profiles import observation_settings
+            from session_panel.sessions import observation_settings
             try:
                 current = self.profile.observation_config()
                 configured = {row["id"]: row for row in current["registrations"]}
@@ -261,7 +222,6 @@ class WorkspaceService:
         if (params.get("provider_id") is not None and params["provider_id"] not in TASK_PROVIDERS
                 or params.get("state") is not None and params["state"] not in TASK_STATES
                 or "project_id" in params and not project_id_valid(params["project_id"])):
-            from session_panel.profiles.profile import ProfileError
             raise ProfileError("invalid_query")
         page = self.store.list_items(**params)
         return self._item_page(page, self.sessions(), self.registered_projects())
@@ -271,7 +231,6 @@ class WorkspaceService:
                                   for row in page["items"]]}
 
     def save_item(self, body, *, update=False):
-        from session_panel.profiles.profile import ProfileError
         from session_panel.workspace.task_schema import MAX_REVISION
         def invalid(field=None):
             raise ProfileError("invalid_item", field)

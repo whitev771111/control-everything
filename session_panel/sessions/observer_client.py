@@ -11,7 +11,7 @@ import weakref
 from contextlib import nullcontext
 
 from session_panel.sessions import observer_protocol as p
-from session_panel.profiles import observation_settings as settings
+from session_panel.sessions import observation_settings as settings
 from session_panel.sessions.observer_pipe import GATE, WindowsPipe, PipeError
 
 

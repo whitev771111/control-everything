@@ -3,13 +3,15 @@
 import sqlite3
 import threading
 import json
-import re
-import ntpath
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from session_panel.input_validation import ProfileError
+from session_panel.workspace.validation import (
+    project_id_valid, path_key, validate_project, finite_number, observation_owner,
+)
 from session_panel.workspace import task_schema as tasks
 from session_panel.workspace.task_schema import BASE_SCHEMA, MANAGEMENT_SCHEMA
 
@@ -18,76 +20,6 @@ MANAGEMENT_TABLES = tasks.SCHEMA2_TABLES
 
 def now_utc():
     return datetime.now(timezone.utc).isoformat()
-
-
-def project_id_valid(value):
-    return isinstance(value, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", value) is not None
-
-
-def path_key(value):
-    value = ntpath.normcase(ntpath.normpath(value))
-    if value.startswith("\\\\?\\unc\\"):
-        return "\\\\" + value[8:]
-    if value.startswith("\\\\?\\") and re.match(r"[a-z]:\\", value[4:]):
-        return value[4:]
-    return value
-
-
-def validate_project(body, *, restore=False):
-    from session_panel.profiles.profile import ProfileError, absolute_path
-    fields = {"project_id", "name", "directories", "source"} if restore else {"id", "name", "archived", "directories", "source"}
-    def invalid(field, reason="invalid_project"):
-        raise ProfileError(reason, field)
-    if not isinstance(body, dict) or set(body) != fields:
-        invalid("project")
-    identity = body["project_id"] if restore else body["id"]
-    if identity is not None and not project_id_valid(identity):
-        invalid("id")
-    if restore and identity is None:
-        invalid("project_id")
-    name = body["name"]
-    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80 or any(ord(c) < 32 for c in name):
-        invalid("name")
-    archived = False if restore else body["archived"]
-    if type(archived) is not bool or identity is None and archived:
-        invalid("archived")
-    directories = body["directories"]
-    if not isinstance(directories, list) or not 1 <= len(directories) <= 8:
-        invalid("directories")
-    ids, paths, checked = set(), set(), []
-    for index, binding in enumerate(directories):
-        field = f"directories[{index}]"
-        if not isinstance(binding, dict) or set(binding) != {"id", "path"}:
-            invalid(field)
-        key, path = binding["id"], binding["path"]
-        if (not isinstance(key, str) or key != "main" and not re.fullmatch(r"d-[0-9a-f]{32}", key)
-                or key in ids or not absolute_path(path)):
-            invalid(field)
-        normalized = path_key(path)
-        if normalized in paths:
-            invalid(field + ".path")
-        ids.add(key)
-        paths.add(normalized)
-        checked.append({"id": key, "path": path, "path_key": normalized})
-    if "main" not in ids:
-        invalid("directories.main")
-    source = body["source"]
-    if not isinstance(source, dict) or set(source) != {"kind", "directory_id", "relative_path"}:
-        invalid("source", "invalid_source")
-    kind, binding, relative = (source[key] for key in ("kind", "directory_id", "relative_path"))
-    if kind not in ("none", "wfc", "text", "json"):
-        invalid("source.kind", "invalid_source")
-    if kind == "none":
-        if binding is not None or relative is not None:
-            invalid("source", "invalid_source")
-    else:
-        if not isinstance(binding, str) or binding not in ids:
-            invalid("source.directory_id", "source_binding_missing")
-        if (not isinstance(relative, str) or not 1 <= len(relative) <= 512 or "\x00" in relative
-                or "\\" in relative or ":" in relative or relative.startswith("/")
-                or ".." in relative.split("/") or kind == "wfc" and relative != "docs/current"):
-            invalid("source.relative_path", "invalid_source")
-    return {"id": identity, "name": name.strip(), "archived": archived, "directories": checked, "source": source}
 
 
 class WorkspaceError(Exception):
@@ -263,7 +195,6 @@ class WorkspaceStore:
             return items
 
     def save_project(self, body, *, restore=False):
-        from session_panel.profiles.profile import ProfileError
         item = validate_project(body, restore=restore)
         identity, stamp = item["id"], now_utc()
         with self.connection() as connection:
@@ -301,8 +232,6 @@ class WorkspaceStore:
             return {row["project_id"]: dict(row) for row in connection.execute("SELECT * FROM project_manual")}
 
     def save_manual(self, body):
-        from session_panel.profiles.profile import ProfileError
-        from session_panel.workspace.service import finite_number
         if not isinstance(body, dict) or set(body) != {"project_id", "state", "percent", "note"}:
             raise ProfileError("invalid_project", "manual")
         identity, state, percent, note = (body[key] for key in ("project_id", "state", "percent", "note"))
@@ -324,7 +253,6 @@ class WorkspaceStore:
         return {"status": "ok", "manual": result, "history_added": changed}
 
     def manual_history(self, project_id, *, offset=0, limit=20):
-        from session_panel.profiles.profile import ProfileError
         with self.connection() as connection:
             if not any(connection.execute(f"SELECT 1 FROM {table} WHERE {column}=?", (project_id,)).fetchone() for table, column in (("projects", "id"), ("project_manual", "project_id"), ("tasks", "project_id"), ("todos", "project_id"))):
                 raise ProfileError("not_found", "project_id", status=404)
@@ -352,7 +280,6 @@ class WorkspaceStore:
             return {"items": [{**dict(row), "done": bool(row["done"])} for row in rows], "total": total, "offset": offset, "limit": limit}
 
     def save_todo(self, body, *, toggle=False):
-        from session_panel.profiles.profile import ProfileError
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             if toggle:
@@ -421,7 +348,6 @@ class WorkspaceStore:
         row = connection.execute('SELECT * FROM task_items WHERE origin=? AND origin_id=?', (origin, raw_id)).fetchone()
         if row is None:
             if origin == 'todo':
-                from session_panel.profiles.profile import ProfileError
                 raise ProfileError('todo_not_found', status=404)
             raise WorkspaceError('task_not_found')
         return dict(row)
@@ -485,7 +411,6 @@ class WorkspaceStore:
 
     @staticmethod
     def _check_item_associations(connection, fields, old=None, session_cwd=None):
-        from session_panel.profiles.profile import ProfileError
         merged = {**old, **fields} if old is not None else fields
         project_changed = old is None or merged['project_id'] != old['project_id']
         link_changed = old is None or any(merged[key] != old[key] for key in ('project_id', 'provider_id', 'session_key'))
@@ -494,7 +419,6 @@ class WorkspaceStore:
             if connection.execute('SELECT 1 FROM projects WHERE id=? AND archived=0', (merged['project_id'],)).fetchone() is None:
                 raise ProfileError('invalid_item', 'project_id')
         if check_session:
-            from session_panel.workspace.service import observation_owner
             if session_cwd is None:
                 raise WorkspaceError('session_not_in_sample')
             # Only database facts are refreshed here; the request's session sample stays outside the write transaction.

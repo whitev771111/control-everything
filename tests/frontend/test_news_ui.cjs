@@ -65,7 +65,7 @@ function envelope(items = [item()], fields = {}) {
 async function deliver(f, value, index = f.reads.length - 1) { f.reads[index].resolve(value); await tick(); }
 test('public scripts keep four original relative positions and both news consumers', () => {
   const scripts = [...html.matchAll(/<script src="([^"]+)" defer/g)].map(row => row[1]);
-  assert.deepEqual(scripts, ['/execution.js', '/observation.js', '/task-center.js', '/news.js', '/workspace.js']);
+  assert.deepEqual(scripts, ['/execution.js', '/observation.js', '/task-center.js', '/news.js', '/quota.js', '/workspace.js']);
   assert.match(legacyHtml, /src="\/news.js" defer[^]*src="\/progress.js" defer/);
   const workspace = fs.readFileSync(path.join(repo, 'web/workspace/workspace.js'), 'utf8');
   assert.match(workspace, /WorkspaceNews\?\.startWorkspace\(\{ fetchJson: api, postJson: post \}\)/);

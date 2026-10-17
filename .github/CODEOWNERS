@@ -1,0 +1,6 @@
+# The sole current maintainer; approval enforcement changes when another maintainer joins.
+* @zxl123456123
+/.github/ @zxl123456123
+/tools/architecture/ @zxl123456123
+/native/observer/protocol.json @zxl123456123
+/session_panel/workspace/task_schema.py @zxl123456123

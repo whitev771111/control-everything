@@ -10,11 +10,12 @@ function fixedCompiler(asset) {
   const windowExport = asset === 'observation' ? 'WorkspaceObservation' : 'WorkspaceNews';
   const INPUTS = [`web/workspace/${asset}.types.d.ts`, `web/workspace/${asset}.ts`];
   const OUTPUT = `web/workspace/${asset}.js`;
+  const CONFIG_PATH = `tools/typescript/tsconfig.${asset}.json`;
   const MANIFEST = { schema: 1, compiler: { name: 'typescript', version: '5.9.3' }, inputs: INPUTS, outputs: [{ emitted: `${asset}.js`, path: OUTPUT, url: `/${asset}.js` }] };
   const CONFIG = { compilerOptions: { target: 'ES2022', module: 'none', moduleDetection: 'legacy', lib: ['ES2022', 'DOM', 'DOM.Iterable'], types: [], strict: true,
     noUncheckedIndexedAccess: true, exactOptionalPropertyTypes: true, skipLibCheck: false, allowJs: false, checkJs: false, noEmitOnError: true,
     declaration: false, declarationMap: false, sourceMap: false, inlineSourceMap: false, inlineSources: false, importHelpers: false, removeComments: false,
-    emitBOM: false, newLine: 'lf', forceConsistentCasingInFileNames: true, rootDir: 'web/workspace', outDir: `work/frontend-${asset}/manual-emit` }, files: INPUTS };
+    emitBOM: false, newLine: 'lf', forceConsistentCasingInFileNames: true, rootDir: '../../web/workspace', outDir: `../../work/frontend-${asset}/manual-emit` }, files: INPUTS.map(name => '../../' + name) };
   const MARKER = `// Generated from web/workspace/${asset}.ts by scripts/build_${asset}.cjs.`;
   const HEADER = MARKER + ' Do not edit.\n';
   const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -45,7 +46,7 @@ function fixedCompiler(asset) {
     if (nodeVersion.split('.')[0] !== '24') fail('node24_required', 2);
     if (!isDeepStrictEqual(json(root, 'tools/typescript/package.json'), PACKAGE)) fail('package_drift', 2);
     if (!isDeepStrictEqual(json(root, `tools/typescript/${asset}.manifest.json`), MANIFEST)) fail('manifest_drift', 2);
-    if (!isDeepStrictEqual(json(root, `tsconfig.${asset}.json`), CONFIG)) fail('config_drift', 2);
+    if (!isDeepStrictEqual(json(root, CONFIG_PATH), CONFIG)) fail('config_drift', 2);
     const lock = json(root, 'tools/typescript/package-lock.json'), packages = lock?.packages;
     if (lock?.lockfileVersion !== 3 || lock.name !== PACKAGE.name || lock.version !== PACKAGE.version || !packages ||
         !isDeepStrictEqual(Object.keys(packages).sort(), ['', 'node_modules/typescript']) ||
@@ -174,13 +175,13 @@ function fixedCompiler(asset) {
     let failure;
     try {
       const ts = preflight(root); receipt.compiler = ts.version;
-      for (const name of [...INPUTS, `tsconfig.${asset}.json`, 'tools/typescript/package.json', 'tools/typescript/package-lock.json', `tools/typescript/${asset}.manifest.json`, `scripts/build_${asset}.cjs`, 'scripts/frontend_compile.cjs']) {
+      for (const name of [...INPUTS, CONFIG_PATH, 'tools/typescript/package.json', 'tools/typescript/package-lock.json', `tools/typescript/${asset}.manifest.json`, `scripts/build_${asset}.cjs`, 'scripts/frontend_compile.cjs']) {
         const file = path.join(root, name); noLinks(root, file);
         if (!fs.existsSync(file)) fail(`missing_${asset}_inputs`, 2);
         receipt.hashes[name] = hash(fs.readFileSync(file));
       }
       // The Compiler API adds defaults to the raw object. Keep the fixed contract immutable.
-      const parsed = ts.parseJsonConfigFileContent(json(root, `tsconfig.${asset}.json`), ts.sys, root);
+      const parsed = ts.parseJsonConfigFileContent(json(root, CONFIG_PATH), ts.sys, path.dirname(path.join(root, CONFIG_PATH)));
       requireNoDiagnostics(ts, root, parsed.errors);
       let stage;
       const options = { ...parsed.options, noEmit: mode === 'typecheck' };

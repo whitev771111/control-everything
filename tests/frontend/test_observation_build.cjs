@@ -9,7 +9,7 @@ const { spawnSync } = require('node:child_process');
 const builder = require('../../scripts/build_observation.cjs');
 const repo = path.resolve(__dirname, '../..');
 const parent = path.join(repo, 'work/frontend-observation-tests');
-const declarations = ['scripts/frontend_compile.cjs', 'tools/typescript/package.json', 'tools/typescript/package-lock.json', 'tools/typescript/observation.manifest.json', 'tsconfig.observation.json', 'scripts/build_observation.cjs'];
+const declarations = ['scripts/frontend_compile.cjs', 'tools/typescript/package.json', 'tools/typescript/package-lock.json', 'tools/typescript/observation.manifest.json', 'tools/typescript/tsconfig.observation.json', 'scripts/build_observation.cjs'];
 const validSource = `'use strict';\n(function () {\n  const label: string = 'synthetic';\n  window.WorkspaceObservation = { projects: [], start() { void label; }, renderProjectRefs() {} };\n})();\n`;
 const types = `declare namespace WorkspaceObservationTypes {\n  interface PublicApi { projects: readonly {id: string; name: string}[]; start(): void; renderProjectRefs(): void; }\n}\ninterface Window { WorkspaceObservation: WorkspaceObservationTypes.PublicApi; }\n`;
 const oldBytes = Buffer.from('// old delivered asset, intentionally not generated\n');
@@ -65,7 +65,7 @@ test('missing project tool fails rather than searching another installed compile
   rejects('missing_or_invalid_tools_typescript_node_modules_typescript_package.json', () => builder.preflight(missing));
 });
 for (const field of ['package', 'manifest', 'config', 'lock']) test(`${field} drift is refused without modifying delivered JS`, () => {
-  const name = { package: 'tools/typescript/package.json', manifest: 'tools/typescript/observation.manifest.json', config: 'tsconfig.observation.json', lock: 'tools/typescript/package-lock.json' }[field];
+  const name = { package: 'tools/typescript/package.json', manifest: 'tools/typescript/observation.manifest.json', config: 'tools/typescript/tsconfig.observation.json', lock: 'tools/typescript/package-lock.json' }[field];
   const value = JSON.parse(fs.readFileSync(file(name), 'utf8'));
   if (field === 'package') value.devDependencies.typescript = '^5.9.3';
   if (field === 'manifest') value.outputs.push({ emitted: 'extra.js', path: 'web/workspace/extra.js', url: '/extra.js' });
@@ -93,6 +93,8 @@ test('valid source builds an ordinary marked script and fresh check compares all
   assert.equal(built.exit, 0); assert.ok(emitted.toString('utf8').startsWith(builder.HEADER));
   assert.equal(built.outputs.length, 1); assert.equal(built.outputs[0].path, 'web/workspace/observation.js');
   const checked = builder.run(root, 'check'); assert.equal(checked.check_matches, true); assert.deepEqual(fs.readFileSync(file('web/workspace/observation.js')), emitted);
+  assert.ok(checked.hashes['tools/typescript/tsconfig.observation.json']);
+  assert.equal(Object.hasOwn(checked.hashes, 'tsconfig.observation.json'), false);
   const stage = path.join(root, built.stage); assert.equal(fs.existsSync(path.join(stage, 'observation.js.map')), false);
   assert.equal(fs.existsSync(path.join(stage, 'observation.d.ts')), false);
 });
@@ -171,8 +173,8 @@ test('the real CLI rejects root/output overrides and accepts only a single mode'
   const result = spawnSync(process.execPath, [file('scripts/build_observation.cjs'), 'build', '--root', repo], { encoding: 'utf8', cwd: root });
   assert.equal(result.status, 2); assert.match(result.stderr, /mode_required/); assert.deepEqual(fs.readFileSync(file('web/workspace/observation.js')), oldBytes);
 });
-test('the real CLI typechecks the mini-repo without emitting delivered JS', () => {
-  const result = spawnSync(process.execPath, [file('scripts/build_observation.cjs'), 'typecheck'], { encoding: 'utf8', cwd: root });
+test('the real CLI resolves relocated config from another cwd without emitting delivered JS', () => {
+  const result = spawnSync(process.execPath, [file('scripts/build_observation.cjs'), 'typecheck'], { encoding: 'utf8', cwd: path.join(root, 'tools/typescript') });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).compiler, '5.9.3');
   assert.deepEqual(fs.readFileSync(file('web/workspace/observation.js')), oldBytes);

@@ -269,6 +269,8 @@ class BuilderTests(PayloadFixture):
         self.assertEqual(len(calls), 4)
         self.assertNotIn(str(self.root), (stage / 'BUILD-INPUTS.json').read_text())
         self.assertFalse((stage / 'native/observer/build-info.json').exists())
+        self.assertEqual((stage / 'LICENSE').read_bytes(), (ROOT / 'LICENSE').read_bytes())
+        self.assertEqual(json.loads((stage / 'BUILD-INPUTS.json').read_text())['project_license'], 'MIT')
 
     def test_version_mapping_and_range(self):
         self.assertEqual(tuple(map(int, BUILD.version_info('0.1.0a1').split('.'))), (0, 1, 0, 1))
@@ -384,7 +386,9 @@ class ProductSourceTests(PayloadFixture):
         files = {'src/control_everything/__init__.py': b'# current product\n',
                  'src/control_everything/installation/maintenance.py': b'# current maintenance\n',
                  'pyproject.toml': b'[project]\nname="control-everything"\nversion="0.1.0a1"\n'
-                                  b'requires-python=">=3.12"\ndescription="Fixture"\nreadme="README.md"\n',
+                                  b'requires-python=">=3.12"\ndescription="Fixture"\nreadme="README.md"\n'
+                                  b'license="MIT"\nlicense-files=["LICENSE"]\n',
+                 'LICENSE': b'Fixture project license.\n',
                  'requirements.txt': b'example-dep==1.0\n', 'README.md': 'Fixture 中文说明\n'.encode('utf-8'),
                  'tools/packaging/build_assets.py': (ROOT / 'tools/packaging/build_assets.py').read_bytes()}
         files.update({'web/' + name: ('current:' + name).encode() for name in assets})
@@ -397,8 +401,10 @@ class ProductSourceTests(PayloadFixture):
         contents.update({'control_everything/_assets/web/' + name: files['web/' + name] for name in assets})
         info = 'control_everything-0.1.0a1.dist-info/'
         contents.update({info + 'METADATA': b'Metadata-Version: 2.4\nName: control-everything\nVersion: 0.1.0a1\n'
-                         b'Summary: Fixture\nRequires-Python: >=3.12\nRequires-Dist: example-dep==1.0\n\n'
+                         b'Summary: Fixture\nRequires-Python: >=3.12\nRequires-Dist: example-dep==1.0\n'
+                         b'License-Expression: MIT\nLicense-File: LICENSE\n\n'
                          + 'Fixture 中文说明\n'.encode('utf-8'),
+                         info + 'licenses/LICENSE': files['LICENSE'],
                          info + 'WHEEL': b'Wheel-Version: 1.0\nTag: py3-none-any\n',
                          info + 'top_level.txt': b'control_everything\n'})
         return source, inputs, contents
@@ -420,7 +426,8 @@ class ProductSourceTests(PayloadFixture):
         with patch.object(BUILD, 'ROOT', source):
             BUILD.verify_product_sources(self.write_wheel(contents), inputs, '0.1.0a1')
             for name in ('control_everything/__init__.py', 'control_everything/_assets/web/workspace/news.js',
-                         'control_everything-0.1.0a1.dist-info/METADATA', 'control_everything-0.1.0a1.dist-info/top_level.txt'):
+                         'control_everything-0.1.0a1.dist-info/METADATA', 'control_everything-0.1.0a1.dist-info/top_level.txt',
+                         'control_everything-0.1.0a1.dist-info/licenses/LICENSE'):
                 raw = (contents[name].replace(b'example-dep==1.0', b'example-dep==0.9')
                        if name.endswith('/METADATA') else b'old but internally hash-consistent\n')
                 stale = {**contents, name: raw}
@@ -521,17 +528,25 @@ class NoticesTests(unittest.TestCase):
             rows = NOTICES.collect_notices(root, [dependency], runtime, packages, inno)
             self.assertEqual({row['component'] for row in rows}, {'CPython', 'Inno Setup', 'example-dep', 'example-crate'})
             text = (root / 'THIRD-PARTY-NOTICES.txt').read_text(encoding='utf-8')
-            self.assertIn('not declared', text)
+            self.assertIn('project license: MIT', text)
+            self.assertEqual((root / 'LICENSE').read_bytes(), (ROOT / 'LICENSE').read_bytes())
             self.assertIn('unsigned', text)
             self.assertNotIn(str(root), text)
             values = json.loads(packages.read_text())
-            values.append({'name': 'session-panel-observer', 'version': '0.1.0', 'license': None,
+            values.append({'name': 'session-panel-observer', 'version': '0.1.0', 'license': 'MIT',
                            'license_file': None, 'manifest_path': str(crate / 'Cargo.toml')})
             packages.write_text(json.dumps(values))
             updated = NOTICES.collect_notices(root, [dependency], runtime, packages, inno)
             first_party = next(row for row in updated if row['component'] == 'session-panel-observer')
-            self.assertEqual(first_party['license'], 'not declared')
+            self.assertEqual(first_party['license'], 'MIT')
+            self.assertEqual(first_party['sha256'], MANIFEST.sha256(ROOT / 'LICENSE'))
             self.assertTrue(first_party['first_party'])
+            values[-1]['license'] = None
+            packages.write_text(json.dumps(values))
+            with self.assertRaisesRegex(NOTICES.NoticeError, 'observer_project_license_mismatch'):
+                NOTICES.collect_notices(root, [dependency], runtime, packages, inno)
+            values[-1]['license'] = 'MIT'
+            packages.write_text(json.dumps(values))
             (crate / 'LICENSE-MIT').unlink()
             with self.assertRaisesRegex(NOTICES.NoticeError, 'cargo_license_missing'):
                 NOTICES.collect_notices(root, [dependency], runtime, packages, inno)

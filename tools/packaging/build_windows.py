@@ -185,6 +185,7 @@ def verify_product_sources(wheel, inputs, version):
                           if line.strip() and not line.lstrip().startswith('#'))
     readme = source_bytes(project['readme']).decode('utf-8').replace('\r\n', '\n').rstrip()
     info = 'control_everything-' + version + '.dist-info/'
+    expected[info + 'licenses/LICENSE'] = source_bytes('LICENSE')
     metadata_files = {info + name for name in ('METADATA', 'WHEEL', 'top_level.txt', 'RECORD')}
     with zipfile.ZipFile(wheel) as archive:
         if set(archive.namelist()) != set(expected) | metadata_files:
@@ -196,6 +197,8 @@ def verify_product_sources(wheel, inputs, version):
         if (metadata['Name'] != project['name'] or metadata['Version'] != version
                 or metadata['Requires-Python'] != project['requires-python']
                 or metadata['Summary'] != project['description']
+                or metadata['License-Expression'] != project['license']
+                or metadata.get_all('License-File', []) != project['license-files']
                 or sorted(str(Requirement(value)) for value in metadata.get_all('Requires-Dist', [])) != requirements
                 or metadata.get_payload(decode=True).decode('utf-8').replace('\r\n', '\n').rstrip() != readme
                 or archive.read(info + 'top_level.txt').strip() != b'control_everything'):
@@ -433,7 +436,7 @@ def build_payload(wheel, wheelhouse, runtime_zip, observer_release, output, carg
     provenance = {'source_inputs': inputs, 'wheel_inputs': identities, 'native_build': native,
                   'runtime': DOWNLOADS['python'], 'installer_tool': DOWNLOADS['inno'],
                   'numeric_version': version_info(version), 'lock_sha256': api.sha256(lockfile),
-                  'project_license': 'not declared', 'product_signature': 'unsigned'}
+                  'project_license': 'MIT', 'product_signature': 'unsigned'}
     (output / 'BUILD-INPUTS.json').write_bytes(api.canonical_json(provenance) + b'\n')
     (output / 'session-panel.cmd').write_bytes(b'@echo off\r\n"%~dp0runtime\\python.exe" -I -B -X utf8 -m control_everything.gateway %*\r\n')
     manifest = write_product_manifest(output, version, source)

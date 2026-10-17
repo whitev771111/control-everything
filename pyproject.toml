@@ -7,6 +7,8 @@ name = "control-everything"
 version = "0.1.0a1"
 description = "Local session observation and project management panel"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dynamic = ["dependencies"]
 

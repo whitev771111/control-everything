@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/be96cc58-6bd8-4221-b0aa-77c0f9e31804
 - 会话身份、进程运行和人工任务进度分别展示；进程存在不代表 Agent 正在工作或任务已经完成。
 - 当前不开放 Agent 自动执行、审批或模型费用试跑；远端服务和个人工具需自行配置。
 - 服务只监听本机；关闭网页或 Python 网关不会结束外部 Agent，也不会停止独立观察后台。
-- 项目尚未声明源码许可证；后续 Windows 技术预发布的目标平台为 Windows 10/11 x64，安装器与原生程序目前未签名。
+- 后续 Windows 技术预发布的目标平台为 Windows 10/11 x64，安装器与原生程序目前未签名。
 
 ## 详细说明
 
@@ -46,3 +46,7 @@ https://github.com/user-attachments/assets/be96cc58-6bd8-4221-b0aa-77c0f9e31804
 - [可选接入](guide/integrations.md)：远端会话、终端、启动器与只读 MCP。
 - [Windows 安装与维护](guide/windows.md)：安装、停止、升级、回退、卸载及发布验证。
 - [参与开发](.github/CONTRIBUTING.md)：环境、目录职责、构建、测试和贡献约定。
+
+## 许可证
+
+项目源码与文档采用 [MIT 许可证](LICENSE)。第三方依赖遵循各自的许可证。

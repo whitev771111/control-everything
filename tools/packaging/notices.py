@@ -32,7 +32,8 @@ def regular_bytes(path):
 def collect_notices(output, wheels, runtime_license, cargo_packages, inno_license):
     """Write text plus a path-free inventory; never invent a project license."""
     output = Path(output)
-    entries, sections = [], ['THIRD-PARTY NOTICES\n\nSession Panel project license: not declared.\n'
+    project_license = regular_bytes(Path(__file__).resolve().parents[2] / 'LICENSE')
+    entries, sections = [], ['THIRD-PARTY NOTICES\n\nControl Everything project license: MIT (see LICENSE).\n'
                             'This technical prerelease installer and observer are unsigned.\n'
                             'Upstream signatures do not sign this combined product.\n']
 
@@ -81,10 +82,12 @@ def collect_notices(output, wheels, runtime_license, cargo_packages, inno_licens
     if type(packages) is not list or not packages:
         raise NoticeError('cargo_packages_required')
     for package in sorted(packages, key=lambda value: (value['name'], value['version'])):
-        if package['name'] == 'session-panel-observer' and not package.get('license') and not package.get('license_file'):
-            entries.append({'component': package['name'], 'version': package['version'], 'source': 'First-party product source',
-                            'license': 'not declared', 'file': None, 'sha256': None, 'first_party': True})
-            sections.append('\nSession Panel native observer ' + package['version'] + ': project license not declared.\n')
+        if package['name'] == 'session-panel-observer':
+            if package.get('license') != 'MIT':
+                raise NoticeError('observer_project_license_mismatch')
+            add(package['name'], package['version'], 'First-party product source',
+                'MIT', 'LICENSE', project_license)
+            entries[-1]['first_party'] = True
             continue
         root = Path(package['manifest_path']).parent
         candidates = {path for path in root.rglob('*') if path.is_file() and license_name(path.name)}
@@ -98,6 +101,7 @@ def collect_notices(output, wheels, runtime_license, cargo_packages, inno_licens
         for path in sorted(candidates):
             add(package['name'], package['version'], f'https://crates.io/crates/{package["name"]}/{package["version"]}',
                 package.get('license') or 'See included license', path.relative_to(root).as_posix(), regular_bytes(path))
+    (output / 'LICENSE').write_bytes(project_license)
     (output / 'THIRD-PARTY-NOTICES.txt').write_text('\n'.join(sections), encoding='utf-8', newline='\n')
     (output / 'THIRD-PARTY-NOTICES.json').write_text(json.dumps(entries, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return entries

@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-ROOT_FILES = {'.gitattributes', '.gitignore', 'AGENTS.md', 'README.md',
+ROOT_FILES = {'.gitattributes', '.gitignore', 'AGENTS.md', 'README.md', 'LICENSE',
               'requirements.txt', 'rust-toolchain.toml', 'pyproject.toml', 'MANIFEST.in', 'setup.py'}
 PACKAGE_FILES = {'__init__.py', 'paths.py', 'input_validation.py', 'gateway.py',
                  'profile.py', 'native_processes.py', 'mcp_stdio.py'}

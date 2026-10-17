@@ -153,7 +153,7 @@ jobs:
           $base = Join-Path (Get-Location) 'work/release'
           $public = Join-Path $base 'public'
           New-Item -ItemType Directory -Path $public | Out-Null
-          Copy-Item "$base/dist/*.whl", "$base/dist/*.tar.gz", "$base/installer/*.exe", "$base/payload/THIRD-PARTY-NOTICES.txt", "$base/payload/THIRD-PARTY-NOTICES.json", "$base/payload/BUILD-INPUTS.json", "$base/payload/product.json" -Destination $public
+          Copy-Item "$base/dist/*.whl", "$base/dist/*.tar.gz", "$base/installer/*.exe", "$base/payload/LICENSE", "$base/payload/THIRD-PARTY-NOTICES.txt", "$base/payload/THIRD-PARTY-NOTICES.json", "$base/payload/BUILD-INPUTS.json", "$base/payload/product.json" -Destination $public
           $product = Get-Content -Raw "$base/payload/product.json" | ConvertFrom-Json
           $wheelVersion = python -c "import pathlib,zipfile,email; p=next(pathlib.Path('work/release/dist').glob('*.whl')); z=zipfile.ZipFile(p); m=next(n for n in z.namelist() if n.endswith('.dist-info/METADATA')); print(email.message_from_bytes(z.read(m))['Version'])"
           if ($LASTEXITCODE -ne 0 -or $wheelVersion -cne $product.version -or $product.source.dirty -or $product.source.commit -cne '${{ steps.identity.outputs.commit }}') { throw 'Release metadata mismatch' }
@@ -170,7 +170,7 @@ jobs:
           Installer and observer are unsigned. Upstream signatures do not sign this combined product.
           Target: Windows 10/11 x64. Hosted-runner controlled-PATH acceptance does not establish a full clean Windows 10/11 machine matrix.
           This run checks one-version install/reinstall/uninstall, two profiles, NULL/zero, backup/restore, HTTP maintenance blocking, resources, native availability and suspended-news-Job cancellation. Separate two-version/rollback, normal-running news collection, desktop and optional SSH evidence remain release limitations unless independently recorded.
-          Project license is not declared; no open-source license has been selected. Third-party notices and exact hashes are attached.
+          Control Everything is licensed under MIT; LICENSE is attached. Third-party components retain their own licenses, with notices and exact hashes attached.
           Profiles and backups are separate from application files and are retained on uninstall. See README for normal shutdown and rollback.
           "@ | Set-Content -Encoding utf8 "$public/RELEASE-NOTES.md"
           $lines = @(Get-ChildItem -LiteralPath $public -File | Sort-Object Name | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $_.Name })

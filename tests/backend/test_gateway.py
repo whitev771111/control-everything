@@ -174,6 +174,16 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.request(path, "POST", self.focus_headers(), " " * 4097)[0], 413)
         self.service.terminal.focus_session.assert_not_called()
 
+    def test_quota_module_is_served_with_fixed_bytes_and_headers(self):
+        status, headers, body = self.request('/quota.js')
+        self.assertEqual(status, 200)
+        self.assertEqual(body, (WEB / 'workspace' / 'quota.js').read_bytes())
+        self.assertEqual(headers['Content-Type'], 'text/javascript; charset=utf-8')
+        self.assertEqual(headers['X-Content-Type-Options'], 'nosniff')
+        self.assertEqual(headers['Cache-Control'], 'no-store')
+        self.assertIn("default-src 'self'", headers['Content-Security-Policy'])
+        self.service.list_sessions.assert_not_called()
+
     def test_rejected_missing_body_times_out_and_next_connection_remains_valid(self):
         connection = http.client.HTTPConnection(*self.server.server_address, timeout=1.0)
         try:

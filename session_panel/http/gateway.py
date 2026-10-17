@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 from session_panel.sessions.source import HOST, PORT, canonical_uuid
 from session_panel.sessions.codex_index import list_threads as list_codex_threads
 from session_panel.sessions.observer_client import ObserverClient
-from session_panel.sessions import observer_protocol
+from session_panel.http import observation_routes
 from session_panel.workspace.progress import MANUAL, REGISTRY, TODOS, add_todo, board, set_progress, toggle_todo, load_todos
 from session_panel.integrations.launchers import LauncherCatalog, catalog, start
 from session_panel.integrations.desk import headlines, pulse
@@ -231,6 +231,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/execution.js": ("workspace/execution.js", "text/javascript; charset=utf-8"),
             "/observation.js": ("workspace/observation.js", "text/javascript; charset=utf-8"),
             "/news.js": ("workspace/news.js", "text/javascript; charset=utf-8"),
+            "/quota.js": ("workspace/quota.js", "text/javascript; charset=utf-8"),
             "/workspace.css": ("workspace/workspace.css", "text/css; charset=utf-8"),
         }
         if path.path in static and not path.query:
@@ -418,36 +419,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.reject(503, "workbench_launch_failed" if connect else "focus_failed")
 
     def observation_post(self, path):
-        try:
-            if path.query:
-                raise ValueError("invalid_request")
-            body = self.read_json_body(max_bytes=4096, strict=True)
-            if path.path.endswith("/return"):
-                observer_protocol.exact(body, {"action_id", "generation", "seq"})
-                observer_protocol.token(body["action_id"])
-                observer_protocol.token(body["generation"])
-                observer_protocol.integer(body["seq"])
-                method = "return_window"
-            elif path.path.endswith("/close"):
-                observer_protocol.exact(body, {"selection_id", "generation"})
-                observer_protocol.token(body["selection_id"])
-                observer_protocol.token(body["generation"])
-                method = "dismiss_window_choices"
-            else:
-                observer_protocol.exact(body, {"registration_id"})
-                observer_protocol.registration_id(body["registration_id"])
-                method = "list_window_choices"
-        except (ValueError, UnicodeError, OSError):
-            return self.reject(400, "invalid_request")
-        observer = self.server.__dict__.get("observer")
-        if observer is None:
-            return self.reply(503, {"status": "unavailable", "reason": "observer_unavailable"})
-        value = observer.request(method, body)
-        status = 200 if value["status"] == "available" else 503 if value["status"] == "unavailable" else 409
-        # A limited choice list remains a usable, explicitly bounded response.
-        if method == "list_window_choices" and "choices" in value:
-            status = 200
-        self.reply(status, value)
+        return observation_routes.handle_post(self, path)
 
     def workspace_reply(self, path, body=None, *, stream='ai'):
         workspace = self.server.workspace

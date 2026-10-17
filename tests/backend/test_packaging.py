@@ -56,7 +56,7 @@ class PackagingTests(TestCase):
     def test_default_editable_avoids_old_namespace_with_simple_src_layout(self):
         metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             # Preserve a former package with ignored cache directories, as in a real checkout.
             (root / "session_panel/workspace/__pycache__").mkdir(parents=True)
             package = root / "src/session_panel"
@@ -99,7 +99,7 @@ class PackagingTests(TestCase):
 
     def test_mapping_is_available_before_run_and_copies_exact_bytes(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             self.write_assets(root)
             with patch.object(assets, "__file__", str(root / "tools/packaging/build_assets.py")):
                 command = self.command(root)
@@ -115,7 +115,7 @@ class PackagingTests(TestCase):
 
     def test_sdist_source_list_uses_relative_posix_names(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             self.write_assets(root)
             with patch.object(assets, "__file__", str(root / "tools/packaging/build_assets.py")):
                 sources = self.command(root).get_source_files()
@@ -124,7 +124,7 @@ class PackagingTests(TestCase):
 
     def test_editable_does_not_copy_assets_into_source_or_build_tree(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             self.write_assets(root)
             with patch.object(assets, "__file__", str(root / "tools/packaging/build_assets.py")):
                 command = self.command(root)
@@ -136,7 +136,7 @@ class PackagingTests(TestCase):
 
     def test_missing_linked_and_outside_assets_are_rejected(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             with patch.object(assets, "__file__", str(root / "tools/packaging/build_assets.py")):
                 command = self.command(root)
                 with self.assertRaisesRegex(ValueError, "missing_web_asset"):

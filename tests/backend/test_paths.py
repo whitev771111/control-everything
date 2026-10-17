@@ -21,7 +21,7 @@ class PathsTests(TestCase):
 
     def test_installed_resource_and_data_never_use_cwd(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             package = root / "site-packages/session_panel"
             resources = MagicMock()
             with patch.object(paths, "__file__", str(package / "paths.py")), \
@@ -36,7 +36,7 @@ class PathsTests(TestCase):
 
     def test_source_shape_requires_all_fixed_markers(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             with patch.object(paths, "__file__", str(root / "src/session_panel/paths.py")):
                 self.assertIsNone(paths.source_root())
                 (root / "pyproject.toml").touch()
@@ -47,7 +47,7 @@ class PathsTests(TestCase):
 
     def test_default_profile_calculation_keeps_platform_fallbacks(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             for platform, environment, expected in (
                     ("win32", {}, root / "AppData/Local/SessionPanel"),
                     ("win32", {"LOCALAPPDATA": str(root / "local")}, root / "local/SessionPanel"),
@@ -60,14 +60,14 @@ class PathsTests(TestCase):
 
     def test_ordinary_wheel_has_no_implicit_native_fallback(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             with patch.object(paths, "__file__", str(root / "site/session_panel/paths.py")), \
                     patch.object(paths.sys, "executable", str(root / "python/python.exe")):
                 self.assertIsNone(paths.observer_install_dir())
 
     def test_product_native_location_is_fixed_and_marker_mismatch_rejected(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             marker = root / "product.json"
             manifest = {"schema": 1, "product": "session-panel", "target": "windows-x86_64",
                         "native": {"relative": "native/observer/session-panel-observer.exe"}}

@@ -109,7 +109,7 @@ async function http() {
     }
     if (fixture.import_source_dir && initial.can_import) await step('import complete synthetic legacy management data', async () => {
       await page.locator('[data-view=settings]').click(); await page.locator('#import-source-dir').fill(fixture.import_source_dir); await page.locator('#import-submit').click(); await page.waitForFunction(() => document.getElementById('import-feedback').textContent.includes('已提交'));
-      check('backup and recovery command visible', (await page.locator('#import-result').textContent()).includes('session_panel.profile restore'));
+      check('backup and recovery command visible', (await page.locator('#import-result').textContent()).includes('control_everything.profile restore'));
       for (const [key, value] of Object.entries(fixture.expected_import_counts || {})) check(`complete imported count ${key}`, (await page.locator('#import-result').textContent()).includes(`${key}：${value}`));
     });
     if (fixture.codex_db_path) await step('settings failure retains draft, successful config persists after reload', async () => {

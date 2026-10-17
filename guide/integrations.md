@@ -14,9 +14,9 @@
 New-Item -ItemType Directory -Force work | Out-Null
 Copy-Item examples/integrations/integration-settings.example.json work/integration-settings.json
 $settingsFile = (Resolve-Path work/integration-settings.json).Path
-& '.venv/Scripts/python.exe' -m session_panel.profile validate-settings --file $settingsFile
-& '.venv/Scripts/python.exe' -m session_panel.profile import-settings --file $settingsFile
-& '.venv/Scripts/python.exe' -m session_panel.profile status
+& '.venv/Scripts/python.exe' -m control_everything.profile validate-settings --file $settingsFile
+& '.venv/Scripts/python.exe' -m control_everything.profile import-settings --file $settingsFile
+& '.venv/Scripts/python.exe' -m control_everything.profile status
 ```
 
 使用独立数据目录时，为 init、import-settings、status 和 gateway 都传同一个绝对 `--data-dir`。validate-settings 只校验该文件，不写 profile、不探测工具或网络。import-settings 备份后整体替换四段，保留 Codex 设置和管理记录；文件中的 null 会清除该段，enabled=false 保留完整配置但禁用。编辑时保留仍需使用的其他段，不能把单段文件当增量补丁。配置写入竞争返回 config_busy，可在另一个写入结束后重试。
@@ -122,7 +122,7 @@ WezTerm 状态区单独观察登记的 Zellij session 后台、GUI 进程、交�
 ```toml
 [mcp_servers.remote_claude_sessions]
 command = "C:/example/session-panel/.venv/Scripts/python.exe"
-args = ["-m", "session_panel.mcp_stdio"]
+args = ["-m", "control_everything.mcp_stdio"]
 cwd = "C:/example/session-panel"
 enabled_tools = ["list_sessions", "get_session_status", "get_session_messages"]
 ```

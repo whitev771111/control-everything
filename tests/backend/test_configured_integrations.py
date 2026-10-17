@@ -12,12 +12,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from session_panel.http.gateway import build_profile_server
-from session_panel.profiles.profile import Profile
-from session_panel.sessions.service import SessionService
-from session_panel.sessions.terminal import Terminal
-from session_panel.sessions.workbench import Workbench
-from session_panel.integrations.launchers import LauncherCatalog
+from control_everything.http.gateway import build_profile_server
+from control_everything.profiles.profile import Profile
+from control_everything.sessions.service import SessionService
+from control_everything.sessions.terminal import Terminal
+from control_everything.sessions.workbench import Workbench
+from control_everything.integrations.launchers import LauncherCatalog
 from tests.fixtures.integration_config import integration_config
 from tests.backend.test_observation import MAIN, registration
 from tests.backend.test_workbench import process, GUI_TIME, CHILD_TIME
@@ -28,7 +28,7 @@ class ConfiguredIntegrationsTests(unittest.TestCase):
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
-        headlines = patch("session_panel.http.gateway.headlines", return_value=[])
+        headlines = patch("control_everything.http.gateway.headlines", return_value=[])
         headlines.start(); self.addCleanup(headlines.stop)
 
     def import_config(self, name="one", *, host="example.invalid", enabled=True):
@@ -50,7 +50,7 @@ class ConfiguredIntegrationsTests(unittest.TestCase):
             settings["launchers"]["items"] = [website]
         document = {"version": 2, "integrations": settings}
         file = self.root / (name + ".json"); file.write_text(json.dumps(document), encoding="utf-8")
-        result = subprocess.run([sys.executable, "-X", "utf8", "-m", "session_panel.profile", "import-settings", "--file", str(file),
+        result = subprocess.run([sys.executable, "-X", "utf8", "-m", "control_everything.profile", "import-settings", "--file", str(file),
                                  "--data-dir", str(directory)], capture_output=True, text=True, encoding="utf-8", timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(json.loads(result.stdout.splitlines()[0])["restart_required"])
@@ -136,7 +136,7 @@ class ConfiguredIntegrationsTests(unittest.TestCase):
         self.assertTrue(self.request(server, "/api/workbench")[1]["can_focus"])
         self.assertTrue(self.request(server, f"/api/sessions/{MAIN}/focus", {})[1]["focused"])
         self.assertTrue(self.request(server, "/api/workbench/connect", {})[1]["connected"])
-        with patch("session_panel.integrations.launchers.os.startfile") as launch:
+        with patch("control_everything.integrations.launchers.os.startfile") as launch:
             self.assertEqual(self.request(server, "/api/launch", {"id": "website"})[0], 200)
             launch.assert_called_once_with("https://example.invalid/one")
         self.assertTrue(all(calls))
@@ -150,9 +150,9 @@ class ConfiguredIntegrationsTests(unittest.TestCase):
         self.assertFalse(public["restart_required"])
 
     def test_empty_profile_never_constructs_or_queries_optional_integrations(self):
-        targets = ["session_panel.sessions.service.RemoteClient", "session_panel.sessions.service.SessionService",
-                   "session_panel.sessions.terminal.Terminal", "session_panel.sessions.workbench.Workbench",
-                   "session_panel.http.gateway.LauncherCatalog"]
+        targets = ["control_everything.sessions.service.RemoteClient", "control_everything.sessions.service.SessionService",
+                   "control_everything.sessions.terminal.Terminal", "control_everything.sessions.workbench.Workbench",
+                   "control_everything.http.gateway.LauncherCatalog"]
         for target in targets:
             item = patch(target, side_effect=AssertionError("unconfigured")); item.start(); self.addCleanup(item.stop)
         server = self.server(self.root / "empty")
@@ -181,7 +181,7 @@ class ConfiguredIntegrationsTests(unittest.TestCase):
                 self.assertIsNone(server.service.terminal.workbench)
             else:
                 self.assertIsNone(server.service)
-                with patch("session_panel.integrations.launchers.os.startfile") as launch:
+                with patch("control_everything.integrations.launchers.os.startfile") as launch:
                     self.assertEqual(self.request(server, "/api/launch", {"id": "website"})[0], 200)
                 launch.assert_called_once_with("https://example.invalid/launchers")
 

@@ -8,10 +8,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from session_panel.profiles.profile import DEFAULT_CONFIG, Profile, ProfileError
-from session_panel.profiles import task_migration as migration, profile_import as backups
-from session_panel.workspace import task_schema as schema
-from session_panel.workspace.store import WorkspaceError
+from control_everything.profiles.profile import DEFAULT_CONFIG, Profile, ProfileError
+from control_everything.profiles import task_migration as migration, profile_import as backups
+from control_everything.workspace import task_schema as schema
+from control_everything.workspace.store import WorkspaceError
 
 
 def schema1_profile(root):

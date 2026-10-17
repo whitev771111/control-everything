@@ -540,7 +540,7 @@ function renderIntegrations(value) {
     root.append(row);
   }
   $('integration-restart').textContent = value.restart_required ? '配置已保存；请重启同一 data-dir 的服务。当前接入仍使用启动时配置。' : '当前服务使用启动时的接入配置。';
-  $('integration-import-command').textContent = `python -m session_panel.profile import-settings --file "<自己的高级配置 JSON 绝对路径>" --data-dir "${value.data_dir}"`;
+  $('integration-import-command').textContent = `python -m control_everything.profile import-settings --file "<自己的高级配置 JSON 绝对路径>" --data-dir "${value.data_dir}"`;
 }
 async function loadLaunchers() {
   const root = $('configured-launchers'); root.replaceChildren();
@@ -667,7 +667,7 @@ function renderImport(value) {
   const root = $('import-result'); root.replaceChildren(el('h3', '', '导入收据'));
   for (const [kind, count] of Object.entries(value.counts || {})) root.append(el('p', '', `${kind}：${count}`));
   root.append(el('p', '', `未导入：${(value.excluded_domains || ['execution', 'approvals', 'events', 'private_messages']).join('、')}`));
-  if (value.backup_path) root.append(el('p', '', `目的 profile 导入前备份：${value.backup_path}`), el('p', '', '恢复到另一个空目录，再另行启动切换；当前 profile 及导入后新记录仍保留。'), el('code', 'restore-command', `python -m session_panel.profile restore --backup "${value.backup_path}" --data-dir "<另一个空的绝对目录>"`));
+  if (value.backup_path) root.append(el('p', '', `目的 profile 导入前备份：${value.backup_path}`), el('p', '', '恢复到另一个空目录，再另行启动切换；当前 profile 及导入后新记录仍保留。'), el('code', 'restore-command', `python -m control_everything.profile restore --backup "${value.backup_path}" --data-dir "<另一个空的绝对目录>"`));
 }
 async function importLegacy(event) {
   event.preventDefault(); clearFieldErrors('import-feedback'); message('import-feedback', '正在导入…'); $('import-fields').disabled = true;

@@ -7,8 +7,8 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import MagicMock, Mock, patch
 
-from session_panel import paths
-from session_panel.sessions import observer_pipe
+from control_everything import paths
+from control_everything.sessions import observer_pipe
 
 
 class PathsTests(TestCase):
@@ -23,14 +23,14 @@ class PathsTests(TestCase):
     def test_installed_resource_and_data_never_use_cwd(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            package = root / "site-packages/session_panel"
+            package = root / "site-packages/control_everything"
             resources = MagicMock()
             with patch.object(paths, "__file__", str(package / "paths.py")), \
                     patch.object(paths, "files", return_value=resources) as loader, \
                     patch.object(paths, "default_profile_dir", return_value=root / "user"):
                 self.assertIsNone(paths.source_root())
                 self.assertEqual(paths.web_root(), resources / "_assets" / "web")
-                loader.assert_called_once_with("session_panel")
+                loader.assert_called_once_with("control_everything")
                 self.assertEqual(paths.legacy_data_root(), root / "user/legacy")
                 self.assertEqual(paths.execution_root(), package)
                 self.assertFalse((root / "user").exists())
@@ -38,7 +38,7 @@ class PathsTests(TestCase):
     def test_source_shape_requires_all_fixed_markers(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            with patch.object(paths, "__file__", str(root / "src/session_panel/paths.py")):
+            with patch.object(paths, "__file__", str(root / "src/control_everything/paths.py")):
                 self.assertIsNone(paths.source_root())
                 (root / "pyproject.toml").touch()
                 (root / "web").mkdir()
@@ -62,7 +62,7 @@ class PathsTests(TestCase):
     def test_ordinary_wheel_has_no_implicit_native_fallback(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            with patch.object(paths, "__file__", str(root / "site/session_panel/paths.py")), \
+            with patch.object(paths, "__file__", str(root / "site/control_everything/paths.py")), \
                     patch.object(paths.sys, "executable", str(root / "python/python.exe")):
                 self.assertIsNone(paths.observer_install_dir())
 
@@ -77,7 +77,7 @@ class PathsTests(TestCase):
                         "native": {"relative": "native/observer/session-panel-observer.exe",
                                    "manifest_sha256": hashlib.sha256(native.read_bytes()).hexdigest()}}
             marker.write_text(json.dumps(manifest), encoding="utf-8")
-            with patch.object(paths, "__file__", str(root / "runtime/Lib/site-packages/session_panel/paths.py")), \
+            with patch.object(paths, "__file__", str(root / "runtime/Lib/site-packages/control_everything/paths.py")), \
                     patch.object(paths.sys, "executable", str(root / "runtime/python.exe")):
                 self.assertEqual(paths.observer_install_dir(), root / "native/observer")
                 for invalid in ({**manifest, "schema": True}, {**manifest, "product": "other"},
@@ -89,7 +89,7 @@ class PathsTests(TestCase):
                 with self.assertRaises(ValueError):
                     paths.observer_install_dir()
                 marker.write_text(json.dumps(manifest), encoding="utf-8")
-                with patch.object(paths, "__file__", str(root / "elsewhere/session_panel/paths.py")), \
+                with patch.object(paths, "__file__", str(root / "elsewhere/control_everything/paths.py")), \
                         self.assertRaises(ValueError):
                     paths.observer_install_dir()
 
@@ -110,7 +110,7 @@ class PathsTests(TestCase):
             native.write_text(json.dumps({'sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}), encoding='utf-8')
             pipe = object.__new__(observer_pipe.WindowsPipe)
             pipe.close, pipe.api = Mock(), Mock()
-            with patch.object(paths, '__file__', str(root / 'runtime/Lib/site-packages/session_panel/paths.py')), \
+            with patch.object(paths, '__file__', str(root / 'runtime/Lib/site-packages/control_everything/paths.py')), \
                     patch.object(paths.sys, 'executable', str(root / 'runtime/python.exe')), \
                     self.assertRaises(observer_pipe.PipeError) as caught:
                 pipe.connect()

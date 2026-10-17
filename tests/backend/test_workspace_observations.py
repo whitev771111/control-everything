@@ -10,13 +10,13 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
-from session_panel.http import gateway
-from session_panel.profiles.profile import Profile
-from session_panel.workspace.observations import project_observations, scope_roots
-from session_panel.workspace.service import WorkspaceService
+from control_everything.http import gateway
+from control_everything.profiles.profile import Profile
+from control_everything.workspace.observations import project_observations, scope_roots
+from control_everything.workspace.service import WorkspaceService
 from tests.backend.test_observer_protocol import sample
 from tests.backend.test_observation_settings import registration, save
-from session_panel.profiles import observation_settings
+from control_everything.profiles import observation_settings
 
 
 class WorkspaceObservationTests(unittest.TestCase):

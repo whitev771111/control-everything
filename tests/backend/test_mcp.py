@@ -10,8 +10,8 @@ from unittest.mock import patch
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from session_panel.http.gateway import make_server
-from session_panel.integrations.mcp_stdio import build_mcp, call_gateway
+from control_everything.http.gateway import make_server
+from control_everything.integrations.mcp_stdio import build_mcp, call_gateway
 from tests.backend.test_gateway import PAGE, SESSION_ID, fake_service
 
 
@@ -20,7 +20,7 @@ class MCPTests(unittest.TestCase):
         service = fake_service(); server = make_server(service, ("127.0.0.1", 0))
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
-            with patch("session_panel.integrations.mcp_stdio.GATEWAY", server.origin):
+            with patch("control_everything.integrations.mcp_stdio.GATEWAY", server.origin):
                 self.assertEqual(call_gateway("/api/sessions"), service.list_sessions.return_value)
                 self.assertEqual(call_gateway(f"/api/sessions/{SESSION_ID}"), service.get_session_status.return_value)
                 self.assertEqual(call_gateway(f"/api/sessions/{SESSION_ID}/messages"), PAGE)
@@ -32,7 +32,7 @@ class MCPTests(unittest.TestCase):
             server.shutdown(); server.server_close(); thread.join()
 
     def test_gateway_connection_failure_is_not_empty_success(self):
-        with patch("session_panel.integrations.mcp_stdio.build_opener") as factory:
+        with patch("control_everything.integrations.mcp_stdio.build_opener") as factory:
             factory.return_value.open.side_effect = OSError("synthetic-connection-error")
             result = call_gateway("/api/sessions")
         self.assertEqual(result["reason"], "gateway_unavailable"); self.assertFalse(result["available"])
@@ -42,13 +42,13 @@ class MCPTests(unittest.TestCase):
     def test_example_config_is_stdio_three_tools_and_correct_workspace(self):
         value = tomllib.loads(Path(".codex/config.toml.example").read_text(encoding="utf-8"))
         server = value["mcp_servers"]["remote_claude_sessions"]
-        self.assertEqual(server["args"], ["-m", "session_panel.mcp_stdio"])
+        self.assertEqual(server["args"], ["-m", "control_everything.mcp_stdio"])
         self.assertEqual(set(server["enabled_tools"]), {"list_sessions", "get_session_status", "get_session_messages"})
         self.assertEqual(server["cwd"], "C:/example/session-panel")
 
     def test_initialize_list_and_calls_over_stdio_protocol(self):
         # Only synthetic results enter this child process; no gateway or SSH is used.
-        script = "from unittest.mock import patch; from session_panel.integrations.mcp_stdio import build_mcp; from tests.backend.test_gateway import PAGE; p=patch('session_panel.integrations.mcp_stdio.call_gateway',return_value=PAGE); p.start(); build_mcp().run(transport='stdio')"
+        script = "from unittest.mock import patch; from control_everything.integrations.mcp_stdio import build_mcp; from tests.backend.test_gateway import PAGE; p=patch('control_everything.integrations.mcp_stdio.call_gateway',return_value=PAGE); p.start(); build_mcp().run(transport='stdio')"
 
         async def check():
             params = StdioServerParameters(command=sys.executable, args=["-c", script], cwd=str(Path.cwd()))
@@ -76,7 +76,7 @@ class MCPTests(unittest.TestCase):
     def test_invalid_tool_input_is_rejected_before_gateway(self):
         async def check():
             mcp = build_mcp()
-            with patch("session_panel.integrations.mcp_stdio.call_gateway") as gateway:
+            with patch("control_everything.integrations.mcp_stdio.call_gateway") as gateway:
                 for kwargs in ({"session_id": SESSION_ID, "limit": 51}, {"session_id": SESSION_ID, "offset": -1}, {"session_id": SESSION_ID.upper()}):
                     with self.assertRaises(Exception):
                         await mcp.call_tool("get_session_messages", kwargs)
@@ -91,8 +91,8 @@ class McpStdioEntryTests(unittest.TestCase):
         import runpy
         from unittest.mock import patch
 
-        with patch("session_panel.integrations.mcp_stdio.build_mcp") as build:
-            runpy.run_module("session_panel.mcp_stdio", run_name="__main__")
+        with patch("control_everything.integrations.mcp_stdio.build_mcp") as build:
+            runpy.run_module("control_everything.mcp_stdio", run_name="__main__")
         build.assert_called_once_with()
         build.return_value.run.assert_called_once_with(transport="stdio")
 

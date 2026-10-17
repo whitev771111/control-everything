@@ -11,12 +11,12 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
-from session_panel.sessions.observer_client import ObserverClient
-from session_panel.sessions.observer_pipe import IoGate, Overlapped, CleanupPending, Arena, PipeError, WindowsPipe
+from control_everything.sessions.observer_client import ObserverClient
+from control_everything.sessions.observer_pipe import IoGate, Overlapped, CleanupPending, Arena, PipeError, WindowsPipe
 from tests.backend.test_observer_protocol import sample
-from session_panel.sessions import observer_protocol as p
-from session_panel.profiles import observation_settings as settings
-from session_panel.profiles.profile import Profile, ProfileError
+from control_everything.sessions import observer_protocol as p
+from control_everything.profiles import observation_settings as settings
+from control_everything.profiles.profile import Profile, ProfileError
 from tests.backend.test_observation_settings import registration, save
 
 
@@ -127,7 +127,7 @@ class RegistrationClientTests(unittest.TestCase):
         self.assertFalse(client.grants)
 
     def test_save_revokes_old_return_and_picker_as_http409_without_rpc_but_missing_backend_is503(self):
-        from session_panel.http.gateway import PanelHandler
+        from control_everything.http.gateway import PanelHandler
         for rows in ([registration(enabled=False)], []):
             with self.subTest(rows=rows):
                 save(self.profile, [registration()])

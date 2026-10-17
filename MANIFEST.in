@@ -2,7 +2,7 @@ include requirements.txt
 include setup.py
 include tools/packaging/build_assets.py
 include tools/packaging/requirements.txt
-recursive-include src/session_panel *.py
+recursive-include src/control_everything *.py
 include web/sessions/index.html web/sessions/app.js web/sessions/style.css
 include web/progress/progress.html web/progress/progress.js web/progress/progress.css
 include web/workspace/workspace.html web/workspace/workspace.js web/workspace/workspace.css

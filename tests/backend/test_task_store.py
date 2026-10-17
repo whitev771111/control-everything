@@ -7,9 +7,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from session_panel.profiles.profile import Profile, ProfileError
-from session_panel.workspace import task_schema as schema
-from session_panel.workspace.store import WorkspaceError, WorkspaceStore
+from control_everything.profiles.profile import Profile, ProfileError
+from control_everything.workspace import task_schema as schema
+from control_everything.workspace.store import WorkspaceError, WorkspaceStore
 from tests.backend.test_project_management import project_body
 
 

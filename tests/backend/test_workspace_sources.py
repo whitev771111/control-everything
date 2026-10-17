@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
 
-from session_panel.workspace.sources import (CodexQuotaSource, FEEDS, MAX_FEED_BYTES, MAX_RPC_LINE,
+from control_everything.workspace.sources import (CodexQuotaSource, FEEDS, MAX_FEED_BYTES, MAX_RPC_LINE,
                                              NewsSource, ProbeError, native_codex, normalize_limits,
                                              parse_feed, safe_news_url)
 
@@ -38,13 +38,13 @@ class QuotaSourceTests(unittest.TestCase):
     def source_with_process(self, messages=(), **kwargs):
         process = FakeProcess(messages, **kwargs)
         source = CodexQuotaSource()
-        with patch("session_panel.workspace.sources.native_codex", return_value=Path("C:/example/fixture/codex.exe")), \
-                patch("session_panel.workspace.sources.subprocess.Popen", return_value=process) as spawn:
+        with patch("control_everything.workspace.sources.native_codex", return_value=Path("C:/example/fixture/codex.exe")), \
+                patch("control_everything.workspace.sources.subprocess.Popen", return_value=process) as spawn:
             result = source.refresh()
         return source, process, result, spawn
 
     def test_get_does_not_spawn_and_uses_copy(self):
-        with patch("session_panel.workspace.sources.subprocess.Popen") as spawn:
+        with patch("control_everything.workspace.sources.subprocess.Popen") as spawn:
             source = CodexQuotaSource()
             first = source.get_cached()
             first["buckets"].append({})
@@ -53,15 +53,15 @@ class QuotaSourceTests(unittest.TestCase):
             spawn.assert_not_called()
 
     def test_native_resolver_uses_executable_or_only_verified_npm_layout(self):
-        with patch("session_panel.workspace.sources.shutil.which", return_value=None):
+        with patch("control_everything.workspace.sources.shutil.which", return_value=None):
             with self.assertRaisesRegex(ProbeError, "cli_not_found"):
                 native_codex()
-        with patch("session_panel.workspace.sources.shutil.which", side_effect=["C:/example/fixture/codex.exe"]):
+        with patch("control_everything.workspace.sources.shutil.which", side_effect=["C:/example/fixture/codex.exe"]):
             self.assertEqual(native_codex(), Path("C:/example/fixture/codex.exe"))
         with TemporaryDirectory() as directory:
             shim = Path(directory) / "codex.cmd"
             native = Path(directory) / "node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/codex/codex.exe"
-            with patch("session_panel.workspace.sources.shutil.which", side_effect=lambda name: None if name == "codex.exe" else str(shim)):
+            with patch("control_everything.workspace.sources.shutil.which", side_effect=lambda name: None if name == "codex.exe" else str(shim)):
                 with self.assertRaisesRegex(ProbeError, "native_cli_not_found"):
                     native_codex()
                 native.parent.mkdir(parents=True)
@@ -110,7 +110,7 @@ class QuotaSourceTests(unittest.TestCase):
     def test_timeout_uses_one_deadline_and_reclaims_owned_process(self):
         events = Mock()
         events.get.side_effect = queue.Empty
-        with patch("session_panel.workspace.sources.queue.Queue", return_value=events):
+        with patch("control_everything.workspace.sources.queue.Queue", return_value=events):
             _, process, result, _ = self.source_with_process([], hang_on_exit=True)
         self.assertEqual(result["reason"], "probe_timeout")
         self.assertLessEqual(events.get.call_args.kwargs["timeout"], 18)
@@ -217,11 +217,11 @@ class NewsSourceTests(unittest.TestCase):
         collector.release.assert_called_once_with('opaque-lease')
 
     def test_legacy_headlines_reads_only_cached_hn_projection(self):
-        from session_panel.integrations.desk import headlines
+        from control_everything.integrations.desk import headlines
         collector = Mock()
         collector.cached.return_value = {'items': [{'title': 'Synthetic public', 'url': 'https://example.com/story'}]}
         collector.refresh.return_value = {'items': []}
-        with patch('session_panel.integrations.desk.NewsSource', return_value=collector):
+        with patch('control_everything.integrations.desk.NewsSource', return_value=collector):
             self.assertEqual(headlines(), [{'title': 'Synthetic public', 'url': 'https://example.com/story'}])
             collector.get.assert_not_called()
             collector.cached.assert_called_once_with('hn')

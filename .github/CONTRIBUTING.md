@@ -10,17 +10,17 @@
 
 | 后端目录 | 职责 |
 |---|---|
-| `src/session_panel/http` | HTTP 路由、静态白名单与服务装配 |
-| `src/session_panel/sessions` | 会话观察、索引、终端与本机进程证据 |
-| `src/session_panel/workspace` | 项目、进度、管理存储与来源观察 |
-| `src/session_panel/execution` | 执行准入、执行记录与受控进程 |
-| `src/session_panel/profiles` | 用户配置、导入备份与离线恢复 |
-| `src/session_panel/integrations` | 外部接入、固定启动器与旧只读 MCP |
-| `src/session_panel/installation` | Windows完整产品清单、所属登记与协作维护；不写业务库 |
-| `src/session_panel/platform` | Windows Job、安装身份及句柄原语；不依赖上层功能包 |
+| `src/control_everything/http` | HTTP 路由、静态白名单与服务装配 |
+| `src/control_everything/sessions` | 会话观察、索引、终端与本机进程证据 |
+| `src/control_everything/workspace` | 项目、进度、管理存储与来源观察 |
+| `src/control_everything/execution` | 执行准入、执行记录与受控进程 |
+| `src/control_everything/profiles` | 用户配置、导入备份与离线恢复 |
+| `src/control_everything/integrations` | 外部接入、固定启动器与旧只读 MCP |
+| `src/control_everything/installation` | Windows完整产品清单、所属登记与协作维护；不写业务库 |
+| `src/control_everything/platform` | Windows Job、安装身份及句柄原语；不依赖上层功能包 |
 | `native/observer` | Windows 只读进程观察、受限本机管道及核验后的窗口返回；不写管理库 |
 
-生产 Python 包只放在 `src/session_panel`，不要在根目录建立影子包。`src/session_panel/paths.py` 分别定位检出目录、包内资源和用户数据；源码模式保留旧根数据合同，安装模式不会把程序目录当数据目录。包根的四个旧 CLI 文件只保留兼容入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
+生产 Python 包只放在 `src/control_everything`，不要在根目录建立影子包。`src/control_everything/paths.py` 分别定位检出目录、包内资源和用户数据；源码模式保留旧根数据合同，安装模式不会把程序目录当数据目录。包根的四个 CLI 文件只保留模块入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
 
 前端按 `web/sessions`、`web/progress`、`web/workspace` 分组；执行界面属于工作台，放在 `web/workspace/execution.js`。新增页面资源放入所属功能目录，并在 HTTP 静态白名单中显式映射。物理路径与公开 URL 分开维护：搬文件不改变 `/workspace`、`/workspace.js` 等地址，也不改变普通脚本加载顺序。
 
@@ -44,7 +44,7 @@
 | installation | sessions 的窄身份/管道协议、基础模块；不依赖业务、配置或 HTTP |
 | http | 上述功能的装配与公开接口 |
 
-同域内 `workspace.validation` 不依赖 store/service，store 不依赖 service。项目和事项的关联判断继续使用原写连接和事务，不拆库或在检查后另开连接写入。旧 CLI 与兼容重导出供旧调用使用，新内部代码引用真实实现，不通过动态导入绕过边界。
+同域内 `workspace.validation` 不依赖 store/service，store 不依赖 service。项目和事项的关联判断继续使用原写连接和事务，不拆库或在检查后另开连接写入。包内 CLI 与兼容重导出保留功能边界，新内部代码引用真实实现，不通过动态导入绕过边界。
 
 安装模块只有 HTTP 装配层可以调用；sessions、workspace、profiles、execution、integrations 和基础模块不得反向依赖它。`installation.manifest` 只用标准库，构建器与运行时共用；registry 不依赖 maintenance。完整产品在绑定成功后核基础闭包、持安装互斥登记 HTTP 与 profile、启动观察后释放，退出只清自己的 HTTP 活动记录。源码检出及普通 wheel 不登记这套安装；原生缺失或 pin 不匹配仍可管理并显示受限，基础闭包损坏会阻止启动。
 
@@ -163,11 +163,11 @@ node --test tests/frontend/test_observation_ui.cjs
 
 ```powershell
 $checkData = Join-Path (Get-Location) 'work/new-member-profile'
-.\.venv\Scripts\python.exe -m session_panel.profile init --data-dir $checkData
-.\.venv\Scripts\python.exe -m session_panel.profile validate-settings --file (Resolve-Path examples/integrations/integration-settings.example.json).Path
-.\.venv\Scripts\python.exe -m session_panel.profile import-settings --file (Resolve-Path examples/integrations/integration-settings.example.json).Path --data-dir $checkData
-.\.venv\Scripts\python.exe -m session_panel.profile status --data-dir $checkData
-.\.venv\Scripts\python.exe -m session_panel.gateway --data-dir $checkData --port 14401
+.\.venv\Scripts\python.exe -m control_everything.profile init --data-dir $checkData
+.\.venv\Scripts\python.exe -m control_everything.profile validate-settings --file (Resolve-Path examples/integrations/integration-settings.example.json).Path
+.\.venv\Scripts\python.exe -m control_everything.profile import-settings --file (Resolve-Path examples/integrations/integration-settings.example.json).Path --data-dir $checkData
+.\.venv\Scripts\python.exe -m control_everything.profile status --data-dir $checkData
+.\.venv\Scripts\python.exe -m control_everything.gateway --data-dir $checkData --port 14401
 ```
 
 页面验收负责人打开本机 14401/workspace，登记自己创建的测试项目目录，确认任务/人工记录可保存、四项高级接入显示未配置；需要 Codex 时只登记自己的库或独立合成库。停止该实例再启动同目录，确认数据保留。启动服务和浏览器人工验收分别留证，不以单元测试替代。
@@ -178,7 +178,7 @@ $checkData = Join-Path (Get-Location) 'work/new-member-profile'
 npm install --prefix work/browser playwright
 $env:NODE_PATH = (Resolve-Path work/browser/node_modules).Path
 node -e "console.log(require.resolve('playwright'))"
-node tests/e2e/verify_session_panel.cjs --fixture
+node tests/e2e/verify_control_everything.cjs --fixture
 node tests/e2e/verify_execution.cjs --fixture
 node tests/e2e/verify_workspace.cjs --fixture
 ```
@@ -193,7 +193,7 @@ node tests/e2e/verify_workspace.cjs --fixture
 
 ### 管理库schema2与离线迁移验证
 
-管理schema、profile配置和backup manifest分别版本化；schema1只能显式通过 `python -m session_panel.profile migrate-tasks --data-dir <绝对目录>` 升级。新库直接schema2；restore兼容manifest1/schema1与manifest2/schema2，旧结构恢复发布后仍须显式迁移。不得在HTTP启动、Profile.open或配置保存中隐式升级，不删除未知表或执行账本以适配schema。
+管理schema、profile配置和backup manifest分别版本化；schema1只能显式通过 `python -m control_everything.profile migrate-tasks --data-dir <绝对目录>` 升级。新库直接schema2；restore兼容manifest1/schema1与manifest2/schema2，旧结构恢复发布后仍须显式迁移。不得在HTTP启动、Profile.open或配置保存中隐式升级，不删除未知表或执行账本以适配schema。
 
 任务存储的唯一写表为task_items，tasks/todos仅为保留原ID的只读视图。所有管理连接严格核schema后注册无副作用writer版本函数，固定DML guards拒旧连接误写；这是版本兼容机制，不是对恶意DB编辑的安全认证。项目写入及事项写入要在同一事务失效列表revision，不能只修改项目归档状态而接受旧分页。
 
@@ -251,13 +251,13 @@ main 的远端规则仅保留防强推与防删分支，不要求 PR 或必需 C
 
 ## 源码与测试目录
 
-后端生产源码在 `src/session_panel`，业务按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 组织，安装维护归 `installation`，Win32 适配归 `platform`。前端使用原生 HTML/CSS 和普通脚本，唯一资源源码放在 `web/sessions`、`web/progress`、`web/workspace`，构建 wheel 时按 HTTP 白名单收进包内；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+后端生产源码在 `src/control_everything`，业务按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 组织，安装维护归 `installation`，Win32 适配归 `platform`。前端使用原生 HTML/CSS 和普通脚本，唯一资源源码放在 `web/sessions`、`web/progress`、`web/workspace`，构建 wheel 时按 HTTP 白名单收进包内；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
 
 本机观察与每日资讯分别以 `web/workspace/observation.ts`、`news.ts` 和邻近类型声明为手写源码，两个 JS 为同一固定 TypeScript 5.9.3 的生成物；其他模块继续手写 JS。修改对应 TS 后运行 `node scripts/build_observation.cjs build` 或 `node scripts/build_news.cjs build`，连同生成 JS 提交，再用对应 `check` 比较完整字节；不要手改生成物。Node24/项目内固定工具的显式准备、缺工具失败与全部验证命令见[观察前端 TypeScript 开发](CONTRIBUTING.md#观察前端-typescript-开发)。原 URL 和普通脚本相对顺序保留，新 `/news.js` 在页面主脚本前加载，不增加常驻 Node 服务。
 
-测试按 `tests/backend`（Python）、`tests/frontend`（纯 Node 合同）、`tests/e2e`（浏览器/协议 harness）和 `tests/fixtures`（合成替身）归类。新增功能放入所属功能目录，测试按类型放置；详细职责与验证命令见 [参与开发](CONTRIBUTING.md)。原有 `python -m session_panel.gateway` 等外部 CLI 继续使用，内部代码直接导入功能包实现。
+测试按 `tests/backend`（Python）、`tests/frontend`（纯 Node 合同）、`tests/e2e`（浏览器/协议 harness）和 `tests/fixtures`（合成替身）归类。新增功能放入所属功能目录，测试按类型放置；详细职责与验证命令见 [参与开发](CONTRIBUTING.md)。源码 CLI 统一为 `python -m control_everything.gateway` 等新包名命令，内部代码直接导入功能包实现。
 
-公开接入样例放在 `examples/integrations`，旧格式导入样例放在 `examples/legacy`；TypeScript、架构检查和远端 reader 的开发配置分别放在 `tools` 的对应目录。根目录保留项目入口说明、共同依赖及工具自动发现需要的配置；`src/session_panel` 是后端 Python 包名，功能继续按所属子包开发，产品显示名称不改变导入和 CLI 合同。实际 profile、数据库和日志不属于源码树，不随目录整理搬迁。
+公开接入样例放在 `examples/integrations`，旧格式导入样例放在 `examples/legacy`；TypeScript、架构检查和远端 reader 的开发配置分别放在 `tools` 的对应目录。根目录保留项目入口说明、共同依赖及工具自动发现需要的配置；`src/control_everything` 是后端 Python 包名，功能继续按所属子包开发，产品显示名称不改变导入和 CLI 合同。实际 profile、数据库和日志不属于源码树，不随目录整理搬迁。
 
 多人开发同时检查文件归属与 Python 依赖方向；新增构建单元须连同规则和指南审查。HTTP 网关和页面主脚本负责装配，完整业务处理及展示放入所属模块。检查命令、允许依赖和合并要求见[参与开发](CONTRIBUTING.md#模块边界与新增代码)。
 
@@ -285,7 +285,7 @@ node scripts/build_news.cjs typecheck
 node scripts/build_news.cjs check
 node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs tests/frontend/test_news_ui.cjs tests/frontend/test_news_build.cjs tests/frontend/test_quota_ui.cjs
 node tests/e2e/verify_workspace.cjs --fixture
-node tests/e2e/verify_session_panel.cjs --fixture
+node tests/e2e/verify_control_everything.cjs --fixture
 ```
 
 真实 SSH 补绑、独立 SDK 合成链/空结果对照、选中真实 UUID 分页、Edge 桌面/360px、真实 focus 和 Codex 加载由协调者分别承接。fixture 自证不代表这些已验收；详细状态与所有失败保留在本地开发记录及 ignored `work/`，不提交仓库。

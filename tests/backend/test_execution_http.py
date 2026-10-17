@@ -8,8 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from session_panel.http.gateway import PanelHandler, PanelServer, make_server
-from session_panel.workspace.store import WorkspaceError
+from control_everything.http.gateway import PanelHandler, PanelServer, make_server
+from control_everything.workspace.store import WorkspaceError
 
 
 class ExecutionHTTPTests(unittest.TestCase):
@@ -116,10 +116,10 @@ class ExecutionHTTPTests(unittest.TestCase):
         self.assertEqual(self.request("/health")[0], 200)
         fake_server = Mock()
         fake_server.server_address = ("127.0.0.1", 1234)
-        with patch("session_panel.http.gateway.PanelServer", return_value=fake_server):
+        with patch("control_everything.http.gateway.PanelServer", return_value=fake_server):
             result = make_server(Mock(), ("127.0.0.1", 0))
         self.assertIsNone(result.execution)
-        with patch("session_panel.http.gateway.PanelServer", side_effect=OSError("bind")):
+        with patch("control_everything.http.gateway.PanelServer", side_effect=OSError("bind")):
             with self.assertRaises(OSError):
                 make_server(Mock(), ("127.0.0.1", 0), execution=self.execution)
         self.execution.close.assert_called_once()

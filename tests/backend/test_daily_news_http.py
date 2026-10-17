@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from session_panel.http.gateway import PanelServer
+from control_everything.http.gateway import PanelServer
 from tests.backend import test_execution_http
 
 

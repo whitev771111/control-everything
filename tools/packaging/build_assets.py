@@ -32,7 +32,7 @@ class BuildPy(build_py):
                 cursor = cursor.parent
             if not source.is_file():
                 raise ValueError("missing_web_asset: " + relative)
-            destination = Path(self.build_lib) / "session_panel" / "_assets" / "web" / relative
+            destination = Path(self.build_lib) / "control_everything" / "_assets" / "web" / relative
             result[str(destination)] = str(source)
         return result
 

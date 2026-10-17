@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from session_panel.http import gateway
+from control_everything.http import gateway
 
 
 class InstallationGatewayTests(unittest.TestCase):

@@ -8,10 +8,10 @@ from pathlib import Path, PurePosixPath
 
 
 HERE = Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location('session_panel_windows_build', HERE / 'build_windows.py')
+spec = importlib.util.spec_from_file_location('control_everything_windows_build', HERE / 'build_windows.py')
 BUILD = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(BUILD)
-BOOTSTRAP_ENTRY = 'runtime/Lib/site-packages/session_panel/installation/maintenance.py'
+BOOTSTRAP_ENTRY = 'runtime/Lib/site-packages/control_everything/installation/maintenance.py'
 
 
 def pascal_string(value):

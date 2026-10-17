@@ -6,8 +6,8 @@ import unittest
 from unittest.mock import Mock
 
 from tests.fixtures.integration_config import integration_config
-from session_panel.sessions.service import SessionService
-from session_panel.sessions.terminal import Terminal, _focus_candidates, parse_clients, parse_slot_command
+from control_everything.sessions.service import SessionService
+from control_everything.sessions.terminal import Terminal, _focus_candidates, parse_clients, parse_slot_command
 from tests.backend.test_gateway import SESSION_ID
 from tests.backend.test_observation import registration, remote
 

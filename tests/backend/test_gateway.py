@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 from email.message import Message
 
-from session_panel.http.gateway import WEB, PanelHandler, build_profile_server, make_server
+from control_everything.http.gateway import WEB, PanelHandler, build_profile_server, make_server
 from tests.fixtures.integration_config import integration_config
 
 SOURCE = integration_config()["integrations"]["remote"]["source"]
@@ -300,7 +300,7 @@ class GatewayTests(unittest.TestCase):
         self.service.terminal.focus_session.assert_not_called()
 
     def test_business_static_missing_file_is_explicit_404(self):
-        with TemporaryDirectory() as directory, patch("session_panel.http.gateway.WEB", Path(directory)):
+        with TemporaryDirectory() as directory, patch("control_everything.http.gateway.WEB", Path(directory)):
             for path in ("/app.js", "/style.css"):
                 status, headers, body = self.request(path)
                 self.assertEqual((status, body["reason"]), (404, "route_not_found"))
@@ -372,7 +372,7 @@ class GatewayDispatchTests(unittest.TestCase):
 
     def test_codex_get_dispatch_is_independent_and_passes_only_offset(self):
         for suffix, offset in [('', 0), ('?offset=12', 12), ('?offset=999999999', 999999999)]:
-            with self.subTest(suffix=suffix), patch('session_panel.http.gateway.list_codex_threads', return_value={'available': True}) as reader:
+            with self.subTest(suffix=suffix), patch('control_everything.http.gateway.list_codex_threads', return_value={'available': True}) as reader:
                 handler = self.handler(path='/api/codex/threads' + suffix); handler.do_GET()
                 reader.assert_called_once_with(offset); handler.reply.assert_called_once_with(200, {'available': True})
                 self.assertEqual(handler.server.service.mock_calls, [])
@@ -381,27 +381,27 @@ class GatewayDispatchTests(unittest.TestCase):
         paths = ['/api/codex/threads?' + query for query in ('offset=', 'offset=-1', 'offset=1.1', 'offset=0&offset=1',
                  'limit=12', 'path=synthetic', 'source=cli', 'sql=select', 'offset=1000000000', 'offset', 'offset=0&x=1')]
         for path in paths + ['/api/codex/threads/extra']:
-            with self.subTest(path=path), patch('session_panel.http.gateway.list_codex_threads') as reader:
+            with self.subTest(path=path), patch('control_everything.http.gateway.list_codex_threads') as reader:
                 handler = self.handler(path=path); handler.do_GET(); reader.assert_not_called()
                 self.assertEqual(handler.reject.call_args.args[0], 404 if path.endswith('/extra') else 400)
-        with patch('session_panel.http.gateway.list_codex_threads') as reader:
+        with patch('control_everything.http.gateway.list_codex_threads') as reader:
             handler = self.handler(path='/api/codex/threads'); handler.do_POST(); reader.assert_not_called()
             handler.reject.assert_called_once_with(404, 'route_not_found')
 
     def test_codex_same_host_origin_client_guards_precede_reader(self):
         for headers in ({'Host': 'outside.example'}, {'Origin': 'https://outside.example'}, {'X-Session-Client': ''}):
-            with self.subTest(headers=headers), patch('session_panel.http.gateway.list_codex_threads') as reader:
+            with self.subTest(headers=headers), patch('control_everything.http.gateway.list_codex_threads') as reader:
                 handler = self.handler(headers=headers, path='/api/codex/threads'); handler.do_GET()
                 reader.assert_not_called(); self.assertEqual(handler.reject.call_args.args[0], 403)
-        with patch('session_panel.http.gateway.list_codex_threads') as reader:
+        with patch('control_everything.http.gateway.list_codex_threads') as reader:
             handler = self.handler(path='/api/codex/threads'); handler.headers['Host'] = handler.server.expected_host
             handler.do_GET(); reader.assert_not_called(); self.assertEqual(handler.reject.call_args.args[0], 403)
 
     def test_codex_unavailable_is_503_and_private_exception_is_sanitized(self):
-        with patch('session_panel.http.gateway.list_codex_threads', return_value={'available': False, 'reason': 'codex_index_unavailable'}) as reader:
+        with patch('control_everything.http.gateway.list_codex_threads', return_value={'available': False, 'reason': 'codex_index_unavailable'}) as reader:
             handler = self.handler(path='/api/codex/threads'); handler.do_GET()
             reader.assert_called_once_with(0); handler.reply.assert_called_once_with(503, {'available': False, 'reason': 'codex_index_unavailable'})
-        with patch('session_panel.http.gateway.list_codex_threads', side_effect=RuntimeError('synthetic-private')):
+        with patch('control_everything.http.gateway.list_codex_threads', side_effect=RuntimeError('synthetic-private')):
             handler = self.handler(path='/api/codex/threads'); handler.do_GET()
             handler.reject.assert_called_once_with(503, 'gateway_query_failed')
 
@@ -464,7 +464,7 @@ class GatewayRejectionTests(unittest.TestCase):
     def test_partial_bytes_do_not_restart_cumulative_wait_budget(self):
         handler = self.handler({"X-Session-CSRF": "bad", "Content-Length": "4096"})
         handler.rfile.read1.side_effect = lambda _size: b"x"
-        with patch("session_panel.http.gateway.time.monotonic", side_effect=(0, 0, 0.10, 0.24, 0.26)):
+        with patch("control_everything.http.gateway.time.monotonic", side_effect=(0, 0, 0.10, 0.24, 0.26)):
             handler.do_POST()
         self.assertEqual([call.args for call in handler.rfile.read1.call_args_list], [(4096,), (4095,), (4094,)])
         for call, expected in zip(handler.connection.settimeout.call_args_list, (0.25, 0.15, 0.01, 0.75), strict=True):
@@ -503,9 +503,9 @@ class GatewayEntryTests(unittest.TestCase):
         import runpy
         from unittest.mock import patch
 
-        with patch("session_panel.http.gateway.main", return_value=7) as main:
+        with patch("control_everything.http.gateway.main", return_value=7) as main:
             with self.assertRaises(SystemExit) as caught:
-                runpy.run_module("session_panel.gateway", run_name="__main__")
+                runpy.run_module("control_everything.gateway", run_name="__main__")
         self.assertEqual(caught.exception.code, 7)
         main.assert_called_once_with()
 

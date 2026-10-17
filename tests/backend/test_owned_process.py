@@ -6,7 +6,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from session_panel.execution.owned_process import (CREATE_NO_WINDOW, CREATE_SUSPENDED, EXTENDED_STARTUPINFO_PRESENT,
+from control_everything.execution.owned_process import (CREATE_NO_WINDOW, CREATE_SUSPENDED, EXTENDED_STARTUPINFO_PRESENT,
     ExecutionOwner, OwnedProcess, ProcessError, ProcessInformation, StartupInfoEx, WindowsAPI, query_old_job)
 
 
@@ -172,15 +172,15 @@ class OwnedProcessTests(unittest.TestCase):
         self.assertFalse(query_old_job("old-owned-job", api))
 
     def test_non_windows_never_uses_subprocess_fallback(self):
-        with patch("session_panel.execution.owned_process.sys.platform", "linux"):
+        with patch("control_everything.execution.owned_process.sys.platform", "linux"):
             self.assertFalse(ExecutionOwner("fixture.db").acquire())
             with self.assertRaisesRegex(ProcessError, "platform_unsupported"):
                 OwnedProcess("exe", [], ".", "job").start()
 
     def test_win32_signatures_and_handle_list_flags(self):
         kernel = Mock()
-        with patch("session_panel.execution.owned_process.c.WinDLL", return_value=kernel, create=True), \
-                patch("session_panel.execution.owned_process.sys.platform", "win32"):
+        with patch("control_everything.execution.owned_process.c.WinDLL", return_value=kernel, create=True), \
+                patch("control_everything.execution.owned_process.sys.platform", "win32"):
             api = WindowsAPI()
         self.assertIs(kernel.CreateFileW.restype, c.c_void_p)
         self.assertIs(kernel.CreateProcessW.argtypes[-1], c.POINTER(ProcessInformation))

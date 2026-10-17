@@ -8,8 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.error import HTTPError
 from unittest.mock import Mock
 
-from session_panel.workspace import news_source as source
-from session_panel.workspace import news_worker as worker
+from control_everything.workspace import news_source as source
+from control_everything.workspace import news_worker as worker
 
 
 class FakeAPI:

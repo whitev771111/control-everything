@@ -50,7 +50,7 @@ async function historyOrder(firstId, secondId, firstOffset, secondOffset, firstR
 }
 (async () => {
   await test('profile progress redirects to the sole workspace manual editor; legacy resources remain mapped', () => {
-    const gateway = fs.readFileSync(path.join(root, 'src/session_panel/http/gateway.py'), 'utf8');
+    const gateway = fs.readFileSync(path.join(root, 'src/control_everything/http/gateway.py'), 'utf8');
     assert.match(gateway, /path\.path == "\/progress"[^\n]*self\.profile\(\) is not None/);
     assert.ok(gateway.includes('self.send_header("Location", "/workspace#projects")'));
     for (const resource of ['/progress.js', '/progress.css']) assert.ok(gateway.includes(`"${resource}"`));

@@ -22,7 +22,7 @@ spec.loader.exec_module(assets)
 
 class PackagingTests(TestCase):
     def test_asset_set_matches_http_allowlist_and_sdist(self):
-        tree = ast.parse((ROOT / "src/session_panel/http/gateway.py").read_text(encoding="utf-8"))
+        tree = ast.parse((ROOT / "src/control_everything/http/gateway.py").read_text(encoding="utf-8"))
         declarations = [node for node in ast.walk(tree) if isinstance(node, ast.Assign)
                         and any(isinstance(target, ast.Name) and target.id == "static" for target in node.targets)]
         self.assertEqual(len(declarations), 1)
@@ -35,11 +35,12 @@ class PackagingTests(TestCase):
 
     def test_metadata_has_one_runtime_dependency_and_version_source(self):
         metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["project"]["name"], "control-everything")
         self.assertEqual(metadata["project"]["version"], "0.1.0a1")
         setuptools = metadata["tool"]["setuptools"]
         self.assertEqual(setuptools["dynamic"]["dependencies"], {"file": ["requirements.txt"]})
         self.assertEqual(setuptools["package-dir"], {"": "src"})
-        self.assertEqual(setuptools["packages"]["find"], {"where": ["src"], "include": ["session_panel*"]})
+        self.assertEqual(setuptools["packages"]["find"], {"where": ["src"], "include": ["control_everything*"]})
         self.assertNotIn("cmdclass", setuptools)
 
     def test_setup_registers_only_the_fixed_build_helper(self):
@@ -58,19 +59,19 @@ class PackagingTests(TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             # Preserve a former package with ignored cache directories, as in a real checkout.
-            (root / "session_panel/workspace/__pycache__").mkdir(parents=True)
-            package = root / "src/session_panel"
+            (root / "control_everything/workspace/__pycache__").mkdir(parents=True)
+            package = root / "src/control_everything"
             (package / "workspace").mkdir(parents=True)
             (package / "__init__.py").touch()
             (package / "workspace/__init__.py").touch()
             source = package / "workspace/sources.py"
             source.touch()
-            distribution = Distribution({"packages": ["session_panel", "session_panel.workspace"],
+            distribution = Distribution({"packages": ["control_everything", "control_everything.workspace"],
                                          "package_dir": metadata["tool"]["setuptools"]["package-dir"]})
             distribution.src_root = str(root)
             command = editable_wheel(distribution)
             command.ensure_finalized()
-            strategy = command._select_strategy("session_panel-0.1.0a1", "py3-none-any", root / "build")
+            strategy = command._select_strategy("control_everything-0.1.0a1", "py3-none-any", root / "build")
             wheel = Mock()
             strategy(wheel, [], {})
             filename, contents = wheel.writestr.call_args.args
@@ -78,12 +79,12 @@ class PackagingTests(TestCase):
             entries = contents.decode("utf-8").splitlines()
             self.assertEqual(entries, [str((root / "src").resolve())])
             # PathFinder skips earlier namespace candidates once it sees the real regular package.
-            spec = PathFinder.find_spec("session_panel", [str(root), *entries])
+            spec = PathFinder.find_spec("control_everything", [str(root), *entries])
             self.assertEqual(Path(spec.origin), package / "__init__.py")
-            child = PathFinder.find_spec("session_panel.workspace", spec.submodule_search_locations)
-            leaf = PathFinder.find_spec("session_panel.workspace.sources", child.submodule_search_locations)
+            child = PathFinder.find_spec("control_everything.workspace", spec.submodule_search_locations)
+            leaf = PathFinder.find_spec("control_everything.workspace.sources", child.submodule_search_locations)
             self.assertEqual(Path(leaf.origin), source)
-            self.assertTrue((root / "session_panel/workspace/__pycache__").is_dir())
+            self.assertTrue((root / "control_everything/workspace/__pycache__").is_dir())
 
     def command(self, root):
         command = assets.BuildPy(Distribution())
@@ -153,7 +154,7 @@ class PackagingTests(TestCase):
                         command.get_output_mapping()
 
     def test_worker_uses_real_interpreter_and_packaged_source_without_spawning(self):
-        from session_panel.workspace import news_worker
+        from control_everything.workspace import news_worker
         api = object.__new__(news_worker.NewsWindowsAPI)
         api.base = Mock()
         api.base.spawn.return_value = (11, 12, 13)
@@ -166,4 +167,4 @@ class PackagingTests(TestCase):
         self.assertEqual(cwd, Path(news_worker.__file__).resolve().parents[2])
         self.assertEqual(handles, (1, 2, 3))
         for name in ("source.py", "remote_probe.py"):
-            self.assertTrue((ROOT / "src/session_panel/sessions" / name).is_file())
+            self.assertTrue((ROOT / "src/control_everything/sessions" / name).is_file())

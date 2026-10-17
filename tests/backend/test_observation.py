@@ -8,11 +8,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from session_panel.sessions.remote_probe import read_registration
-from session_panel.sessions.service import RemoteClient, SessionService as RealSessionService, merge_observation as real_merge_observation
-from session_panel.sessions.source import validate_remote_payload
+from control_everything.sessions.remote_probe import read_registration
+from control_everything.sessions.service import RemoteClient, SessionService as RealSessionService, merge_observation as real_merge_observation
+from control_everything.sessions.source import validate_remote_payload
 from tests.fixtures.integration_config import integration_config
-from session_panel.sessions.terminal import parse_slot_command
+from control_everything.sessions.terminal import parse_slot_command
 
 
 CONFIG = integration_config()["integrations"]
@@ -256,7 +256,7 @@ class ObservationTests(unittest.TestCase):
         source.observe_source.side_effect = observe
         terminal.list_panes.side_effect = inventory
         service = configured_service(source, terminal, clock=lambda: 0, utc_now=lambda: "sample")
-        with patch("session_panel.sessions.service.merge_observation", side_effect=merge):
+        with patch("control_everything.sessions.service.merge_observation", side_effect=merge):
             view, panes = service.refresh_observation(force=True, _include_inventory=True)
         self.assertEqual(overlap, [True], "private reads must overlap")
         self.assertEqual(alive_at_merge, [False], "worker must exit before merge")
@@ -321,7 +321,7 @@ class ObservationTests(unittest.TestCase):
                     alive_at_merge.append(any(worker.is_alive() for worker in workers))
                     return merge_observation(*args, **kwargs)
                 source.observe_source.side_effect = observe; terminal.list_panes.side_effect = inventory
-                with patch("session_panel.sessions.service.merge_observation", side_effect=merge):
+                with patch("control_everything.sessions.service.merge_observation", side_effect=merge):
                     view, panes = service.refresh_observation(force=True, _include_inventory=True)
                 self.assertEqual(alive_at_merge, [False]); self.assertFalse(service._observation_lock.locked())
                 if mode == "late":
@@ -427,7 +427,7 @@ class RemoteSourceLayoutTests(unittest.TestCase):
                                 capture_output=True, text=True, encoding="utf-8", timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {"ok": True, "source": SOURCE})
-        self.assertNotIn("session_panel.profiles", script)
+        self.assertNotIn("control_everything.profiles", script)
         runner.assert_called_once()
 
     def test_unconfigured_and_disabled_client_never_runs(self):

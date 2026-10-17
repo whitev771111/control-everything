@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from session_panel.integrations.launchers import LauncherCatalog, system_directory, validate_launcher_target
-from session_panel.profiles.integration_settings import InvalidSettings, validate_integrations
+from control_everything.integrations.launchers import LauncherCatalog, system_directory, validate_launcher_target
+from control_everything.profiles.integration_settings import InvalidSettings, validate_integrations
 from tests.fixtures.integration_config import integration_config
 
 
@@ -21,7 +21,7 @@ def launcher_config(kind, target):
 
 class LauncherTests(unittest.TestCase):
     def test_empty_disabled_unknown_and_catalog_hide_targets(self):
-        with patch("session_panel.integrations.launchers.status_of") as status:
+        with patch("control_everything.integrations.launchers.status_of") as status:
             for config in (None, {**launcher_config("url", "https://example.invalid/"), "enabled": False}):
                 catalog = LauncherCatalog(config)
                 self.assertEqual(catalog.catalog(), [])
@@ -50,17 +50,17 @@ class LauncherTests(unittest.TestCase):
 
     def test_task_and_url_keep_independent_dispatch(self):
         spawn = Mock()
-        with patch("session_panel.integrations.launchers.system_directory", return_value=Path("C:/example/System32")):
+        with patch("control_everything.integrations.launchers.system_directory", return_value=Path("C:/example/System32")):
             self.assertTrue(LauncherCatalog(launcher_config("task", "Example & task")).start("test", spawn))
         self.assertEqual(spawn.call_args.args[0], [str(Path("C:/example/System32/schtasks.exe")), "/Run", "/TN", "Example & task"])
         self.assertFalse(spawn.call_args.kwargs["shell"])
-        with patch("session_panel.integrations.launchers.os.startfile") as browser:
+        with patch("control_everything.integrations.launchers.os.startfile") as browser:
             self.assertTrue(LauncherCatalog(launcher_config("url", "https://example.invalid/")).start("test", spawn))
             browser.assert_called_once_with("https://example.invalid/")
         self.assertEqual(spawn.call_count, 1)
 
     def test_non_windows_batch_and_task_explicitly_refuse(self):
-        with patch("session_panel.integrations.launchers.os.name", "posix"):
+        with patch("control_everything.integrations.launchers.os.name", "posix"):
             for kind, target in (("cmd", "C:/example/start.cmd"), ("task", "ExampleTask")):
                 catalog = LauncherCatalog(launcher_config(kind, target)); spawn = Mock()
                 self.assertFalse(catalog.start("test", spawn))
@@ -170,7 +170,7 @@ class WindowsLauncherTests(unittest.TestCase):
         target = self.root / "safe.cmd"
         target.write_text("@exit /b 0\n")
         spawn = Mock(); catalog = LauncherCatalog(launcher_config("cmd", target))
-        with patch("session_panel.integrations.launchers.Path.resolve", return_value=self.root / "unsafe%NAME%.cmd"):
+        with patch("control_everything.integrations.launchers.Path.resolve", return_value=self.root / "unsafe%NAME%.cmd"):
             self.assertFalse(catalog.start("test", spawn))
         self.assertEqual(catalog.last_error, "unsafe_batch_path")
         spawn.assert_not_called()

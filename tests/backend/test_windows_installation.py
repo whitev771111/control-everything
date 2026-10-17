@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-PATH = Path(__file__).resolve().parents[2] / 'src/session_panel/platform/windows_installation.py'
+PATH = Path(__file__).resolve().parents[2] / 'src/control_everything/platform/windows_installation.py'
 SPEC = importlib.util.spec_from_file_location('windows_installation_test_leaf', PATH)
 WINDOWS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(WINDOWS)

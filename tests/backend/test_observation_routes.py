@@ -5,7 +5,7 @@ from unittest import TestCase
 from unittest.mock import Mock
 from urllib.parse import urlsplit
 
-from session_panel.http.observation_routes import handle_post
+from control_everything.http.observation_routes import handle_post
 
 
 class ObservationRoutesTests(TestCase):

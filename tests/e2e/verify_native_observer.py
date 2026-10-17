@@ -15,8 +15,8 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
-from session_panel.sessions.observer_client import ObserverClient
-from session_panel.sessions.observer_pipe import IoGate, WindowsPipe
+from control_everything.sessions.observer_client import ObserverClient
+from control_everything.sessions.observer_pipe import IoGate, WindowsPipe
 
 
 def wait_for(callback, timeout=20):

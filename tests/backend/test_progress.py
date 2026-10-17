@@ -6,15 +6,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from session_panel.http.gateway import make_server
-from session_panel.integrations.launchers import start
-from session_panel.workspace.progress import REGISTRY, add_todo, board, set_progress, toggle_todo
+from control_everything.http.gateway import make_server
+from control_everything.integrations.launchers import start
+from control_everything.workspace.progress import REGISTRY, add_todo, board, set_progress, toggle_todo
 
 
 class ProgressBoardTests(unittest.TestCase):
     def setUp(self):
         for name in ("codex_cwds", "grok_cwds"):
-            fixture = patch("session_panel.workspace.progress." + name, return_value=[])
+            fixture = patch("control_everything.workspace.progress." + name, return_value=[])
             fixture.start()
             self.addCleanup(fixture.stop)
 
@@ -94,7 +94,7 @@ class ProgressBoardTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
-                with patch("session_panel.http.gateway.REGISTRY", registry), patch("session_panel.http.gateway.MANUAL", manual), patch("session_panel.http.gateway.TODOS", Path(directory) / "todos.json"):
+                with patch("control_everything.http.gateway.REGISTRY", registry), patch("control_everything.http.gateway.MANUAL", manual), patch("control_everything.http.gateway.TODOS", Path(directory) / "todos.json"):
                     connection = http.client.HTTPConnection(*server.server_address, timeout=3)
                     connection.request("GET", "/progress")
                     response = connection.getresponse()
@@ -132,15 +132,15 @@ class ProgressBoardTests(unittest.TestCase):
 
 class ExplicitCodexProgressTests(unittest.TestCase):
     def test_absent_codex_path_never_probes_database(self):
-        from session_panel.workspace.progress import codex_cwds
-        with patch("session_panel.workspace.progress.sqlite3.connect") as connect, patch.object(Path, "resolve") as resolve:
+        from control_everything.workspace.progress import codex_cwds
+        with patch("control_everything.workspace.progress.sqlite3.connect") as connect, patch.object(Path, "resolve") as resolve:
             self.assertEqual(codex_cwds(), [])
         connect.assert_not_called(); resolve.assert_not_called()
 
     def test_explicit_synthetic_codex_path_reaches_board(self):
         import sqlite3
         from contextlib import closing
-        from session_panel.workspace.progress import codex_cwds
+        from control_everything.workspace.progress import codex_cwds
         with TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             db = root / "codex.sqlite"
@@ -150,17 +150,17 @@ class ExplicitCodexProgressTests(unittest.TestCase):
             self.assertEqual(codex_cwds(db), [{"thread_id": "fixture-thread", "cwd": str(root)}])
             registry = root / "registry.json"
             registry.write_text(json.dumps({"projects": [{"id": "example", "name": "Example", "root": str(root)}]}), encoding="utf-8")
-            with patch("session_panel.workspace.progress.grok_cwds", return_value=[]):
+            with patch("control_everything.workspace.progress.grok_cwds", return_value=[]):
                 result = board(registry, root / "manual.json", codex_db_path=db)
             self.assertEqual(result[0]["sessions"][0]["tool"], "Codex")
 
 
 class RepositoryPathsTests(unittest.TestCase):
     def test_data_and_resource_paths_stay_at_repository_root(self):
-        from session_panel.paths import REPOSITORY_ROOT
-        from session_panel.http.gateway import WEB
-        from session_panel.workspace.progress import MANUAL, TODOS
-        from session_panel.workspace.service import DEFAULT_DB
+        from control_everything.paths import REPOSITORY_ROOT
+        from control_everything.http.gateway import WEB
+        from control_everything.workspace.progress import MANUAL, TODOS
+        from control_everything.workspace.service import DEFAULT_DB
 
         root = Path(__file__).resolve().parents[2]
         self.assertEqual(REPOSITORY_ROOT, root)

@@ -5,13 +5,13 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from session_panel import input_validation
-from session_panel.execution import owned_process
-from session_panel.platform import windows_jobs
-from session_panel.profiles import observation_settings as legacy_settings
-from session_panel.profiles import profile
-from session_panel.sessions import observation_settings, observer_client
-from session_panel.workspace import news_worker, service, store, validation
+from control_everything import input_validation
+from control_everything.execution import owned_process
+from control_everything.platform import windows_jobs
+from control_everything.profiles import observation_settings as legacy_settings
+from control_everything.profiles import profile
+from control_everything.sessions import observation_settings, observer_client
+from control_everything.workspace import news_worker, service, store, validation
 
 
 class InputCompatibilityTests(unittest.TestCase):

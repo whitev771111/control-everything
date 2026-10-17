@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from session_panel.sessions.codex_index import list_threads, unavailable
+from control_everything.sessions.codex_index import list_threads, unavailable
 
 
 def thread_id(index):
@@ -30,7 +30,7 @@ class CodexIndexTests(unittest.TestCase):
                 (thread_id(index), 'C:/example/same-project', 1700000000, updated, archived, source, 'synthetic-not-readable'))
 
     def test_absent_database_never_opens_or_probes_a_path(self):
-        with patch('session_panel.sessions.codex_index.sqlite3.connect') as connect, patch.object(Path, 'resolve') as resolve:
+        with patch('control_everything.sessions.codex_index.sqlite3.connect') as connect, patch.object(Path, 'resolve') as resolve:
             self.assertEqual(list_threads(), unavailable(0))
         connect.assert_not_called(); resolve.assert_not_called()
 
@@ -110,7 +110,7 @@ class CodexIndexTests(unittest.TestCase):
             opened.append(connection)
             return connection
         before = self.path.read_bytes()
-        with patch('session_panel.sessions.codex_index.sqlite3.connect', side_effect=connect): result = list_threads(db_path=self.path)
+        with patch('control_everything.sessions.codex_index.sqlite3.connect', side_effect=connect): result = list_threads(db_path=self.path)
         self.assertTrue(result['available']); self.assertTrue(opened[0].query_only); self.assertTrue(opened[0].closed)
         self.assertEqual(self.path.read_bytes(), before)
 
@@ -124,7 +124,7 @@ class CodexIndexTests(unittest.TestCase):
                     with closing(native_connect(self.path)) as writer, writer:
                         writer.execute('INSERT INTO threads VALUES(?,?,?,?,?,?,?)', (thread_id(1), '/synthetic', 1700000000, 1700000002, 0, 'cli', 'unread'))
                 return super(SnapshotConnection, inner).execute(sql, *args)
-        with patch('session_panel.sessions.codex_index.sqlite3.connect', side_effect=lambda database_uri, **kwargs: native_connect(database_uri, factory=SnapshotConnection, **kwargs)):
+        with patch('control_everything.sessions.codex_index.sqlite3.connect', side_effect=lambda database_uri, **kwargs: native_connect(database_uri, factory=SnapshotConnection, **kwargs)):
             result = list_threads(db_path=self.path)
         self.assertEqual((result['total_visible'], len(result['items'])), (1, 1))
         self.assertEqual(list_threads(db_path=self.path)['total_visible'], 2)
@@ -136,12 +136,12 @@ class CodexIndexTests(unittest.TestCase):
             lock.execute('BEGIN EXCLUSIVE')
             self.assertEqual(list_threads(db_path=self.path), unavailable(0))
         finally: lock.close()
-        with patch('session_panel.sessions.codex_index.sqlite3.connect', side_effect=sqlite3.OperationalError('synthetic-private-error')):
+        with patch('control_everything.sessions.codex_index.sqlite3.connect', side_effect=sqlite3.OperationalError('synthetic-private-error')):
             result = list_threads(db_path=self.path)
         self.assertEqual(result, unavailable(0)); self.assertNotIn('synthetic-private-error', json.dumps(result))
 
     def test_invalid_internal_offsets_never_open_database(self):
-        with patch('session_panel.sessions.codex_index.sqlite3.connect') as connect:
+        with patch('control_everything.sessions.codex_index.sqlite3.connect') as connect:
             for value in (-1, True, 1.2, '0', 1000000000):
                 with self.subTest(value=value), self.assertRaises(ValueError): list_threads(value, self.path)
         connect.assert_not_called()

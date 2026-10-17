@@ -4,7 +4,7 @@ import json
 import unittest
 from datetime import datetime, timezone
 
-from session_panel.workspace import news_parse as news
+from control_everything.workspace import news_parse as news
 
 NOW = datetime(2026, 10, 17, 0, 0, tzinfo=timezone.utc)
 FETCHED = NOW.isoformat()

@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from session_panel.sessions import native_processes as native
-from session_panel.sessions import workbench
+from control_everything.sessions import native_processes as native
+from control_everything.sessions import workbench
 from tests.fixtures.integration_config import integration_config
 
 TICKS = 134040096001304547
@@ -356,7 +356,7 @@ class NativeRunnerTests(unittest.TestCase):
         import ast
         import sys
 
-        installed = Path("C:/example/product/runtime/Lib/site-packages/session_panel")
+        installed = Path("C:/example/product/runtime/Lib/site-packages/control_everything")
         with patch.object(workbench, "_native_interpreter", return_value="C:/example/base/python.exe"), \
                 patch.object(workbench.sys, "executable", "C:/example/venv/Scripts/python.exe"), \
                 patch.object(workbench, "execution_root", return_value=installed):
@@ -437,9 +437,9 @@ class NativeProcessesEntryTests(unittest.TestCase):
         import runpy
         from unittest.mock import patch
 
-        with patch("session_panel.sessions.native_processes.main", return_value=7) as main:
+        with patch("control_everything.sessions.native_processes.main", return_value=7) as main:
             with self.assertRaises(SystemExit) as caught:
-                runpy.run_module("session_panel.native_processes", run_name="__main__")
+                runpy.run_module("control_everything.native_processes", run_name="__main__")
         self.assertEqual(caught.exception.code, 7)
         main.assert_called_once_with()
 

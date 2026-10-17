@@ -6,8 +6,8 @@ from pathlib import Path
 import time
 import unittest
 
-from session_panel.sessions import observer_protocol as p
-from session_panel.profiles import observation_settings as settings
+from control_everything.sessions import observer_protocol as p
+from control_everything.profiles import observation_settings as settings
 
 
 def sample(seq=1, revision=1):

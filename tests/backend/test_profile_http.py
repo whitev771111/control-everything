@@ -8,9 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from session_panel.http.gateway import PROFILE_CAPABILITIES
-from session_panel.profiles.profile import Profile
-from session_panel.workspace.service import WorkspaceService
+from control_everything.http.gateway import PROFILE_CAPABILITIES
+from control_everything.profiles.profile import Profile
+from control_everything.workspace.service import WorkspaceService
 from tests.backend import test_execution_http
 from tests.backend.test_project_management import project_body
 from tests.backend.test_observation_settings import registration
@@ -34,14 +34,14 @@ class ProfileHTTPTests(unittest.TestCase):
                                       launchers=None, source=None, expected_host="127.0.0.1:1234", origin="http://127.0.0.1:1234", csrf_token="token")
 
     def test_default_routes_no_personal_or_execution_source(self):
-        targets = ["session_panel.http.gateway.catalog", "session_panel.http.gateway.pulse", "session_panel.http.gateway.start",
-                   "session_panel.workspace.progress.codex_cwds", "session_panel.workspace.progress.grok_cwds",
-                   "session_panel.http.gateway.list_codex_threads"]
+        targets = ["control_everything.http.gateway.catalog", "control_everything.http.gateway.pulse", "control_everything.http.gateway.start",
+                   "control_everything.workspace.progress.codex_cwds", "control_everything.workspace.progress.grok_cwds",
+                   "control_everything.http.gateway.list_codex_threads"]
         patches = [patch(target, side_effect=AssertionError("forbidden source")) for target in targets]
         for item in patches:
             item.start()
             self.addCleanup(item.stop)
-        with patch("session_panel.http.gateway.headlines", return_value=[{"title": "Public fixture"}]):
+        with patch("control_everything.http.gateway.headlines", return_value=[{"title": "Public fixture"}]):
             bootstrap = self.request("/api/bootstrap")[1]
             self.assertTrue(bootstrap["capabilities"]["profile"])
             self.assertFalse(bootstrap["capabilities"]["execution"])
@@ -103,7 +103,7 @@ class ProfileHTTPTests(unittest.TestCase):
             connection.commit()
         self.profile.store.save_project(project_body(self.root / "project"))
         self.assertEqual(self.request("/api/profile/settings", "POST", {"codex": {"enabled": True, "db_path": str(database)}})[0], 200)
-        from session_panel.sessions import codex_index
+        from control_everything.sessions import codex_index
         original = codex_index.list_threads
         with patch.object(codex_index, "list_threads", wraps=original) as reader:
             self.assertEqual(self.request("/api/workspace")[1]["sessions"]["items"][0]["thread_id"], key)

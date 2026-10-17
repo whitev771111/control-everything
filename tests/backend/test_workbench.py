@@ -6,8 +6,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from tests.fixtures.integration_config import integration_config
-from session_panel.sessions.terminal import parse_clients
-from session_panel.sessions.workbench import (Workbench, same_association,
+from control_everything.sessions.terminal import parse_clients
+from control_everything.sessions.workbench import (Workbench, same_association,
                                              command_line_argv, created_ticks, parse_sessions)
 
 CONFIG = integration_config()["integrations"]
@@ -42,7 +42,7 @@ class WorkbenchTests(unittest.TestCase):
         self.workbench = Workbench(self.run_command, lambda: self.now, lambda deadline: copy.deepcopy(self.rows), self.popen, config=WORKBENCH, terminal_config=TERMINAL)
         self.marker = patch.object(self.workbench, "_marker_pid", return_value=10); self.marker.start(); self.addCleanup(self.marker.stop)
         self.integrity = patch.object(self.workbench, "integrity", return_value=True); self.integrity.start(); self.addCleanup(self.integrity.stop)
-        self.times = patch("session_panel.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), 0))
+        self.times = patch("control_everything.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), 0))
         self.times.start(); self.addCleanup(self.times.stop)
 
     def run_command(self, argv, **kwargs):
@@ -187,7 +187,7 @@ class WorkbenchTests(unittest.TestCase):
             digests = [Mock(hexdigest=Mock(return_value="0" * 64 if path == mismatch else expected))
                        for path, expected in PINS.items()]
             with self.subTest(mismatch=mismatch), patch("builtins.open", side_effect=lambda path, mode: io.BytesIO(b"fixed-file")), \
-                    patch("session_panel.sessions.workbench.hashlib.sha256", side_effect=digests), \
+                    patch("control_everything.sessions.workbench.hashlib.sha256", side_effect=digests), \
                     patch.object(self.workbench, "integrity", wraps=real_integrity):
                 result = self.workbench.connect()
                 self.assertEqual(result["connected"], mismatch is None)
@@ -203,7 +203,7 @@ class WorkbenchTests(unittest.TestCase):
             self.rows = [raw for raw in self.rows if raw["ProcessId"] != row["ProcessId"]]
         self.workbench._terminate_client = terminate
         self.gui.wait.side_effect = lambda timeout: setattr(self, "rows", [row for row in self.rows if row["ProcessId"] != 20])
-        with patch("session_panel.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10)):
+        with patch("control_everything.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10)):
             self.assertEqual(self.workbench._cleanup_owned({"process": self.gui, "created": created_ticks(GUI_TIME)}, 3), "verified")
         self.assertEqual(terminated, [30]); self.gui.terminate.assert_called_once()
         self.assertEqual(self.rows[-2:], named_rows)
@@ -212,7 +212,7 @@ class WorkbenchTests(unittest.TestCase):
         self.attach(); self.rows[-1]["CommandLine"] = subprocess.list2cmdline([ZELLIJ, "attach", ZELLIJ_SESSION])
         self.workbench._terminate_client = Mock()
         owned = {"process": self.gui, "created": created_ticks(GUI_TIME)}
-        with patch("session_panel.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10)):
+        with patch("control_everything.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10)):
             self.assertEqual(self.workbench._cleanup_owned(owned, 3), "unverified")
         self.workbench._terminate_client.assert_not_called()
 
@@ -286,7 +286,7 @@ class WorkbenchTests(unittest.TestCase):
         full = copy.deepcopy(self.rows); before_birth = full[:-1]
         self.workbench.provider = Mock(side_effect=[before_birth, full, full, full])
         self.workbench._owned_gui = {"process": self.gui, "created": created_ticks(GUI_TIME)}
-        with patch("session_panel.sessions.workbench.time.sleep", side_effect=lambda amount: setattr(self, "now", self.now + amount)):
+        with patch("control_everything.sessions.workbench.time.sleep", side_effect=lambda amount: setattr(self, "now", self.now + amount)):
             state = self.workbench._wait_connected(8, baseline["_server"], 20, baseline["_mux"])
         self.assertTrue(state["can_focus"]); self.assertEqual(self.workbench.provider.call_count, 4)
         self.workbench.provider = Mock(side_effect=[before_birth, full])
@@ -306,7 +306,7 @@ class WorkbenchTests(unittest.TestCase):
             return next(samples)
         self.workbench.provider = provider
         self.workbench._owned_gui = {"process": self.gui, "created": created_ticks(GUI_TIME)}
-        with patch("session_panel.sessions.workbench.time.sleep", side_effect=lambda amount: setattr(self, "now", self.now + amount)):
+        with patch("control_everything.sessions.workbench.time.sleep", side_effect=lambda amount: setattr(self, "now", self.now + amount)):
             self.assertTrue(self.workbench._wait_connected(8, baseline["_server"], 20, baseline["_mux"])["can_focus"])
         full[-1]["CommandLine"] += " --unexpected"
         self.workbench.provider = Mock(return_value=full)
@@ -326,7 +326,7 @@ class WorkbenchTests(unittest.TestCase):
     def test_finite_wait_does_not_open_a_new_observation_budget(self):
         baseline = self.workbench.observe()
         self.workbench._owned_gui = {"process": self.gui, "created": created_ticks(GUI_TIME)}
-        with patch("session_panel.sessions.workbench.time.sleep", side_effect=lambda amount: setattr(self, "now", self.now + amount)):
+        with patch("control_everything.sessions.workbench.time.sleep", side_effect=lambda amount: setattr(self, "now", self.now + amount)):
             result = self.workbench._wait_connected(1, baseline["_server"], 20, baseline["_mux"])
         self.assertEqual(result["reason"], "workbench_connect_timeout"); self.assertEqual(self.now, 1)
         self.assertTrue(all(call[1]["timeout"] <= 1 for call in self.calls[-12:]))
@@ -375,7 +375,7 @@ class WorkbenchTests(unittest.TestCase):
             self.rows = [raw for raw in self.rows if raw["ProcessId"] != 20]
             return 1
         self.gui.wait.side_effect = wait
-        with patch("session_panel.sessions.workbench.process_times", side_effect=[(created_ticks(GUI_TIME), 0), (created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10000000)]):
+        with patch("control_everything.sessions.workbench.process_times", side_effect=[(created_ticks(GUI_TIME), 0), (created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10000000)]):
             result = self.workbench.connect()
         self.assertEqual(result["cleanup"], "verified"); self.assertFalse(result["connected"])
         self.assertEqual(terminated, [30]); self.gui.terminate.assert_called_once()
@@ -389,7 +389,7 @@ class WorkbenchTests(unittest.TestCase):
         self.workbench._terminate_client.assert_not_called()
         dll = Mock(); dll.OpenProcess.return_value = 333
         row = self.workbench._rows(3)[-1]
-        with patch("session_panel.sessions.workbench.kernel32", return_value=dll), patch("session_panel.sessions.workbench.process_times", return_value=(row["_ticks"] + 10, 0)):
+        with patch("control_everything.sessions.workbench.kernel32", return_value=dll), patch("control_everything.sessions.workbench.process_times", return_value=(row["_ticks"] + 10, 0)):
             with self.assertRaises(ValueError):
                 self.workbench._terminate_client = Workbench._terminate_client.__get__(self.workbench)
                 self.workbench._terminate_client(row, 3)
@@ -399,7 +399,7 @@ class WorkbenchTests(unittest.TestCase):
         self.attach(); self.rows[-1]["ParentProcessId"] = 99
         owned = {"process": self.gui, "created": created_ticks(GUI_TIME)}
         self.workbench._terminate_client = Mock()
-        with patch("session_panel.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10)):
+        with patch("control_everything.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10)):
             self.assertEqual(self.workbench._cleanup_owned(owned, 3), "unverified")
         self.workbench._terminate_client.assert_not_called()
 
@@ -407,7 +407,7 @@ class WorkbenchTests(unittest.TestCase):
         self.attach(); row = self.workbench._rows(3)[-1]
         row.update(_gui_created=created_ticks(GUI_TIME), _gui_exited=row["_ticks"])
         dll = Mock(); dll.OpenProcess.return_value = 333
-        with patch("session_panel.sessions.workbench.kernel32", return_value=dll), patch("session_panel.sessions.workbench.process_times", return_value=(row["_ticks"] + 1, 0)):
+        with patch("control_everything.sessions.workbench.kernel32", return_value=dll), patch("control_everything.sessions.workbench.process_times", return_value=(row["_ticks"] + 1, 0)):
             with self.assertRaises(ValueError):
                 self.workbench._terminate_client(row, 3)
         dll.TerminateProcess.assert_not_called(); dll.CloseHandle.assert_called_once_with(333)
@@ -433,7 +433,7 @@ class WorkbenchTests(unittest.TestCase):
             self.rows.append(process(30, 20, [ZELLIJ, "attach"], CHILD_TIME))
         self.gui.wait.side_effect = wait
         owned = {"process": self.gui, "created": created_ticks(GUI_TIME)}
-        with patch("session_panel.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10)):
+        with patch("control_everything.sessions.workbench.process_times", return_value=(created_ticks(GUI_TIME), created_ticks(CHILD_TIME) + 10)):
             self.assertEqual(self.workbench._cleanup_owned(owned, 3), "verified")
         self.assertEqual(terminated, [30])
 

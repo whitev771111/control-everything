@@ -13,9 +13,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from session_panel.sessions import remote_probe
-from session_panel.sessions.service import RemoteClient, SessionService
-from session_panel.sessions.source import MAX_TRANSCRIPT_BYTES, MAX_RESPONSE_BYTES
+from control_everything.sessions import remote_probe
+from control_everything.sessions.service import RemoteClient, SessionService
+from control_everything.sessions.source import MAX_TRANSCRIPT_BYTES, MAX_RESPONSE_BYTES
 from tests.backend.test_observation import MAIN
 from tests.fixtures.integration_config import integration_config
 

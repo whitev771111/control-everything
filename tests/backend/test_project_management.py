@@ -5,8 +5,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from session_panel.profiles.profile import Profile, ProfileError
-from session_panel.workspace.service import WorkspaceService, observation_owner
+from control_everything.profiles.profile import Profile, ProfileError
+from control_everything.workspace.service import WorkspaceService, observation_owner
 
 
 def project_body(root, **values):
@@ -95,7 +95,7 @@ class ProjectManagementTests(unittest.TestCase):
         key = "codex:" + str(uuid4())
         sample = {"available": True, "items": [{"session_key": key, "cwd": str(self.root / "project" / "nested")}]}
         with patch.object(self.workspace, "sessions", return_value=sample):
-            from session_panel.workspace.store import WorkspaceError
+            from control_everything.workspace.store import WorkspaceError
             with self.assertRaises(WorkspaceError):
                 self.workspace.save_task(self.task(first["id"], provider_id="codex", session_key=key))
             task = self.workspace.save_task(self.task(second["id"], provider_id="codex", session_key=key))["task"]

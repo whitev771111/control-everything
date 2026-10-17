@@ -8,8 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from session_panel.profiles.profile import Profile, ProfileError, resolve_data_dir
-from session_panel.workspace.store import WorkspaceError, BASE_SCHEMA
+from control_everything.profiles.profile import Profile, ProfileError, resolve_data_dir
+from control_everything.workspace.store import WorkspaceError, BASE_SCHEMA
 
 
 class ProfileTests(unittest.TestCase):
@@ -38,7 +38,7 @@ class ProfileTests(unittest.TestCase):
             profile.settings(configured)
             reopened = Profile.open(directory)
             self.assertEqual(reopened.config()["codex"], configured["codex"])
-            with patch("session_panel.sessions.codex_index.list_threads", side_effect=AssertionError("disabled reader")):
+            with patch("control_everything.sessions.codex_index.list_threads", side_effect=AssertionError("disabled reader")):
                 self.assertEqual(profile.codex_threads()["status"], "not_configured")
             profile.settings({"codex": {"enabled": True, "db_path": configured["codex"]["db_path"]}})
             self.assertEqual(profile.codex_threads()["status"], "missing")
@@ -47,7 +47,7 @@ class ProfileTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             profile = Profile.open(directory)
             original = profile.config_path.read_bytes()
-            with patch("session_panel.profiles.profile.os.replace", side_effect=OSError("fixture")):
+            with patch("control_everything.profiles.profile.os.replace", side_effect=OSError("fixture")):
                 with self.assertRaises(ProfileError):
                     profile.settings({"codex": {"enabled": False, "db_path": None}})
             self.assertEqual(profile.config_path.read_bytes(), original)
@@ -78,8 +78,8 @@ class ProfileEntryTests(unittest.TestCase):
         import runpy
         from unittest.mock import patch
 
-        with patch("session_panel.profiles.profile.main", return_value=7) as main:
+        with patch("control_everything.profiles.profile.main", return_value=7) as main:
             with self.assertRaises(SystemExit) as caught:
-                runpy.run_module("session_panel.profile", run_name="__main__")
+                runpy.run_module("control_everything.profile", run_name="__main__")
         self.assertEqual(caught.exception.code, 7)
         main.assert_called_once_with()

@@ -10,14 +10,16 @@
 
 以下为源码开发入口，使用 Windows 与 Python 3.12 及以上版本。先安装 editable 包，再使用原模块 CLI；仅安装 requirements 不会安装 `src` 下的程序。已有 `.venv` 时核对归属与版本，不覆盖：
 
+Python 包已统一为 `control_everything`，分发名为 `control-everything`。更新已有检出后重新运行 `python -m pip install -e .`，将自己的启动命令改为 `python -m control_everything.gateway`；旧包名命令不再作为源码入口。默认数据目录、`SESSION_PANEL_DATA_DIR` 和已有安装身份保留，源码改名不会迁移或清空数据；正在运行的旧源码实例需自行正常停止后用新命令启动。
+
 ```powershell
 git clone https://github.com/zxl123456123/control-everything.git
 cd control-everything
 python -m venv .venv
 & '.venv/Scripts/python.exe' -m pip install -e .
 & '.venv/Scripts/python.exe' -m pip check
-& '.venv/Scripts/python.exe' -m session_panel.profile init
-& '.venv/Scripts/python.exe' -m session_panel.gateway
+& '.venv/Scripts/python.exe' -m control_everything.profile init
+& '.venv/Scripts/python.exe' -m control_everything.gateway
 ```
 
 打开 `http://127.0.0.1:8766/workspace`。默认数据目录在 Windows 为 `%LOCALAPPDATA%/SessionPanel`（环境变量缺失时为当前用户 `AppData/Local/SessionPanel`）；目录内的 `profile.json` 保存来源设置，`workspace-state.sqlite3` 保存管理记录。路径优先级为 `--data-dir`、非空 `SESSION_PANEL_DATA_DIR`、当前用户默认目录；显式路径必须绝对。
@@ -27,7 +29,7 @@ python -m venv .venv
 保留已有服务时明确选择另一个端口，例如：
 
 ```powershell
-& '.venv/Scripts/python.exe' -m session_panel.gateway --data-dir 'C:/example/SessionPanel/main' --port 14401
+& '.venv/Scripts/python.exe' -m control_everything.gateway --data-dir 'C:/example/SessionPanel/main' --port 14401
 & './scripts/open-workspace.ps1' -Port 14401
 ```
 
@@ -81,8 +83,8 @@ $observerData = Join-Path (Get-Location) 'work/example-profile'
 管理库使用schema2，配置仍独立兼容v1/v2/v3；备份manifest1对应schema1，manifest2对应schema2。新空profile直接初始化schema2，已有schema1不会随启动自动升级：先正常停止自己使用该profile的实例，再显式执行离线迁移。命令不会终止其他程序；锁忙、未知表/版本、校验失败或超预算会拒绝并保留原库及已生成备份，不截断历史值。
 
 ```powershell
-& '.venv/Scripts/python.exe' -m session_panel.profile status --data-dir 'C:/example/SessionPanel/main'
-& '.venv/Scripts/python.exe' -m session_panel.profile migrate-tasks --data-dir 'C:/example/SessionPanel/main'
+& '.venv/Scripts/python.exe' -m control_everything.profile status --data-dir 'C:/example/SessionPanel/main'
+& '.venv/Scripts/python.exe' -m control_everything.profile migrate-tasks --data-dir 'C:/example/SessionPanel/main'
 ```
 
 迁移将旧tasks/todos收为一个可写模型，保留来源及原ID（包括空待办ID）、重复标题、原顺序、时间和NULL；旧接口通过适配读写同一模型。数据库中的tasks/todos是只读兼容视图，不能再用旧程序或直接SQL写入。新列表的顺序单独保存，不伪造两种来源的历史先后。
@@ -94,15 +96,15 @@ $observerData = Join-Path (Get-Location) 'work/example-profile'
 提交前会在目的 `backups/<UTC>-<random>/` 生成管理库、配置快照和 manifest。成功页面显示完整 counts、备份路径及排除范围；备份失败不提交导入，失败的 `.pending-*` 目录可能留作诊断。恢复在离线命令中写到另一个不存在或真正空的目录，拒绝覆盖已有 profile：
 
 ```powershell
-& '.venv/Scripts/python.exe' -m session_panel.profile restore --backup 'C:/example/SessionPanel/main/backups/<备份目录>' --data-dir 'C:/example/SessionPanel/restored'
+& '.venv/Scripts/python.exe' -m control_everything.profile restore --backup 'C:/example/SessionPanel/main/backups/<备份目录>' --data-dir 'C:/example/SessionPanel/restored'
 # Only when restore reports schema1 / migration_required:
-& '.venv/Scripts/python.exe' -m session_panel.profile migrate-tasks --data-dir 'C:/example/SessionPanel/restored'
-& '.venv/Scripts/python.exe' -m session_panel.gateway --data-dir 'C:/example/SessionPanel/restored' --port 14401
+& '.venv/Scripts/python.exe' -m control_everything.profile migrate-tasks --data-dir 'C:/example/SessionPanel/restored'
+& '.venv/Scripts/python.exe' -m control_everything.gateway --data-dir 'C:/example/SessionPanel/restored' --port 14401
 ```
 
 恢复会校验 manifest、文件大小/哈希、schema 与 SQLite 完整性。停止自己的旧实例后另行启动恢复目录；不在线切换，不删除原 profile 或导入后的新记录。真实个人数据是否符合导入合同需实际校验，隔离 fixture 验证不能替代个人迁移结果。
 
-恢复旧备份会先保留其schema1结构，再由上述命令显式迁移。需要退回旧程序时，先停新版实例并运行 `python -m session_panel.profile preserve-tasks --data-dir <绝对profile目录>`，验证包含升级后全部新增/变更的schema2私密备份，再把升级前旧备份恢复到另一个空目录。原schema2目录和保全件必须保留；保全不是把新语义自动反写旧库，单独回退代码不代表数据已无损降级。
+恢复旧备份会先保留其schema1结构，再由上述命令显式迁移。需要退回旧程序时，先停新版实例并运行 `python -m control_everything.profile preserve-tasks --data-dir <绝对profile目录>`，验证包含升级后全部新增/变更的schema2私密备份，再把升级前旧备份恢复到另一个空目录。原schema2目录和保全件必须保留；保全不是把新语义自动反写旧库，单独回退代码不代表数据已无损降级。
 
 新记录保存在所选 profile，源码旁旧 JSON/SQLite 与既有服务保留原位。任务负责人表示人工分配，不向 Agent 发送命令。资讯含来源与采样时间，不是推送流。
 

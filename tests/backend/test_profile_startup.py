@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from session_panel.http import gateway
+from control_everything.http import gateway
 
 
 class ProfileStartupTests(unittest.TestCase):
@@ -12,7 +12,7 @@ class ProfileStartupTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             fake = Mock()
             fake.server_address = ("127.0.0.1", 14401)
-            with patch.object(gateway, "PanelServer", return_value=fake), patch("session_panel.sessions.service.SessionService", side_effect=AssertionError("ssh")), patch("session_panel.execution.service.ExecutionService", side_effect=AssertionError("owner")):
+            with patch.object(gateway, "PanelServer", return_value=fake), patch("control_everything.sessions.service.SessionService", side_effect=AssertionError("ssh")), patch("control_everything.execution.service.ExecutionService", side_effect=AssertionError("owner")):
                 server = gateway.build_profile_server(directory, 14401, quota_source=Mock(), news_source=Mock())
             self.assertIsNone(server.service)
             self.assertIsNone(server.execution)

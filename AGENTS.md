@@ -10,6 +10,6 @@
 - 不提交实际个人配置、数据库、日志、凭据或媒体制作资料。经项目主导者选定的宣传成片可作为 GitHub 视频附件供 README 播放，图片、视频及其制作脚本、素材、分镜、配置不加入源码提交。例子使用通用占位、临时目录或保留测试地址。发现泄露只报告类别和相对位置，不公开复制原值。
 - 项目说明用中文，代码注释用英文。提交信息遵循 Conventional Commits，不加入 AI 署名。
 - 公开使用指南放在 `guide/`，贡献指南放在 `.github/CONTRIBUTING.md`；开发记录仅保留在本机 ignored `docs/`，不提交仓库；历史事实和失败证据不得静默改写。仓库规则不代表远端保护已经启用，启用须有实际检查与配置证据。
-- 生产 Python 只放入 `src/session_panel` 所属功能包，前端唯一源码在 `web`；不要建立根影子包。构建工具归 `tools/packaging`，资源按显式白名单入包。测试按 backend/frontend/e2e/fixtures 类型放置；具体归属见 [CONTRIBUTING.md](.github/CONTRIBUTING.md)。内部引用真实实现，保持旧 CLI 与公开资源 URL 合同。
+- 生产 Python 只放入 `src/control_everything` 所属功能包，前端唯一源码在 `web`；不要建立根影子包。构建工具归 `tools/packaging`，资源按显式白名单入包。测试按 backend/frontend/e2e/fixtures 类型放置；具体归属见 [CONTRIBUTING.md](.github/CONTRIBUTING.md)。内部引用真实实现，Python CLI 使用 control_everything 包名，保持公开资源 URL 和已有数据位置。
 - 新增文件先检查归属；依赖遵守 `tools/architecture/importlinter.ini`，运行 `python scripts/check_architecture.py layout` 和官方 Import Linter。不得经旧 CLI、兼容转发或动态导入绕过方向约束；新增构建单元须同时更新规则与贡献指南。
 - HTTP 入口保留权限、请求处理及装配，页面主脚本保留状态及装配；新业务处理和完整展示放入所属模块。跨项目/事项的管理写入保持现有同库事务，Rust 不写业务库。

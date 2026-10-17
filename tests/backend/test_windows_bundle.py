@@ -23,7 +23,7 @@ def load(name, path):
     return module
 
 
-MANIFEST = load('bundle_manifest_fixture', ROOT / 'src/session_panel/installation/manifest.py')
+MANIFEST = load('bundle_manifest_fixture', ROOT / 'src/control_everything/installation/manifest.py')
 BUILD = load('windows_bundle_fixture', ROOT / 'tools/packaging/build_windows.py')
 NOTICES = load('bundle_notices_fixture', ROOT / 'tools/packaging/notices.py')
 OBSERVER = load('bundle_observer_fixture', ROOT / 'scripts/build_observer.py')
@@ -208,12 +208,12 @@ class BuilderTests(PayloadFixture):
         self.assertEqual(calls[0][1:5], ['-I', '-B', '-X', 'utf8'])
         code = calls[0][-1]
         self.assertIn('CHECKED_HASH', code)
-        self.assertIn("prependdir='session-panel'", code)
+        self.assertIn("prependdir='control-everything'", code)
         self.assertIn('stripdir=str(root)', code)
         self.assertNotIn(str(self.root), code)
 
     def test_full_fixture_assembly_uses_one_manifest_and_preserves_no_sidecar(self):
-        product = wheel(self.root, 'session-panel', '0.1.0a1', ['example-dep==1.0'])
+        product = wheel(self.root, 'control-everything', '0.1.0a1', ['example-dep==1.0'])
         house = self.root / 'house'
         house.mkdir()
         dependency = wheel(house)
@@ -246,11 +246,11 @@ class BuilderTests(PayloadFixture):
             calls.append(command)
             if '--target' in command:
                 site = Path(command[command.index('--target') + 1])
-                (site / 'session_panel').mkdir(parents=True, exist_ok=True)
-                (site / 'session_panel/__init__.py').write_text('# fixture\n')
+                (site / 'control_everything').mkdir(parents=True, exist_ok=True)
+                (site / 'control_everything/__init__.py').write_text('# fixture\n')
                 return SimpleNamespace(returncode=0, stdout='', stderr='')
             result = {'environment': {'python_version': '3.13', 'sys_platform': 'win32'}, 'distributions': [
-                {'name': 'session-panel', 'version': '0.1.0a1', 'requires': ['example-dep==1.0']},
+                {'name': 'control-everything', 'version': '0.1.0a1', 'requires': ['example-dep==1.0']},
                 {'name': 'example-dep', 'version': '1.0', 'requires': []},
             ]}
             return SimpleNamespace(returncode=0, stdout=json.dumps(result), stderr='')
@@ -303,14 +303,14 @@ class BuilderTests(PayloadFixture):
         self.assertFalse((self.root.parent / 'escape').exists())
 
     def test_real_wheel_record_and_lock_are_checked(self):
-        product = wheel(self.root, 'session-panel', '0.1.0a1')
+        product = wheel(self.root, 'control-everything', '0.1.0a1')
         house = self.root / 'house'
         house.mkdir()
         dependency = wheel(house)
         lock = {'example-dep': {'version': '1.0', 'sha256': MANIFEST.sha256(dependency)}}
         selected, identities = BUILD.verify_wheels(product, house, lock, '0.1.0a1')
         self.assertEqual(selected, [dependency])
-        self.assertEqual({row['name'] for row in identities}, {'session-panel', 'example-dep'})
+        self.assertEqual({row['name'] for row in identities}, {'control-everything', 'example-dep'})
         lock['example-dep']['sha256'] = 'f' * 64
         with self.assertRaisesRegex(BUILD.BuildError, 'unlocked_wheel'):
             BUILD.verify_wheels(product, house, lock, '0.1.0a1')
@@ -334,7 +334,7 @@ class BuilderTests(PayloadFixture):
 
     def test_target_marker_extras_closure_uses_target_not_host(self):
         probe = {'environment': {'python_version': '3.13', 'sys_platform': 'win32'}, 'distributions': [
-            {'name': 'session-panel', 'version': '0.1.0a1', 'requires': ['example-dep[cli]==1.0']},
+            {'name': 'control-everything', 'version': '0.1.0a1', 'requires': ['example-dep[cli]==1.0']},
             {'name': 'example-dep', 'version': '1.0', 'requires': ['leaf==2.0; extra == "cli" and python_version >= "3.13"']},
             {'name': 'leaf', 'version': '2.0', 'requires': []},
         ]}
@@ -381,9 +381,9 @@ class ProductSourceTests(PayloadFixture):
     def sources(self):
         source = self.root / 'source'
         assets = BUILD.helper('build_assets').WEB_ASSETS
-        files = {'src/session_panel/__init__.py': b'# current product\n',
-                 'src/session_panel/installation/maintenance.py': b'# current maintenance\n',
-                 'pyproject.toml': b'[project]\nname="session-panel"\nversion="0.1.0a1"\n'
+        files = {'src/control_everything/__init__.py': b'# current product\n',
+                 'src/control_everything/installation/maintenance.py': b'# current maintenance\n',
+                 'pyproject.toml': b'[project]\nname="control-everything"\nversion="0.1.0a1"\n'
                                   b'requires-python=">=3.12"\ndescription="Fixture"\nreadme="README.md"\n',
                  'requirements.txt': b'example-dep==1.0\n', 'README.md': 'Fixture 中文说明\n'.encode('utf-8'),
                  'tools/packaging/build_assets.py': (ROOT / 'tools/packaging/build_assets.py').read_bytes()}
@@ -394,22 +394,22 @@ class ProductSourceTests(PayloadFixture):
             path.write_bytes(raw)
         inputs = [{'path': name, 'sha256': hashlib.sha256(raw).hexdigest()} for name, raw in files.items()]
         contents = {name.removeprefix('src/'): raw for name, raw in files.items() if name.startswith('src/')}
-        contents.update({'session_panel/_assets/web/' + name: files['web/' + name] for name in assets})
-        info = 'session_panel-0.1.0a1.dist-info/'
-        contents.update({info + 'METADATA': b'Metadata-Version: 2.4\nName: session-panel\nVersion: 0.1.0a1\n'
+        contents.update({'control_everything/_assets/web/' + name: files['web/' + name] for name in assets})
+        info = 'control_everything-0.1.0a1.dist-info/'
+        contents.update({info + 'METADATA': b'Metadata-Version: 2.4\nName: control-everything\nVersion: 0.1.0a1\n'
                          b'Summary: Fixture\nRequires-Python: >=3.12\nRequires-Dist: example-dep==1.0\n\n'
                          + 'Fixture 中文说明\n'.encode('utf-8'),
                          info + 'WHEEL': b'Wheel-Version: 1.0\nTag: py3-none-any\n',
-                         info + 'top_level.txt': b'session_panel\n'})
+                         info + 'top_level.txt': b'control_everything\n'})
         return source, inputs, contents
 
     def write_wheel(self, contents):
-        record = 'session_panel-0.1.0a1.dist-info/RECORD'
+        record = 'control_everything-0.1.0a1.dist-info/RECORD'
         stream = io.StringIO()
         rows = [(name, 'sha256=' + base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).rstrip(b'=').decode(), str(len(raw)))
                 for name, raw in contents.items()]
         csv.writer(stream, lineterminator='\n').writerows([*rows, (record, '', '')])
-        path = self.root / 'session_panel-0.1.0a1-py3-none-any.whl'
+        path = self.root / 'control_everything-0.1.0a1-py3-none-any.whl'
         with zipfile.ZipFile(path, 'w') as archive:
             for name, raw in {**contents, record: stream.getvalue().encode()}.items():
                 archive.writestr(name, raw)
@@ -419,8 +419,8 @@ class ProductSourceTests(PayloadFixture):
         source, inputs, contents = self.sources()
         with patch.object(BUILD, 'ROOT', source):
             BUILD.verify_product_sources(self.write_wheel(contents), inputs, '0.1.0a1')
-            for name in ('session_panel/__init__.py', 'session_panel/_assets/web/workspace/news.js',
-                         'session_panel-0.1.0a1.dist-info/METADATA', 'session_panel-0.1.0a1.dist-info/top_level.txt'):
+            for name in ('control_everything/__init__.py', 'control_everything/_assets/web/workspace/news.js',
+                         'control_everything-0.1.0a1.dist-info/METADATA', 'control_everything-0.1.0a1.dist-info/top_level.txt'):
                 raw = (contents[name].replace(b'example-dep==1.0', b'example-dep==0.9')
                        if name.endswith('/METADATA') else b'old but internally hash-consistent\n')
                 stale = {**contents, name: raw}
@@ -431,18 +431,18 @@ class ProductSourceTests(PayloadFixture):
 
     def test_missing_current_module_extra_module_and_changed_source_snapshot_are_rejected(self):
         source, inputs, contents = self.sources()
-        old = {name: raw for name, raw in contents.items() if name != 'session_panel/installation/maintenance.py'}
+        old = {name: raw for name, raw in contents.items() if name != 'control_everything/installation/maintenance.py'}
         with patch.object(BUILD, 'ROOT', source):
-            for changed in (old, {**contents, 'session_panel/unknown.py': b'# unowned\n'}):
+            for changed in (old, {**contents, 'control_everything/unknown.py': b'# unowned\n'}):
                 with self.assertRaisesRegex(BUILD.BuildError, 'product_source_closure'):
                     BUILD.verify_product_sources(self.write_wheel(changed), inputs, '0.1.0a1')
-            (source / 'src/session_panel/__init__.py').write_bytes(b'# changed after snapshot\n')
+            (source / 'src/control_everything/__init__.py').write_bytes(b'# changed after snapshot\n')
             with self.assertRaisesRegex(BUILD.BuildError, 'product_source_changed'):
                 BUILD.verify_product_sources(self.write_wheel(contents), inputs, '0.1.0a1')
 
     def test_source_rejection_precedes_output_creation_and_any_payload_command(self):
         source, inputs, contents = self.sources()
-        stale = self.write_wheel({**contents, 'session_panel/__init__.py': b'# stale\n'})
+        stale = self.write_wheel({**contents, 'control_everything/__init__.py': b'# stale\n'})
         output = self.root / 'never-created'
         with patch.object(BUILD, 'ROOT', source), \
                 patch.object(BUILD, 'source_identity', return_value=(dict(SOURCE), inputs)), \

@@ -32,14 +32,14 @@ class BuildError(ValueError):
 def contract():
     # The standard S9-installed product supplies the one runtime/build validator.
     try:
-        from session_panel.installation import manifest
+        from control_everything.installation import manifest
     except ImportError as error:
         raise BuildError('installed_product_contract_missing: prepare the verified product wheel in the build environment') from error
     return manifest
 
 
 def helper(name):
-    spec = importlib.util.spec_from_file_location('session_panel_build_' + name, HERE / (name + '.py'))
+    spec = importlib.util.spec_from_file_location('control_everything_build_' + name, HERE / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -62,7 +62,7 @@ def version_info(version):
 
 def product_version():
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))['project']
-    if project['name'] != 'session-panel':
+    if project['name'] != 'control-everything':
         raise BuildError('wrong_source_project')
     version_info(project['version'])
     return project['version']
@@ -139,7 +139,7 @@ def wheel_info(path):
 
 def verify_wheels(wheel, wheelhouse, lock, version):
     product = wheel_info(wheel)
-    if product['name'] != 'session-panel' or product['version'] != version:
+    if product['name'] != 'control-everything' or product['version'] != version:
         raise BuildError('product_wheel_version')
     selected, identities = [], []
     for path in sorted(Path(wheelhouse).glob('*.whl')):
@@ -171,20 +171,20 @@ def verify_product_sources(wheel, inputs, version):
         return raw
 
     project = tomllib.loads(source_bytes('pyproject.toml').decode('utf-8'))['project']
-    if project['name'] != 'session-panel' or project['version'] != version:
+    if project['name'] != 'control-everything' or project['version'] != version:
         raise BuildError('product_source_identity')
     source_bytes('tools/packaging/build_assets.py')
     expected = {name.removeprefix('src/'): source_bytes(name) for name in candidates
-                if name.startswith('src/session_panel/') and name.endswith('.py')}
-    if 'session_panel/__init__.py' not in expected:
+                if name.startswith('src/control_everything/') and name.endswith('.py')}
+    if 'control_everything/__init__.py' not in expected:
         raise BuildError('product_source_package_missing')
     for relative in helper('build_assets').WEB_ASSETS:
-        expected['session_panel/_assets/web/' + relative] = source_bytes('web/' + relative)
+        expected['control_everything/_assets/web/' + relative] = source_bytes('web/' + relative)
     requirements = sorted(str(Requirement(line.strip())) for line in
                           source_bytes('requirements.txt').decode('utf-8').splitlines()
                           if line.strip() and not line.lstrip().startswith('#'))
     readme = source_bytes(project['readme']).decode('utf-8').replace('\r\n', '\n').rstrip()
-    info = 'session_panel-' + version + '.dist-info/'
+    info = 'control_everything-' + version + '.dist-info/'
     metadata_files = {info + name for name in ('METADATA', 'WHEEL', 'top_level.txt', 'RECORD')}
     with zipfile.ZipFile(wheel) as archive:
         if set(archive.namelist()) != set(expected) | metadata_files:
@@ -198,7 +198,7 @@ def verify_product_sources(wheel, inputs, version):
                 or metadata['Summary'] != project['description']
                 or sorted(str(Requirement(value)) for value in metadata.get_all('Requires-Dist', [])) != requirements
                 or metadata.get_payload(decode=True).decode('utf-8').replace('\r\n', '\n').rstrip() != readme
-                or archive.read(info + 'top_level.txt').strip() != b'session_panel'):
+                or archive.read(info + 'top_level.txt').strip() != b'control_everything'):
             raise BuildError('product_source_metadata')
 
 
@@ -286,7 +286,7 @@ def validate_target_metadata(probe, identities):
     rows = {canonicalize_name(value['name']): value for value in probe['distributions']}
     if len(rows) != len(probe['distributions']) or {name: row['version'] for name, row in rows.items()} != expected:
         raise BuildError('installed_distribution_mismatch')
-    extras, pending, reached = {'session-panel': set()}, ['session-panel'], set()
+    extras, pending, reached = {'control-everything': set()}, ['control-everything'], set()
     while pending:
         name = pending.pop()
         reached.add(name)
@@ -313,11 +313,11 @@ from pathlib import Path
 import sys
 root = Path(sys.executable).parent.parent
 site = root / 'runtime/Lib/site-packages'
-assert compileall.compile_dir(str(site), quiet=1, force=True, stripdir=str(root), prependdir='session-panel',
+assert compileall.compile_dir(str(site), quiet=1, force=True, stripdir=str(root), prependdir='control-everything',
  invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
 def check(code):
  name=code.co_filename.replace(chr(92), '/')
- assert not Path(code.co_filename).is_absolute() and ':' not in name and name.startswith('session-panel/')
+ assert not Path(code.co_filename).is_absolute() and ':' not in name and name.startswith('control-everything/')
  for item in code.co_consts:
   if isinstance(item, types.CodeType): check(item)
 for path in site.rglob('*.pyc'):
@@ -347,7 +347,7 @@ def source_identity(release=False, runner=subprocess.run):
 
 
 def observer_builder():
-    spec = importlib.util.spec_from_file_location('session_panel_observer_builder', ROOT / 'scripts/build_observer.py')
+    spec = importlib.util.spec_from_file_location('control_everything_observer_builder', ROOT / 'scripts/build_observer.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -435,7 +435,7 @@ def build_payload(wheel, wheelhouse, runtime_zip, observer_release, output, carg
                   'numeric_version': version_info(version), 'lock_sha256': api.sha256(lockfile),
                   'project_license': 'not declared', 'product_signature': 'unsigned'}
     (output / 'BUILD-INPUTS.json').write_bytes(api.canonical_json(provenance) + b'\n')
-    (output / 'session-panel.cmd').write_bytes(b'@echo off\r\n"%~dp0runtime\\python.exe" -I -B -X utf8 -m session_panel.gateway %*\r\n')
+    (output / 'session-panel.cmd').write_bytes(b'@echo off\r\n"%~dp0runtime\\python.exe" -I -B -X utf8 -m control_everything.gateway %*\r\n')
     manifest = write_product_manifest(output, version, source)
     api.verify_payload(output, strict_native=True)
     return {'version': version, 'closure': manifest['closure'], 'version_id': version + '-' + manifest['closure'][:16],

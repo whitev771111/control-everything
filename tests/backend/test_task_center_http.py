@@ -96,7 +96,7 @@ class TaskCenterHTTPTests(unittest.TestCase):
             web = Path(temporary)
             (web/'workspace').mkdir()
             (web/'workspace'/'task-center.js').write_text('fixture',encoding='utf-8')
-            with patch('session_panel.http.gateway.WEB', web):
+            with patch('control_everything.http.gateway.WEB', web):
                 self.assertEqual(self.request('/task-center.js')[0],200)
 
     def test_legacy_empty_todo_id_and_history_raw_text_roundtrip(self):

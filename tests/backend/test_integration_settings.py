@@ -12,9 +12,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from session_panel.profiles import profile as profiles
-from session_panel.profiles.integration_settings import InvalidSettings, validate_integrations
-from session_panel.profiles.profile_import import create_backup, restore_backup
+from control_everything.profiles import profile as profiles
+from control_everything.profiles.integration_settings import InvalidSettings, validate_integrations
+from control_everything.profiles.profile_import import create_backup, restore_backup
 from tests.fixtures.integration_config import integration_config
 
 
@@ -76,7 +76,7 @@ class IntegrationSettingsTests(unittest.TestCase):
             profile = profiles.Profile.open(directory)
             before = profile.integrations()
             with patch("subprocess.run", side_effect=AssertionError("no process probing")), \
-                    patch("session_panel.sessions.codex_index.list_threads", side_effect=AssertionError("no database")):
+                    patch("control_everything.sessions.codex_index.list_threads", side_effect=AssertionError("no database")):
                 result = profile.import_settings(settings_document())
                 public = profile.public(startup_integrations=before)
                 self.assertEqual(profile.status()["integrations"]["remote"]["status"], "configured")
@@ -109,7 +109,7 @@ class IntegrationSettingsTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             profile = profiles.Profile.open(directory)
             before = profile.config_path.read_bytes()
-            with patch("session_panel.profiles.profile_import.create_backup", side_effect=profiles.ProfileError("backup_failed")):
+            with patch("control_everything.profiles.profile_import.create_backup", side_effect=profiles.ProfileError("backup_failed")):
                 with self.assertRaises(profiles.ProfileError):
                     profile.import_settings(settings_document())
             self.assertEqual(profile.config_path.read_bytes(), before)
@@ -181,7 +181,7 @@ class IntegrationSettingsTests(unittest.TestCase):
             target = root / "destination"
             for content in ('{"version":2,"version":2}', '{"v":NaN}', '{"v":1e999}', " " * (profiles.CONFIG_MAX_BYTES + 1)):
                 settings.write_text(content, encoding="utf-8")
-                command = [sys.executable, "-m", "session_panel.profile", "import-settings", "--file", str(settings), "--data-dir", str(target)]
+                command = [sys.executable, "-m", "control_everything.profile", "import-settings", "--file", str(settings), "--data-dir", str(target)]
                 child = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=20)
                 self.assertEqual(child.returncode, 1, child.stderr)
                 self.assertIn("invalid_config", child.stderr)
@@ -194,7 +194,7 @@ class IntegrationSettingsTests(unittest.TestCase):
             settings.write_text(json.dumps(settings_document()), encoding="utf-8")
             data = root / "profile"
             def command(*args):
-                child = subprocess.run([sys.executable, "-X", "utf8", "-m", "session_panel.profile", *map(str, args)],
+                child = subprocess.run([sys.executable, "-X", "utf8", "-m", "control_everything.profile", *map(str, args)],
                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
                 self.assertEqual(child.returncode, 0, child.stderr)
                 return child.stdout

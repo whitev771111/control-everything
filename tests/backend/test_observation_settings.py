@@ -8,9 +8,9 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from session_panel.profiles import observation_settings as settings
-from session_panel.profiles.profile import Profile, ProfileError, normalized_config, validate_config
-from session_panel.profiles import profile_import as importer
+from control_everything.profiles import observation_settings as settings
+from control_everything.profiles.profile import Profile, ProfileError, normalized_config, validate_config
+from control_everything.profiles import profile_import as importer
 
 
 def registration(identity="a" * 32, **changes):
@@ -79,7 +79,7 @@ class ObservationSettingsTests(unittest.TestCase):
         result = save(self.profile, [registration()], on_commit=committed)
         self.assertEqual(len(calls), 1)
         original = self.profile.config_path.read_bytes()
-        with patch("session_panel.profiles.profile.os.replace", side_effect=OSError("fixture")):
+        with patch("control_everything.profiles.profile.os.replace", side_effect=OSError("fixture")):
             with self.assertRaises(ProfileError):
                 save(self.profile, [registration(enabled=False)], on_commit=committed)
         self.assertEqual(original, self.profile.config_path.read_bytes())
@@ -140,7 +140,7 @@ class ObservationSettingsTests(unittest.TestCase):
     def test_restore_transform_or_overflow_failure_does_not_publish(self):
         save(self.profile, [registration()])
         backup = importer.create_backup(self.profile)
-        with patch("session_panel.profiles.profile.Profile._write_config", side_effect=ProfileError("storage_error")):
+        with patch("control_everything.profiles.profile.Profile._write_config", side_effect=ProfileError("storage_error")):
             with self.assertRaises(ProfileError):
                 importer.restore_backup(str(backup), str(self.root / "failed"))
         self.assertFalse((self.root / "failed").exists())

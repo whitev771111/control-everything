@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from session_panel.workspace import project_progress as sources
+from control_everything.workspace import project_progress as sources
 
 
 class FakeEntry:

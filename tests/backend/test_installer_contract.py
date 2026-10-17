@@ -189,7 +189,7 @@ class InstallerScriptTests(unittest.TestCase):
         self.assertNotIn('skip-lock', run)
         self.assertLess(run.index('VerifyTable(BootstrapRoot)'), run.index('Started := Exec'))
         self.assertIn("+ 'runtime\\python.exe'", run)
-        self.assertIn("'-I -B -X utf8 -m session_panel.installation.maintenance '", run)
+        self.assertIn("'-I -B -X utf8 -m control_everything.installation.maintenance '", run)
 
     def test_nonzero_or_wrong_reports_cannot_reach_next_install_stage(self):
         run = body('RunMaintenance')

@@ -169,7 +169,7 @@ procedure RunMaintenance(Command, Report, Payload, Receipt, ExpectedStatus: Stri
 var Parameters: String; ExitCode: Integer; Started: Boolean;
 begin
   VerifyTable(BootstrapRoot);
-  Parameters := '-I -B -X utf8 -m session_panel.installation.maintenance ' + Command +
+  Parameters := '-I -B -X utf8 -m control_everything.installation.maintenance ' + Command +
     ' --install-root ' + QuoteArgument(ExpandConstant('{app}')) +
     ' --operation ' + Operation + ' --report ' + QuoteArgument(Report);
   if UseInvocation then Parameters := Parameters + ' --invocation-file ' + QuoteArgument(ContextFile);

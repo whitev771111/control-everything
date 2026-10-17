@@ -4,10 +4,10 @@ import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from session_panel.profiles.profile import ProfileError
-from session_panel.sessions.codex_index import unavailable
-from session_panel.workspace.service import PROVIDERS
-from session_panel.workspace.store import WorkspaceError, WorkspaceStore
+from control_everything.profiles.profile import ProfileError
+from control_everything.sessions.codex_index import unavailable
+from control_everything.workspace.service import PROVIDERS
+from control_everything.workspace.store import WorkspaceError, WorkspaceStore
 from tests.backend import test_profile_http as fixtures
 from tests.backend.test_project_management import project_body
 from tests.backend.test_workspace import RECORD

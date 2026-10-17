@@ -8,11 +8,11 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from session_panel.execution.codex import (CodexRun, COMMAND_APPROVAL, FILE_APPROVAL, FEATURES,
+from control_everything.execution.codex import (CodexRun, COMMAND_APPROVAL, FILE_APPROVAL, FEATURES,
     WORKSPACE_CONFIG, check_config, check_thread, encoded, launch_arguments, sandbox_policy)
-from session_panel.execution.store import ExecutionStore
-from session_panel.execution.owned_process import ProcessError
-from session_panel.workspace.store import WorkspaceError, WorkspaceStore
+from control_everything.execution.store import ExecutionStore
+from control_everything.execution.owned_process import ProcessError
+from control_everything.workspace.store import WorkspaceError, WorkspaceStore
 
 
 def config():
@@ -406,7 +406,7 @@ class CodexExecutionTests(unittest.TestCase):
         transport.changes["initialize"] = None
         transport.read = lambda timeout: None
         transport.close = lambda grace: False
-        with patch("session_panel.execution.codex.time.monotonic", side_effect=[0, 21]):
+        with patch("control_everything.execution.codex.time.monotonic", side_effect=[0, 21]):
             worker.run()
         data = self.data(worker)
         self.assertEqual((data["run"]["state"], data["run"]["reason"], data["run"]["cleanup_state"]),
@@ -419,13 +419,13 @@ class CodexExecutionTests(unittest.TestCase):
         self.store.request_cancel(worker.id, self.owner)
         worker.interrupt()
         self.assertIsNone(worker.cancel_deadline)
-        with patch("session_panel.execution.codex.time.monotonic", return_value=100):
+        with patch("control_everything.execution.codex.time.monotonic", return_value=100):
             worker._tick()
             self.assertFalse(transport.sent)
             worker._bind_turn("turn-a")
             worker._tick()
         self.assertEqual(worker.cancel_deadline, 105)
-        with patch("session_panel.execution.codex.time.monotonic", return_value=106):
+        with patch("control_everything.execution.codex.time.monotonic", return_value=106):
             with self.assertRaisesRegex(ProcessError, "cancel_timeout"):
                 worker._tick()
         self.assertIsNone(worker.terminal)

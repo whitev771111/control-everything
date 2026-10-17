@@ -9,12 +9,12 @@ import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from session_panel.profiles import observation_settings
-from session_panel.profiles.profile import Profile
-from session_panel.sessions.codex_index import unavailable
-from session_panel.workspace.observations import scope_roots
-from session_panel.workspace.service import WorkspaceService
-from session_panel.workspace.store import WorkspaceError
+from control_everything.profiles import observation_settings
+from control_everything.profiles.profile import Profile
+from control_everything.sessions.codex_index import unavailable
+from control_everything.workspace.observations import scope_roots
+from control_everything.workspace.service import WorkspaceService
+from control_everything.workspace.store import WorkspaceError
 from tests.backend.test_observation_settings import registration, save
 from tests.backend.test_observer_protocol import sample
 from tests.backend.test_project_management import project_body
@@ -235,8 +235,8 @@ class WorkspaceRequestReuseTests(unittest.TestCase):
                                   quota_source=Mock(), news_source=Mock())
         with patch.object(legacy, "registered_projects", return_value=[]) as registry:
             with patch.object(legacy, "projects", return_value=[]):
-                with patch("session_panel.workspace.service.progress.load_todos", return_value=[]):
-                    with patch("session_panel.workspace.service.discover_providers", return_value=[]) as discover:
+                with patch("control_everything.workspace.service.progress.load_todos", return_value=[]):
+                    with patch("control_everything.workspace.service.discover_providers", return_value=[]) as discover:
                         value = legacy.snapshot()
         self.assertEqual((reader.call_count, registry.call_count), (1, 1))
         discover.assert_called_once_with()
@@ -244,8 +244,8 @@ class WorkspaceRequestReuseTests(unittest.TestCase):
         self.assertEqual(value["tasks"]["total"], 0)
         self.assertIn("sessions", [row["id"] for row in value["entrypoints"]])
         with patch.object(legacy, "registered_projects", side_effect=WorkspaceError("workspace_unavailable")):
-            with patch("session_panel.workspace.service.progress.load_todos", return_value=[]):
-                with patch("session_panel.workspace.service.discover_providers", return_value=[]):
+            with patch("control_everything.workspace.service.progress.load_todos", return_value=[]):
+                with patch("control_everything.workspace.service.discover_providers", return_value=[]):
                     failed_source = legacy.snapshot()
         self.assertEqual(failed_source["projects"], {
             "status": "unavailable", "reason": "projects_unavailable", "items": []})

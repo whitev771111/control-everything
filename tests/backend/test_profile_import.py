@@ -9,9 +9,9 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from uuid import uuid4
 
-from session_panel.profiles.profile import Profile, ProfileError
-from session_panel.profiles import profile_import as importer
-from session_panel.workspace.store import BASE_SCHEMA
+from control_everything.profiles.profile import Profile, ProfileError
+from control_everything.profiles import profile_import as importer
+from control_everything.workspace.store import BASE_SCHEMA
 
 
 class ProfileImportTests(unittest.TestCase):

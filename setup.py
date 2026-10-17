@@ -6,7 +6,7 @@ from pathlib import Path
 from setuptools import setup
 
 
-spec = spec_from_file_location("session_panel_build_assets", Path(__file__).resolve().parent / "tools/packaging/build_assets.py")
+spec = spec_from_file_location("control_everything_build_assets", Path(__file__).resolve().parent / "tools/packaging/build_assets.py")
 build_assets = module_from_spec(spec)
 spec.loader.exec_module(build_assets)
 setup(cmdclass={"build_py": build_assets.BuildPy})

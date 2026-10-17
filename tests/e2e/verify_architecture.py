@@ -16,7 +16,7 @@ def source_files():
                             cwd=ROOT, capture_output=True, check=True)
     names = []
     for name in sorted(set(result.stdout.decode('utf-8').split('\0'))):
-        if not name.startswith('src/session_panel/') or not name.endswith('.py'):
+        if not name.startswith('src/control_everything/') or not name.endswith('.py'):
             continue
         path = ROOT.joinpath(*PurePosixPath(name).parts)
         if not path.is_file():
@@ -51,20 +51,20 @@ def main():
     names = source_files()
     cases = [
         ('legal', {}, 0),
-        ('direct', {'src/session_panel/workspace/service.py': '\nfrom session_panel.profiles import profile\n'}, 1),
-        ('function_local', {'src/session_panel/workspace/service.py': '\ndef _architecture_probe():\n    from session_panel.profiles import profile\n'}, 1),
-        ('descendant', {'src/session_panel/workspace/architecture_probe.py': 'from session_panel.profiles import profile\n'}, 1),
-        ('indirect', {'src/session_panel/workspace/service.py': '\nfrom session_panel.sessions import architecture_probe\n',
-                      'src/session_panel/sessions/architecture_probe.py': 'from session_panel.profiles import profile\n'}, 1),
-        ('legal_cross_module', {'src/session_panel/profiles/profile_import.py': '\nfrom session_panel.workspace.validation import finite_number as _architecture_probe\n'}, 0),
-        ('installation_direct', {'src/session_panel/installation/registry.py': '\nfrom session_panel.profiles import profile\n'}, 1),
-        ('installation_function_local', {'src/session_panel/sessions/observer_client.py': '\ndef _installation_probe():\n    from session_panel.installation import registry\n'}, 1),
-        ('installation_descendant', {'src/session_panel/platform/architecture_probe.py': 'from session_panel.installation import registry\n'}, 1),
-        ('installation_indirect', {'src/session_panel/installation/registry.py': '\nfrom session_panel.sessions import architecture_probe\n',
-                                   'src/session_panel/sessions/architecture_probe.py': 'from session_panel.profiles import profile\n'}, 1),
-        ('manifest_business', {'src/session_panel/installation/manifest.py': '\nfrom session_panel.sessions import observer_protocol\n'}, 1),
-        ('registry_orchestration', {'src/session_panel/installation/registry.py': '\nfrom session_panel.installation import maintenance\n'}, 1),
-        ('legal_installation_identity', {'src/session_panel/installation/registry.py': '\nfrom session_panel.sessions.observer_protocol import profile_key as _architecture_probe\n'}, 0),
+        ('direct', {'src/control_everything/workspace/service.py': '\nfrom control_everything.profiles import profile\n'}, 1),
+        ('function_local', {'src/control_everything/workspace/service.py': '\ndef _architecture_probe():\n    from control_everything.profiles import profile\n'}, 1),
+        ('descendant', {'src/control_everything/workspace/architecture_probe.py': 'from control_everything.profiles import profile\n'}, 1),
+        ('indirect', {'src/control_everything/workspace/service.py': '\nfrom control_everything.sessions import architecture_probe\n',
+                      'src/control_everything/sessions/architecture_probe.py': 'from control_everything.profiles import profile\n'}, 1),
+        ('legal_cross_module', {'src/control_everything/profiles/profile_import.py': '\nfrom control_everything.workspace.validation import finite_number as _architecture_probe\n'}, 0),
+        ('installation_direct', {'src/control_everything/installation/registry.py': '\nfrom control_everything.profiles import profile\n'}, 1),
+        ('installation_function_local', {'src/control_everything/sessions/observer_client.py': '\ndef _installation_probe():\n    from control_everything.installation import registry\n'}, 1),
+        ('installation_descendant', {'src/control_everything/platform/architecture_probe.py': 'from control_everything.installation import registry\n'}, 1),
+        ('installation_indirect', {'src/control_everything/installation/registry.py': '\nfrom control_everything.sessions import architecture_probe\n',
+                                   'src/control_everything/sessions/architecture_probe.py': 'from control_everything.profiles import profile\n'}, 1),
+        ('manifest_business', {'src/control_everything/installation/manifest.py': '\nfrom control_everything.sessions import observer_protocol\n'}, 1),
+        ('registry_orchestration', {'src/control_everything/installation/registry.py': '\nfrom control_everything.installation import maintenance\n'}, 1),
+        ('legal_installation_identity', {'src/control_everything/installation/registry.py': '\nfrom control_everything.sessions.observer_protocol import profile_key as _architecture_probe\n'}, 0),
     ]
     rows = []
     for label, changes, expected in cases:
@@ -88,8 +88,8 @@ def main():
                      'log_sha256': hashlib.sha256(log.encode('utf-8')).hexdigest()})
         print(f'{label}: expected={expected} actual={result.returncode}\n{log}')
         if result.returncode != expected or (expected == 1 and (
-                'BROKEN' not in log or ('session_panel.installation' if label.startswith(('installation_', 'manifest_', 'registry_'))
-                                       else 'session_panel.workspace') not in log)):
+                'BROKEN' not in log or ('control_everything.installation' if label.startswith(('installation_', 'manifest_', 'registry_'))
+                                       else 'control_everything.workspace') not in log)):
             (output / 'receipt.json').write_text(json.dumps(rows, indent=2), encoding='utf-8')
             return 1
     (output / 'receipt.json').write_text(json.dumps(rows, indent=2), encoding='utf-8')

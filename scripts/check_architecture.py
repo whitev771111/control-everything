@@ -25,7 +25,7 @@ def ownership_error(value):
         return None if value in ROOT_FILES else 'root_file_has_no_owner'
     top, section = parts[:2]
     if top == 'src':
-        if section != 'session_panel' or len(parts) < 3:
+        if section != 'control_everything' or len(parts) < 3:
             return 'unknown_backend_owner'
         if len(parts) == 3:
             return None if parts[2] in PACKAGE_FILES else 'package_root_is_for_entries_and_foundations'

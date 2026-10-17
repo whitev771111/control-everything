@@ -8,10 +8,10 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from session_panel.execution.service import ExecutionService, resolve_root
-from session_panel.execution.store import ExecutionStore, overlapping_roots
-from session_panel.workspace.service import WorkspaceService
-from session_panel.workspace.store import WorkspaceError
+from control_everything.execution.service import ExecutionService, resolve_root
+from control_everything.execution.store import ExecutionStore, overlapping_roots
+from control_everything.workspace.service import WorkspaceService
+from control_everything.workspace.store import WorkspaceError
 
 
 class FakeOwner:
@@ -166,7 +166,7 @@ class ExecutionTests(unittest.TestCase):
                 resolve_root(value)
         self.admit()
         actual_resolve = resolve_root
-        with patch("session_panel.execution.service.resolve_root", side_effect=lambda value:
+        with patch("control_everything.execution.service.resolve_root", side_effect=lambda value:
                    actual_resolve(str(self.roots["one"])) if value == str(self.roots["two"]) else actual_resolve(value)):
             with self.assertRaisesRegex(WorkspaceError, "project_busy"):
                 self.admit("two")

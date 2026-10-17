@@ -13,7 +13,7 @@ import uuid
 
 from tests.backend.test_windows_bundle import PayloadFixture, BUILD, MANIFEST
 
-DIRECTORY = Path(__file__).resolve().parents[2] / 'src/session_panel/installation'
+DIRECTORY = Path(__file__).resolve().parents[2] / 'src/control_everything/installation'
 spec = importlib.util.spec_from_file_location('installation_test_package', DIRECTORY / '__init__.py',
                                              submodule_search_locations=[str(DIRECTORY)])
 package = importlib.util.module_from_spec(spec)

@@ -9,10 +9,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from session_panel.sessions.codex_index import unavailable
-from session_panel.http.gateway import make_server
-from session_panel.workspace.service import WorkspaceService, discover_providers, inside_project
-from session_panel.workspace.store import WorkspaceError, WorkspaceStore
+from control_everything.sessions.codex_index import unavailable
+from control_everything.http.gateway import make_server
+from control_everything.workspace.service import WorkspaceService, discover_providers, inside_project
+from control_everything.workspace.store import WorkspaceError, WorkspaceStore
 
 SESSION_ID = "b7ed3430-9064-4153-894d-d295a388a572"
 MISSING_ID = "6ee281b5-e4f7-43ce-b1b7-92da287e5809"
@@ -40,10 +40,10 @@ class WorkspaceTests(unittest.TestCase):
                                         manual_path=self.manual, todos_path=self.todos, session_reader=self.reader,
                                         quota_source=self.quota, news_source=self.news)
         for name, value in (("codex_cwds", []), ("grok_cwds", [])):
-            patcher = patch("session_panel.workspace.service.progress." + name, return_value=value)
+            patcher = patch("control_everything.workspace.service.progress." + name, return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        patcher = patch("session_panel.workspace.service.shutil.which", return_value=None)
+        patcher = patch("control_everything.workspace.service.shutil.which", return_value=None)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -222,7 +222,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.service.store.list_tasks()[1], 0)
 
     def test_provider_discovery_is_separate_from_capabilities(self):
-        with patch("session_panel.workspace.service.shutil.which", side_effect=lambda command: "fixture" if command in ("dsh-tui", "grok") else None):
+        with patch("control_everything.workspace.service.shutil.which", side_effect=lambda command: "fixture" if command in ("dsh-tui", "grok") else None):
             providers = {row["id"]: row for row in discover_providers()}
         self.assertEqual(providers["dsh"]["discovery"]["commands"], ["dsh-tui"])
         self.assertEqual(providers["codex"]["discovery"]["status"], "not_found")
@@ -296,7 +296,7 @@ class WorkspaceGatewayTests(unittest.TestCase):
         self.assertEqual(self.request("/health")[0], 200)
 
     def test_http_static_routes_are_exact(self):
-        with TemporaryDirectory() as directory, patch("session_panel.http.gateway.WEB", Path(directory)):
+        with TemporaryDirectory() as directory, patch("control_everything.http.gateway.WEB", Path(directory)):
             for route, name in (("/workspace", "workspace.html"), ("/workspace.js", "workspace.js"), ("/workspace.css", "workspace.css")):
                 (Path(directory) / "workspace").mkdir(exist_ok=True)
                 (Path(directory) / "workspace" / name).write_bytes(b"fixture")

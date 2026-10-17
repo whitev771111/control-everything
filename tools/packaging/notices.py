@@ -58,7 +58,7 @@ def collect_notices(output, wheels, runtime_license, cargo_packages, inno_licens
                 raise NoticeError('wheel_metadata:' + wheel.name)
             metadata = BytesParser().parsebytes(archive.read(metadata_names[0]))
             name, version = metadata['Name'], metadata['Version']
-            if name.lower().replace('_', '-') == 'session-panel':
+            if name.lower().replace('_', '-') == 'control-everything':
                 continue
             info = metadata_names[0].rsplit('/', 1)[0]
             declared = metadata.get_all('License-File', [])

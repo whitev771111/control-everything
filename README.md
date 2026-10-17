@@ -4,7 +4,7 @@
 
 适合同时使用多个开发工具、在不同项目之间切换的个人开发者。项目与任务保存在本机，基础管理无需配置 Agent、SSH 或远端服务。
 
-[快速开始](#快速开始) · [使用指南](guide/usage.md) · [可选接入](guide/integrations.md) · [参与开发](.github/CONTRIBUTING.md)
+[快速开始](#快速开始) · [项目文档](docs/README.md) · [参与开发](.github/CONTRIBUTING.md)
 
 ## 产品展示
 
@@ -24,13 +24,13 @@ https://github.com/user-attachments/assets/be96cc58-6bd8-4221-b0aa-77c0f9e31804
 
 ## 快速开始
 
-当前提供源码启动方式。**截至 2026-10-17，公开 Releases 尚无安装包**；后续安装器及维护说明见 [Windows 安装指南](guide/windows.md)。
+当前提供源码启动方式。**截至 2026-10-17，公开 Releases 尚无安装包**；后续安装器及维护说明见 [Windows 安装指南](docs/windows.md)。
 
 1. 在 Windows 上准备 Python 3.12 或更新版本。
-2. 按[源码启动指南](guide/usage.md#多-agent-工作台)安装并启动服务。
+2. 按[源码启动指南](docs/usage.md#多-agent-工作台)安装并启动服务。
 3. 打开 **http://127.0.0.1:8766/workspace**，点击“添加项目”开始使用。
 
-基础网页启动无需 Node.js 或 Rust 编译器。数据保存在本机；独立数据目录、端口设置、导入与备份见[使用指南](guide/usage.md)。
+基础网页启动无需 Node.js 或 Rust 编译器。数据保存在本机；独立数据目录、端口设置、导入与备份见[使用指南](docs/usage.md)。
 
 ## 当前边界
 
@@ -42,9 +42,10 @@ https://github.com/user-attachments/assets/be96cc58-6bd8-4221-b0aa-77c0f9e31804
 
 ## 详细说明
 
-- [使用指南](guide/usage.md)：项目、任务、进度、资讯、本机观察、数据迁移与恢复。
-- [可选接入](guide/integrations.md)：远端会话、终端、启动器与只读 MCP。
-- [Windows 安装与维护](guide/windows.md)：安装、停止、升级、回退、卸载及发布验证。
+- [架构说明](docs/architecture.md)：组件职责、目录归属、数据流与扩展边界。
+- [使用指南](docs/usage.md)：项目、任务、进度、资讯、本机观察、数据迁移与恢复。
+- [可选接入](docs/integrations.md)：远端会话、终端、启动器与只读 MCP。
+- [Windows 安装与维护](docs/windows.md)：安装、停止、升级、回退、卸载及发布验证。
 - [参与开发](.github/CONTRIBUTING.md)：环境、目录职责、构建、测试和贡献约定。
 
 ## 许可证

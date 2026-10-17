@@ -42,15 +42,16 @@ def ownership_error(value):
         return None if section in {'typescript', 'remote-reader', 'architecture', 'packaging'} else 'unknown_development_tool'
     if top == 'native':
         return None if section == 'observer' and path.suffix in {'.rs', '.toml', '.lock', '.json'} else 'unknown_native_owner'
-    if top == 'guide':
+    if top == 'docs':
         if section == 'examples':
             return None if value in {
-                'guide/examples/integrations/codex.toml.example',
-                'guide/examples/integrations/integration-settings.example.json',
-                'guide/examples/legacy/progress-manual.example.json',
-                'guide/examples/legacy/progress-registry.example.json',
+                'docs/examples/integrations/codex.toml.example',
+                'docs/examples/integrations/integration-settings.example.json',
+                'docs/examples/legacy/progress-manual.example.json',
+                'docs/examples/legacy/progress-registry.example.json',
             } else 'unknown_example_owner'
-        return None if value in {'guide/usage.md', 'guide/integrations.md', 'guide/windows.md'} else 'unknown_public_guide'
+        return None if value in {'docs/README.md', 'docs/architecture.md', 'docs/usage.md',
+                                'docs/integrations.md', 'docs/windows.md'} else 'unknown_public_guide'
     if top == '.github':
         return None if value in {'.github/CODEOWNERS', '.github/pull_request_template.md', '.github/CONTRIBUTING.md'} or (
             section == 'workflows' and len(parts) == 3 and path.suffix in {'.yml', '.yaml'}) else 'unknown_repository_automation'

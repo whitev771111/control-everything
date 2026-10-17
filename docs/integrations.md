@@ -12,7 +12,7 @@
 
 ```powershell
 New-Item -ItemType Directory -Force work | Out-Null
-Copy-Item guide/examples/integrations/integration-settings.example.json work/integration-settings.json
+Copy-Item docs/examples/integrations/integration-settings.example.json work/integration-settings.json
 $settingsFile = (Resolve-Path work/integration-settings.json).Path
 & '.venv/Scripts/python.exe' -m control_everything.profile validate-settings --file $settingsFile
 & '.venv/Scripts/python.exe' -m control_everything.profile import-settings --file $settingsFile
@@ -101,7 +101,7 @@ launchers 仅由已登记 id 触发，页面不能传目标或额外参数。cmd
 
 本机 Codex 只读身份索引使用“来源与导入”中显式登记的数据库路径，读取六个元数据字段，筛选未归档 cli/exec/vscode，每页 12 条；归档、子代理及其他来源数量另列。身份键使用 `codex:<UUID>`，与远端相同 UUID 仍是两个身份。选择 Codex 只显示身份详情、清空远端正文并禁用远端定位；失败或超过 30 秒的采样清空当前身份。内部格式变更时明确显示不可用。
 
-会话证据区保留来源、身份、按需历史、终端位置和动作条件；使用列表按钮选择身份，支持键盘操作。3D/像素人物、巡游、粒子、场景控制与 Three 本地依赖已从源码移除。历史交付记录保留在本机 docs/。
+会话证据区保留来源、身份、按需历史、终端位置和动作条件；使用列表按钮选择身份，支持键盘操作。
 
 Codex 正文、实时活动监控和全服务器会话覆盖仍未提供。远端 reader、终端关联与定位是否可用，必须用自己的配置分别验证；合成测试不代表私人环境已接入。
 
@@ -117,7 +117,7 @@ WezTerm 状态区单独观察登记的 Zellij session 后台、GUI 进程、交�
 
 ## Codex MCP 接入
 
-先保持已配置 remote 的网关在 127.0.0.1:8766 运行；当前 stdio 桥固定访问该端口。使用其他端口可正常使用网页，但不能把该实例视为当前 MCP 桥的目标。将示例中的 command/cwd 换成自己的检出路径。`guide/examples/integrations/codex.toml.example` 是可审阅的示例，协调者只合并该 server 表到受信任项目的 `.codex/config.toml`，不覆盖其它服务器或写全局配置。
+先保持已配置 remote 的网关在 127.0.0.1:8766 运行；当前 stdio 桥固定访问该端口。使用其他端口可正常使用网页，但不能把该实例视为当前 MCP 桥的目标。将示例中的 command/cwd 换成自己的检出路径。`docs/examples/integrations/codex.toml.example` 是可审阅的示例，协调者只合并该 server 表到受信任项目的 `.codex/config.toml`，不覆盖其它服务器或写全局配置。
 
 ```toml
 [mcp_servers.remote_claude_sessions]

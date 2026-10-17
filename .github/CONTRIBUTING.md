@@ -2,7 +2,7 @@
 
 仓库协作约定见 [AGENTS.md](../AGENTS.md)。本指南约束共同交付结果，不要求成员使用同一助手、模型或个人技能。
 
-公开使用说明和接入示例统一放在 `guide/`，开发脚本放在 `tools/scripts/`，贡献指南放在 `.github/CONTRIBUTING.md`；本机开发记录仍只放 ignored `docs/`。下文命令均从仓库根目录执行。
+公开架构、使用说明和开发文档统一放在 `docs/`，文档入口见[项目文档](../docs/README.md)；接入示例放在 `docs/examples/`，开发脚本放在 `tools/scripts/`。`docs/current/` 及已有私人记录仍只留本机，新开发记录放 ignored `work/`。下文命令均从仓库根目录执行。
 
 ## 功能目录与新增代码归属
 
@@ -26,7 +26,7 @@
 
 测试按类型落位：Python 单元/合成接口测试在 `tests/backend`，纯 Node 源码与 DOM 合同在 `tests/frontend`，浏览器及协议 harness 在 `tests/e2e`，共享合成程序在 `tests/fixtures`。Python 发现入口仍是 `tests`；新增后端测试保持可递归发现。新增功能若横跨前后端，各自放入对应功能目录，并补充相应类型测试。
 
-公开配置样例属于 `guide/examples/integrations`，受支持的旧记录格式样例属于 `guide/examples/legacy`；它们不是真实运行数据。新记录写入所选 profile，旧根 JSON/SQLite 的默认位置和显式导入合同保持。远端 reader 的独立依赖在 `tools/remote-reader/requirements.txt`，不要装进本机环境。根 `requirements.txt`、`rust-toolchain.toml` 和 `.cargo/config.toml` 保持现有工具入口。
+公开配置样例属于 `docs/examples/integrations`，受支持的旧记录格式样例属于 `docs/examples/legacy`；它们不是真实运行数据。新记录写入所选 profile，旧根 JSON/SQLite 的默认位置和显式导入合同保持。远端 reader 的独立依赖在 `tools/remote-reader/requirements.txt`，不要装进本机环境。根 `requirements.txt`、`rust-toolchain.toml` 和 `.cargo/config.toml` 保持现有工具入口。
 
 ## 环境和验证
 
@@ -164,8 +164,8 @@ node --test tests/frontend/test_observation_ui.cjs
 ```powershell
 $checkData = Join-Path (Get-Location) 'work/new-member-profile'
 .\.venv\Scripts\python.exe -m control_everything.profile init --data-dir $checkData
-.\.venv\Scripts\python.exe -m control_everything.profile validate-settings --file (Resolve-Path guide/examples/integrations/integration-settings.example.json).Path
-.\.venv\Scripts\python.exe -m control_everything.profile import-settings --file (Resolve-Path guide/examples/integrations/integration-settings.example.json).Path --data-dir $checkData
+.\.venv\Scripts\python.exe -m control_everything.profile validate-settings --file (Resolve-Path docs/examples/integrations/integration-settings.example.json).Path
+.\.venv\Scripts\python.exe -m control_everything.profile import-settings --file (Resolve-Path docs/examples/integrations/integration-settings.example.json).Path --data-dir $checkData
 .\.venv\Scripts\python.exe -m control_everything.profile status --data-dir $checkData
 .\.venv\Scripts\python.exe -m control_everything.gateway --data-dir $checkData --port 14401
 ```
@@ -221,7 +221,7 @@ python tools/scripts/check_repository.py changes --base <base-commit> --head <he
 
 `changes` 检查 base..head 全部新增提交中逐提交新增行，个人路径或秘密先加入再删除也会阻断。普通提交对比父树；合并提交检查相对各父均新增的隐私命中，避免把同步 base 已有值当作新引入，侧支新值仍由其引入提交检查。Gitleaks 扫描同一完整区间，并显式使用 `--diff-merges=first-parent`，覆盖仅在合并解决冲突时加入的秘密。报告记录 base、head、merge_base 及每项隐私命中的 commit，兼容 PR 分支创建后 main 又前进的情况。未修改的旧个人值不阻断普通 PR；改名保持的旧内容不算新增。base/head 必须是真实提交；首次导入的全零 before、缺失 ref、无共同历史或空提交区间会失败，维护者须明确首次导入范围并运行完整候选检查，不能静默跳过。
 
-`docs/` 开发记录和 `videos/` 制作资料只留本地；.gitignore 不会自动取消旧文件跟踪，发布负责人须核对最终跟踪清单且保留本机原件。`docs/` 在两种扫描模式均禁入；`videos/` 下已有 `.md`、`.json`、`.mjs` 文本仅在 `changes` 模式的原路径修改中进入完整扫描，仍受嵌套目录、私人文件、二进制和隐私/秘密检查约束，新增、改名或复制到该目录的内容及媒体仍禁入。
+`docs/` 只发布经过核对的架构、使用和开发文档及通用示例。新增公开文档时，同步更新 `.gitignore` 的放行清单、`check_architecture.py` 的归属清单及 `check_repository.py` 的 `PUBLIC_DOCS`；公开文档仍须执行隐私与密钥扫描。`docs/current/`、其他未放行文档和 `videos/` 制作资料只留本地，不能以项目文档名义提交开发过程记录。.gitignore 不会自动取消旧文件跟踪，发布负责人须核对最终跟踪清单且保留本机原件。`videos/` 下已有 `.md`、`.json`、`.mjs` 文本仅在 `changes` 模式的原路径修改中进入完整扫描，仍受嵌套目录、私人文件、二进制和隐私/秘密检查约束，新增、改名或复制到该目录的内容及媒体仍禁入。
 
 未提交文件用严格的 `release` 模式，不虚构 changes 提交范围。手写一个 ignored JSON 清单，`files` 列出本次准备发布的全部相对文件路径，`excluded` 明确记录未纳入的路径（可为空）：
 
@@ -247,7 +247,7 @@ python tools/scripts/check_repository.py release --manifest work/checks/candidat
 
 main 的远端规则仅保留防强推与防删分支，不要求 PR 或必需 CI。调整远端规则后必须读取实际生效结果；以后恢复多人协作门槛须由项目主导者另行决定，不能从旧说明自动重建。
 
-安装器发布仍是单独的手动操作，实际产品构建与验收要求见[Windows 安装与维护](../guide/windows.md)。日常快速提交不代表已发布安装器，也不替代发布验收。
+安装器发布仍是单独的手动操作，实际产品构建与验收要求见[Windows 安装与维护](../docs/windows.md)。日常快速提交不代表已发布安装器，也不替代发布验收。
 
 ## 源码与测试目录
 
@@ -257,7 +257,7 @@ main 的远端规则仅保留防强推与防删分支，不要求 PR 或必需 C
 
 测试按 `tests/backend`（Python）、`tests/frontend`（纯 Node 合同）、`tests/e2e`（浏览器/协议 harness）和 `tests/fixtures`（合成替身）归类。新增功能放入所属功能目录，测试按类型放置；详细职责与验证命令见 [参与开发](CONTRIBUTING.md)。源码 CLI 统一为 `python -m control_everything.gateway` 等新包名命令，内部代码直接导入功能包实现。
 
-公开接入样例放在 `guide/examples/integrations`，旧格式导入样例放在 `guide/examples/legacy`；TypeScript、架构检查和远端 reader 的开发配置分别放在 `tools` 的对应目录。根目录保留项目入口说明、共同依赖及工具自动发现需要的配置；`src/control_everything` 是后端 Python 包名，功能继续按所属子包开发，产品显示名称不改变导入和 CLI 合同。实际 profile、数据库和日志不属于源码树，不随目录整理搬迁。
+公开接入样例放在 `docs/examples/integrations`，旧格式导入样例放在 `docs/examples/legacy`；TypeScript、架构检查和远端 reader 的开发配置分别放在 `tools` 的对应目录。根目录保留项目入口说明、共同依赖及工具自动发现需要的配置；`src/control_everything` 是后端 Python 包名，功能继续按所属子包开发，产品显示名称不改变导入和 CLI 合同。实际 profile、数据库和日志不属于源码树，不随目录整理搬迁。
 
 多人开发同时检查文件归属与 Python 依赖方向；新增构建单元须连同规则和指南审查。HTTP 网关和页面主脚本负责装配，完整业务处理及展示放入所属模块。检查命令、允许依赖和合并要求见[参与开发](CONTRIBUTING.md#模块边界与新增代码)。
 
@@ -272,7 +272,7 @@ main 的远端规则仅保留防强推与防删分支，不要求 PR 或必需 C
 
 当前产品不开放 Agent 执行、审批或费用试跑。Orca 不属于产品运行依赖；仓库中的 `tools/scripts/orca_preflight.py` 及其测试仅为未接入工作台的历史离线预检工具。
 
-公开接入样例放在 `guide/examples/integrations`；`guide/examples/legacy` 的 [项目登记样例](../guide/examples/legacy/progress-registry.example.json) 和 [人工进度样例](../guide/examples/legacy/progress-manual.example.json) 说明仍受支持的旧记录格式，供显式导入时参考。正常使用的数据保存在所选 profile；整理样例不会移动源码旁已有的私人文件。固定 TypeScript 配置与编译器清单位于 `tools/typescript`，远端正文 reader 的依赖单独位于 `tools/remote-reader/requirements.txt`；本机依赖仍使用根 `requirements.txt`。
+公开接入样例放在 `docs/examples/integrations`；`docs/examples/legacy` 的 [项目登记样例](../docs/examples/legacy/progress-registry.example.json) 和 [人工进度样例](../docs/examples/legacy/progress-manual.example.json) 说明仍受支持的旧记录格式，供显式导入时参考。正常使用的数据保存在所选 profile；整理样例不会移动源码旁已有的私人文件。固定 TypeScript 配置与编译器清单位于 `tools/typescript`，远端正文 reader 的依赖单独位于 `tools/remote-reader/requirements.txt`；本机依赖仍使用根 `requirements.txt`。
 
 ## 验证与撤销
 

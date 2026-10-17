@@ -14,6 +14,11 @@ VERSION = "8.30.1"
 MEDIA = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp",
          ".mp4", ".mov", ".webm", ".avi", ".mp3", ".wav", ".ogg", ".woff", ".woff2"}
 PRIVATE_NAMES = {"progress-registry.json", "progress-manual.json", "progress-todos.json"}
+PUBLIC_DOCS = {"docs/README.md", "docs/architecture.md", "docs/usage.md", "docs/integrations.md", "docs/windows.md",
+               "docs/examples/integrations/codex.toml.example",
+               "docs/examples/integrations/integration-settings.example.json",
+               "docs/examples/legacy/progress-manual.example.json",
+               "docs/examples/legacy/progress-registry.example.json"}
 WINDOWS_PATH = re.compile(r"(?i)(?<![\w])(?:[a-z]:[\\/]+(?:users|documents and settings)[\\/]+[^\s'\"<>]+|[a-z]:[\\/]+(?!temporary(?:[\\/]|$)|temp(?:[\\/]|$)|example(?:[\\/]|$))[^\s'\"<>]+)")
 HOME_PATH = re.compile(r"/(?:home|Users)/([^/\s'\"<>]+)(?:/|$)")
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}(?:\\*\.)){3}\d{1,3}(?![\d.])")
@@ -53,7 +58,9 @@ def forbidden(value):
     path = relative_path(value)
     parts = tuple(part.lower() for part in path.parts)
     name = parts[-1]
-    if any(part in {".git", "docs", "work", ".venv", ".exe", "node_modules", "__pycache__", "videos"} for part in parts):
+    if "docs" in parts and value not in PUBLIC_DOCS:
+        return "excluded-directory"
+    if any(part in {".git", "work", ".venv", ".exe", "node_modules", "__pycache__", "videos"} for part in parts):
         return "excluded-directory"
     if path.suffix.lower() in MEDIA:
         return "media"

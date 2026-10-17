@@ -172,7 +172,7 @@ class RepositoryChecksTests(unittest.TestCase):
         self.assertEqual(report["blocked"], [{"path": "videos/demo/source.md", "reason": "binary-candidate"}])
         self.scanner.assert_not_called()
 
-    def test_docs_are_local_only_in_release_and_changes(self):
+    def test_private_docs_are_local_only_in_release_and_changes(self):
         self.save(".gitignore", "/work/\n")
         self.save("docs/current/record.md", "local record\n")
         base = self.commit()
@@ -182,6 +182,25 @@ class RepositoryChecksTests(unittest.TestCase):
         code, report = self.check("changes", "--base", base, "--head", self.commit())
         self.assertEqual(code, 1)
         self.assertEqual({item["path"] for item in report["blocked"]}, {"docs/current/record.md", "nested/docs/new.md"})
+        self.scanner.assert_not_called()
+
+    def test_public_docs_are_scanned_in_release_and_changes(self):
+        self.save(".gitignore", "/work/\n")
+        self.save("docs/architecture.md", "Public architecture\n")
+        base = self.commit()
+        self.assertEqual(self.release(["docs/architecture.md"])[0], 0)
+        self.save("docs/architecture.md", "Public architecture\n" + self.personal_path())
+        head = self.commit()
+        self.assertEqual(self.release(["docs/architecture.md"])[0], 1)
+        code, report = self.check("changes", "--base", base, "--head", head)
+        self.assertEqual(code, 1)
+        self.assertEqual(report["findings"][0]["rule"], "absolute-windows-path")
+
+    def test_private_docs_cannot_use_public_filename_to_bypass_scope(self):
+        for name in ["docs/current/architecture.md", "docs/DEVELOPMENT_STATUS.md",
+                     "docs/Docs.Maintenance.Conventions.md", "docs/examples/private.json"]:
+            with self.subTest(name=name), patch.object(CHECKS, "safe_file", side_effect=AssertionError("must not read")):
+                self.assertEqual(self.release([name])[0], 1)
         self.scanner.assert_not_called()
 
     @unittest.skipUnless(GITLEAKS.is_file(), "Pinned local Gitleaks is installed separately")

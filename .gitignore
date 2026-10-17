@@ -10,8 +10,15 @@ node_modules/
 /dist/
 *.egg-info/
 
-# Private project documentation stays local
-/docs/
+# Publish only reviewed project documentation; keep development records local.
+/docs/*
+!/docs/README.md
+!/docs/architecture.md
+!/docs/usage.md
+!/docs/integrations.md
+!/docs/windows.md
+!/docs/examples/
+/docs/current/
 
 # Local video source and renders are not publication candidates
 /videos/

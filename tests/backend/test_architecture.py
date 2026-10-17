@@ -31,8 +31,9 @@ class ArchitectureTests(TestCase):
                      'src/control_everything/installation/maintenance.py', 'src/control_everything/installation/manifest.py',
                      'web/workspace/quota.js', 'tools/typescript/tsconfig.news.json',
                      'tools/packaging/build_assets.py', 'pyproject.toml', 'MANIFEST.in', 'setup.py',
-                     'guide/examples/legacy/progress-manual.example.json', 'tests/e2e/verify_architecture.py',
-                     'guide/examples/integrations/codex.toml.example', 'tools/scripts/check_architecture.py',
+                     'docs/README.md', 'docs/architecture.md', 'LICENSE',
+                     'docs/examples/legacy/progress-manual.example.json', 'tests/e2e/verify_architecture.py',
+                     'docs/examples/integrations/codex.toml.example', 'tools/scripts/check_architecture.py',
                      '.github/CODEOWNERS', 'rust-toolchain.toml']:
             with self.subTest(path=path):
                 self.assertIsNone(policy.ownership_error(path))
@@ -41,7 +42,8 @@ class ArchitectureTests(TestCase):
         for path, reason in [('new_feature.py', 'root_file_has_no_owner'),
                              ('scripts/new_feature.py', 'unregistered_top_level_directory'),
                              ('tools/scripts/nested/new_feature.py', 'scripts_are_development_entries'),
-                             ('guide/examples/private.json', 'unknown_example_owner'),
+                             ('docs/examples/private.json', 'unknown_example_owner'),
+                             ('docs/current/architecture.md', 'unknown_public_guide'),
                              ('src/control_everything/new_feature.py', 'package_root_is_for_entries_and_foundations'),
                              ('src/control_everything/utils/feature.py', 'unknown_backend_owner'),
                              ('src/another_app/main.py', 'unknown_backend_owner'),

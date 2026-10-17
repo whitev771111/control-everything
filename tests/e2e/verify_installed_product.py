@@ -305,20 +305,20 @@ def main(argv=None):
         acceptance.launcher(install_root, first_id)
         active = install_root / 'versions' / first_id
         for module in ('gateway', 'profile'):
-            acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-m', 'session_panel.' + module, '--help'])
-        acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-m', 'session_panel.native_processes', '--help'], expected=1)
-        acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-m', 'session_panel.mcp_stdio'], stdin=b'')
+            acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-X', 'utf8', '-m', 'session_panel.' + module, '--help'])
+        acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-X', 'utf8', '-m', 'session_panel.native_processes', '--help'], expected=1)
+        acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-X', 'utf8', '-m', 'session_panel.mcp_stdio'], stdin=b'')
         acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-X', 'utf8',
                         active / 'runtime/Lib/site-packages/session_panel/workspace/news_worker.py'], expected=2)
         report['probes'] = []
         for index, profile in enumerate(profiles):
-            acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-m', 'session_panel.profile', 'init', '--data-dir', profile])
+            acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-X', 'utf8', '-m', 'session_panel.profile', 'init', '--data-dir', profile])
             report['probes'].append(acceptance.probe(active, profile, 'profile-' + str(index),
                 while_http=(lambda: acceptance.install(installer, install_root, 'http-blocked', blocked=True)) if index == 0 else None))
-            preserved = acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-m', 'session_panel.profile',
+            preserved = acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-X', 'utf8', '-m', 'session_panel.profile',
                                         'preserve-tasks', '--data-dir', profile])
             backup = json.loads(preserved)['backup']
-            acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-m', 'session_panel.profile', 'restore',
+            acceptance.run([active / 'runtime/python.exe', '-I', '-B', '-X', 'utf8', '-m', 'session_panel.profile', 'restore',
                             '--backup', backup, '--data-dir', evidence / ('restored-' + str(index))])
         saved = {str(path): sha(path) for profile in profiles for path in profile.rglob('*')
                  if path.is_file() and (path.name in ('profile.json', 'workspace-state.sqlite3') or 'backups' in path.parts)}

@@ -146,6 +146,9 @@ class WorkspaceService:
         return self.observation_settings()
 
     def observations(self):
+        return self._observations_with_projects()[0]
+
+    def _observations_with_projects(self):
         from session_panel.workspace.observations import project_observations
         cached = self.observer.cached() if self.observer else {
             "status": "unavailable", "reason": "not_started", "snapshot": None, "scope_revision": 0, "scope_hash": ""}
@@ -159,7 +162,8 @@ class WorkspaceService:
             except ValueError:
                 cached["config_pair"] = None
                 cached["reason"] = "config_unavailable"
-        value = project_observations(cached, self.registered_projects() if self.profile is not None else [])
+        registry = self.registered_projects() if self.profile is not None else []
+        value = project_observations(cached, registry)
         if self.profile is not None:
             for row in value["registrations"]:
                 intent = configured.get(row["registration_id"], {})
@@ -170,7 +174,7 @@ class WorkspaceService:
                                      and (intent.get("category") == "custom_exe" or intent.get("locator_kind") == "codex_desktop")))
             for instance in value["instances"]:
                 instance["registration_labels"] = [configured[identity]["label"] for identity in instance["registration_ids"] if identity in configured]
-        return value
+        return value, registry
 
     def registered_projects(self):
         if self.profile is not None:
@@ -243,8 +247,12 @@ class WorkspaceService:
     def page_tasks(self, **params):
         rows, total = self.store.list_tasks(**params)
         sessions, registry = self.sessions(), self.registered_projects()
+        return self._task_page(rows, total, sessions, registry,
+                               offset=params.get("offset", 0), limit=params.get("limit", 50))
+
+    def _task_page(self, rows, total, sessions, registry, *, offset=0, limit=50):
         return {"items": [{**row, "session_link_state": self.link_state(row, sessions, registry)} for row in rows],
-                "total": total, "offset": params.get("offset", 0), "limit": params.get("limit", 50)}
+                "total": total, "offset": offset, "limit": limit}
 
     def page_records(self, **params):
         rows, total = self.store.list_records(**params)
@@ -253,11 +261,11 @@ class WorkspaceService:
     def snapshot(self):
         sessions = self.sessions()
         if self.profile is not None:
-            observations = self.observations()
+            observations, registry = self._observations_with_projects()
             from session_panel.workspace.observations import summary
-            registry = self.registered_projects()
             todos = self.store.list_todos()
-            tasks = self.page_tasks()
+            rows, total = self.store.list_tasks()
+            tasks = self._task_page(rows, total, sessions, registry)
             records = self.page_records()
             return {"status": "ok", "sampled_at": datetime.now(timezone.utc).isoformat(), "today": today(),
                     "projects": {"status": "available", "reason": None, "items": self.profile_projects(registry, sessions)},

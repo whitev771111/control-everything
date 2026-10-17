@@ -22,7 +22,39 @@
 
 测试按类型落位：Python 单元/合成接口测试在 `tests/backend`，纯 Node 源码与 DOM 合同在 `tests/frontend`，浏览器及协议 harness 在 `tests/e2e`，共享合成程序在 `tests/fixtures`。Python 发现入口仍是 `tests`；新增后端测试保持可递归发现。新增功能若横跨前后端，各自放入对应功能目录，并补充相应类型测试。
 
+公开配置样例属于 `examples/integrations`，受支持的旧记录格式样例属于 `examples/legacy`；它们不是真实运行数据。新记录写入所选 profile，旧根 JSON/SQLite 的默认位置和显式导入合同保持。远端 reader 的独立依赖在 `tools/remote-reader/requirements.txt`，不要装进本机环境。根 `requirements.txt`、`rust-toolchain.toml` 和 `.cargo/config.toml` 保持现有工具入口。
+
 ## 环境和验证
+
+### 模块边界与新增代码
+
+新增代码先找所属功能包。`http` 负责权限、请求处理与装配；`profiles` 负责用户配置与恢复编排；`sessions` 负责会话和观察；`workspace` 负责管理业务及同库事务；`execution` 保留受控执行生命周期；`integrations` 负责外部适配。共享 Windows Job 原语放 `platform/windows_jobs.py`，共享输入错误与路径判据放 `input_validation.py`，不设没有消费者的通用目录。
+
+| 来源 | 允许的项目内部依赖 |
+|---|---|
+| sessions | 基础模块 |
+| workspace | sessions、基础模块 |
+| integrations | workspace、sessions、基础模块 |
+| execution | workspace、sessions、基础模块 |
+| profiles | workspace、sessions、integrations、基础模块 |
+| http | 上述功能的装配与公开接口 |
+
+同域内 `workspace.validation` 不依赖 store/service，store 不依赖 service。项目和事项的关联判断继续使用原写连接和事务，不拆库或在检查后另开连接写入。旧 CLI 与兼容重导出供旧调用使用，新内部代码引用真实实现，不通过动态导入绕过边界。
+
+额度 DOM 展示在 `web/workspace/quota.js`，观察动作处理在 `http/observation_routes.py`；主脚本、网关只委派相应职责。前端仍使用普通 Window 模块，依赖注入、DOM 合同、脚本顺序及独立代码审查共同约束；Python 导入检查不覆盖 JavaScript 或 SQL 的业务含义。
+
+开发环境显式安装固定工具，再从根执行：
+
+```powershell
+python -m pip --isolated install -r tools/architecture/requirements.txt
+python scripts/check_architecture.py layout
+lint-imports --config tools/architecture/importlinter.ini --no-cache --no-logo
+python tests/e2e/verify_architecture.py --output work/architecture-check-unique
+```
+
+最后一个命令要求新的证据目录，只复制 Git 候选中的 Python 源码，分别证明合法依赖可用、顶层/函数内/子模块/间接反向依赖会被拒绝。它不修改源树，不访问个人数据。工具不会自动安装或回退全局版本；Import Linter 固定 2.15，仅用于开发。规则采用官方 [forbidden 合同](https://import-linter.readthedocs.io/en/stable/contract_types/forbidden/)的后代及间接依赖检查，不靠宽泛 ignore 放过旧耦合。
+
+文件归属检查只读候选路径；新增功能包、前端分组或构建单元须同时更新归属表与规则。秘密/媒体检查、业务测试和独立审查各有职责，不能用其中一项替代其余检查。
 
 使用 Windows、Python 3.12 和 Node.js 24。Python 全套测试包含 Windows 原生接口；观察类型/构建合同另需下节固定项目编译器，没有根目录 npm 包或运行时 Node 桥接。以下创建命令仅适用于没有 `.venv` 的新检出；已有环境先确认归属和版本，不覆盖他人的环境，必要时选择独立工作树。再从仓库根目录执行：
 
@@ -33,11 +65,11 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-基础测试使用合成配置、临时文件和 mock，不需要作者服务器或个人工具。首次完整测试涉及固定 Gitleaks 检查时，先按下文安装已核验工具；不能把缺工具跳过称为完整检查通过。本机 requirements 固定 MCP 1.30.0，远端新 reader 环境另用 requirements-reader.txt，不能把两套环境混为一次升级。
+基础测试使用合成配置、临时文件和 mock，不需要作者服务器或个人工具。首次完整测试涉及固定 Gitleaks 检查时，先按下文安装已核验工具；不能把缺工具跳过称为完整检查通过。本机 requirements 固定 MCP 1.30.0，远端新 reader 环境另用 tools/remote-reader/requirements.txt，不能把两套环境混为一次升级。
 
 ### 观察前端 TypeScript 开发
 
-观察输入仅 `web/workspace/observation.ts` 与 `observation.types.d.ts`，manifest固定唯一输出 `observation.js`。资讯另用 `news.ts/news.types.d.ts`、`tools/typescript/news.manifest.json`、`tsconfig.news.json`，固定唯一输出 `web/workspace/news.js`。两入口在 `scripts/frontend_compile.cjs` 复用同一小型编译流程，每个目标分别核完整输入/输出与窗口出口，不接任意路径或动态manifest参数。两配置开严格检查、禁止 map/inline源码及声明输出，保持普通 IIFE/Window API；不引入 React/Vite/模块加载器。任务中心等现有 JS 保留独立归属。
+观察输入仅 `web/workspace/observation.ts` 与 `observation.types.d.ts`，manifest固定唯一输出 `observation.js`。资讯另用 `news.ts/news.types.d.ts`、`tools/typescript/news.manifest.json`，固定唯一输出 `web/workspace/news.js`。两配置为 `tools/typescript/tsconfig.observation.json` 和 `tools/typescript/tsconfig.news.json`，其中路径相对配置所在目录解析。两入口在 `scripts/frontend_compile.cjs` 复用同一小型编译流程，每个目标分别核完整输入/输出与窗口出口，不接任意路径或动态manifest参数。两配置开严格检查、禁止 map/inline源码及声明输出，保持普通 IIFE/Window API；不引入 React/Vite/模块加载器。任务中心等现有 JS 保留独立归属。
 
 固定官方 `typescript@5.9.3`，真实 package-lock.json 一起提交。已有正确项目工具不重复准备；缺失时 build/check 明确非零，不联网、不找全局 tsc。首次或干净复现的准备是单独显式动作，仅作用于自己检出的 `tools/typescript/node_modules`；`npm ci` 会清该工具包依赖目录，先确认归属。下面在专用 PowerShell 会话从仓库根执行，两个通用示例路径须替换为已安装的 Node24 和 npm CLI，不能让宿主 npm.cmd 偷换 Node：
 
@@ -69,7 +101,7 @@ node scripts/build_observation.cjs check
 node scripts/build_news.cjs typecheck
 node scripts/build_news.cjs build
 node scripts/build_news.cjs check
-node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs tests/frontend/test_news_ui.cjs tests/frontend/test_news_build.cjs
+node --test tests/frontend/test_execution_ui.cjs tests/frontend/test_progress_ui.cjs tests/frontend/test_workspace_history_ui.cjs tests/frontend/test_observation_ui.cjs tests/frontend/test_task_center_ui.cjs tests/frontend/test_observation_build.cjs tests/frontend/test_news_ui.cjs tests/frontend/test_news_build.cjs tests/frontend/test_quota_ui.cjs
 ```
 
 修改 TS 后先 build 并提交生成 JS；验证已有交付物时直接 check，不能先 build 洗掉手改字节。编译/emit/校验失败不会覆盖旧 JS；旧 JS 存在也不代表编译成功。check用fresh临时输出比较完整集合/字节，不修产物。源码、类型、配置、package/lock、manifest、builder及生成JS都须进入显式发布候选；缓存、node_modules、日志留ignored work，不能以子集扫描称整包通过。
@@ -109,8 +141,8 @@ node --test tests/frontend/test_observation_ui.cjs
 ```powershell
 $checkData = Join-Path (Get-Location) 'work/new-member-profile'
 .\.venv\Scripts\python.exe -m session_panel.profile init --data-dir $checkData
-.\.venv\Scripts\python.exe -m session_panel.profile validate-settings --file (Resolve-Path integration-settings.example.json).Path
-.\.venv\Scripts\python.exe -m session_panel.profile import-settings --file (Resolve-Path integration-settings.example.json).Path --data-dir $checkData
+.\.venv\Scripts\python.exe -m session_panel.profile validate-settings --file (Resolve-Path examples/integrations/integration-settings.example.json).Path
+.\.venv\Scripts\python.exe -m session_panel.profile import-settings --file (Resolve-Path examples/integrations/integration-settings.example.json).Path --data-dir $checkData
 .\.venv\Scripts\python.exe -m session_panel.profile status --data-dir $checkData
 .\.venv\Scripts\python.exe -m session_panel.gateway --data-dir $checkData --port 14401
 ```
@@ -186,14 +218,14 @@ python scripts/check_repository.py release --manifest work/checks/candidates.jso
 
 ## CI 与维护者启用步骤
 
-工作流使用普通 `pull_request`、main 的 `push` 和手动 `workflow_dispatch`，默认仅 `contents: read`，不持久化 checkout 凭据、不上传扫描报告。稳定状态名为 `windows-tests`、`new-content-checks`；手动 `release-readiness` 检查当前全部 Git 跟踪候选，不属于普通开发 PR 的必过项。它遇到现有媒体或旧个人值会阻塞，不能通过排除后宣称全仓库已脱敏。
+工作流使用普通 `pull_request`、main 的 `push` 和手动 `workflow_dispatch`，默认仅 `contents: read`，不持久化 checkout 凭据、不上传扫描报告。稳定状态名为 `windows-tests`、`new-content-checks`、`architecture-boundaries`；手动 `release-readiness` 检查当前全部 Git 跟踪候选，不属于普通开发 PR 的必过项。它遇到现有媒体或旧个人值会阻塞，不能通过排除后宣称全仓库已脱敏。
 
 维护者获得管理权限并授权发布后执行：
 
-1. 先让 CI 分支在 GitHub 实际运行，记录 run URL 和两个状态名；本地测试和 YAML 检查不能替代远端运行。
-2. 为 main 建 active ruleset：要求 PR、1 名独立批准、新 push 撤销旧批准、解决讨论，必过 `windows-tests` 与 `new-content-checks`，禁止 force push 和删除。绕过列表默认空；紧急例外须明确决定并留记录。
-3. 若只有一名维护者，不能把自己批准自己的 PR 当成独立审查；应先确定协作者，或记录维护者决定的临时例外。
-4. 确认真实具有 write 权限的维护者后再添加 CODEOWNERS 并启用 owner review，不编造所有者。
-5. 读取 effective ruleset 和实际 PR checks，才可记录“远端门禁已启用”。目前规则文件仅为准备，远端执行与保护设置待维护者完成。
+1. 先让 CI 分支在 GitHub 实际运行，记录 run URL 和三个状态名；本地测试和 YAML 检查不能替代远端运行。
+2. 为 main 建 active ruleset：要求 PR、必需状态全部通过并与最新 main 一起检查、解决讨论，禁止 force push 和删除。绕过列表为空，规则同样约束管理员。
+3. 当前只有 `zxl123456123` 一位维护者，按其明确决定暂设 required approvals=0、owner review=false；保留独立代码审查及证据，不能自批冒充第二人审查。以后增加真实维护者再启用独立批准和 owner review。
+4. CODEOWNERS 使用真实有权限的 `@zxl123456123`；目录所有者与强制第二账号审批是不同设置，不编造所有者。
+5. 读取 effective ruleset、实际 PR checks 和 CI 未通过时的受阻状态，才可记录“远端门禁已启用”。不能从本文或 CODEOWNERS 推断远端已经配置。
 
 采用 GitHub 原生 [贡献指南](https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/setting-guidelines-for-repository-contributors)、[分支规则](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets) 和官方 [Gitleaks CLI](https://github.com/gitleaks/gitleaks)。Actions 直接依赖固定完整 SHA；未采用仍在预览的 actions.lock，不声称具有传递依赖锁定。

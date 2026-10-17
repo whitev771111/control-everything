@@ -10,6 +10,23 @@
 
 测试按 `tests/backend`（Python）、`tests/frontend`（纯 Node 合同）、`tests/e2e`（浏览器/协议 harness）和 `tests/fixtures`（合成替身）归类。新增功能放入所属功能目录，测试按类型放置；详细职责与验证命令见 [参与开发](CONTRIBUTING.md)。原有 `python -m session_panel.gateway` 等外部 CLI 继续使用，内部代码直接导入功能包实现。
 
+公开接入样例放在 `examples/integrations`，旧格式导入样例放在 `examples/legacy`；TypeScript、架构检查和远端 reader 的开发配置分别放在 `tools` 的对应目录。根目录保留项目入口说明、共同依赖及工具自动发现需要的配置。实际 profile、数据库和日志不属于源码树，不随目录整理搬迁。
+
+多人开发同时检查文件归属与 Python 依赖方向；新增构建单元须连同规则和指南审查。HTTP 网关和页面主脚本负责装配，完整业务处理及展示放入所属模块。检查命令、允许依赖和合并要求见[参与开发](CONTRIBUTING.md#模块边界与新增代码)。
+
+| 组成 | 使用边界 |
+|---|---|
+| Python 管理后端与前端资源 | 基础管理必需，负责项目、事项、进度与管理数据 |
+| Rust 原生观察后台 | 完整本机观察的标准组件；缺失或故障时明确显示受限，基础管理仍可用 |
+| Codex 元数据库、项目文档来源 | 用户按需登记；不配置也可人工管理，不自动读取私人来源 |
+| SSH/远端 reader、终端、工作台、个人启动器 | 按需接入；终端依赖远端，工作台依赖终端，启动器可独立启用 |
+| 公开资讯与官方额度 | 资讯按源容忍超时；额度仅显式查询，未配置账号不影响管理 |
+| Node、TypeScript、Rust 编译器、浏览器测试工具 | 开发或验证工具，不属于普通用户的业务依赖 |
+
+执行、审批、费用试跑及 Orca runtime 继续暂停；它们不是本次开放的可选功能。
+
+公开接入样例放在 `examples/integrations`；`examples/legacy` 的 [项目登记样例](examples/legacy/progress-registry.example.json) 和 [人工进度样例](examples/legacy/progress-manual.example.json) 说明仍受支持的旧记录格式，供显式导入时参考。正常使用的数据保存在所选 profile；整理样例不会移动源码旁已有的私人文件。固定 TypeScript 配置与编译器清单位于 `tools/typescript`，远端正文 reader 的依赖单独位于 `tools/remote-reader/requirements.txt`；本机依赖仍使用根 `requirements.txt`。
+
 ## 多 Agent 工作台
 
 统一入口 `/workspace` 提供项目登记、多个工作目录、人工进度与历史、任务和待办、可选文档进度来源、Codex 官方订阅额度、人工每日用量和固定来源 AI 资讯。项目不要求 Git 或特定工作流。人工进度、任务统计、文档观察分别展示；未填写百分比与真实 0 不混用，文档 PASS 或来源报告完成不会改写人工状态。
@@ -49,7 +66,7 @@ python -m venv .venv
 
 ## 每日 AI 资讯
 
-首页仅展示浏览器本地今天、未标为未来的默认 AI 来源前两条；资讯页展示本次返回窗口内的今日、较早、未知和未来文章。默认来源仍是 Google AI、OpenAI News、Hugging Face Blog（含社区文章），每源最多20条，显示扫描/过滤/重复和截断限制；“未见今日内容”只针对本次返回窗口。Hacker News 可显式选择，旧 `/progress` 也消费同一来源缓存，标为非AI筛选，并将HN收录时间与文章出版时间区分。
+首页仅展示浏览器本地今天、未标为未来的默认 AI 来源前两条；资讯页展示本次返回窗口内的今日、较早、未知和未来文章。默认来源仍是 Google AI、OpenAI News、Hugging Face Blog（简称 HF，含社区文章），每源最多20条，显示扫描/过滤/重复和截断限制；“未见今日内容”只针对本次返回窗口。Hacker News 可显式选择，旧 `/progress` 也消费同一来源缓存，标为非AI筛选，并将HN收录时间与文章出版时间区分。
 
 卡片保留真实出版时间（缺失则未知）、来源更新、采样和上次成功时间；源有摘要才显示纯文本“来源摘要”或“来源摘要节选”。缓存15分钟，失败/过期保留旧日期并标旧；前端每分钟及恢复可见时重算，pending最多等待20秒，不表示后台被浏览器取消。资讯独立读取，不让待办或任务保存等待来源采集。公共源可能失败或变更格式，不能把缓存有效等同于来源有今日新闻。
 
@@ -57,7 +74,7 @@ python -m venv .venv
 
 ## Windows 本机观察与返回
 
-可选Rust观察后台按当前用户及profile隔离，Python网关绑定端口成功后才连接或启动固定的本机构建产物。缺少产物、身份或协议不匹配时，页面明确显示观察不可用，项目、任务和其他管理功能仍能使用。构建步骤和固定工具链准备见[参与开发](CONTRIBUTING.md#windows-原生观察开发)，HTTP不会临时编译或从PATH执行同名后台。
+Rust观察后台是完整本机观察的标准组件，按当前用户及profile隔离，Python网关绑定端口成功后才连接或启动固定的本机构建产物。缺少产物、身份或协议不匹配时，页面明确显示观察不可用，项目、任务和其他管理功能仍能使用。构建步骤和固定工具链准备见[参与开发](CONTRIBUTING.md#windows-原生观察开发)，HTTP不会临时编译或从PATH执行同名后台。
 
 安装发现、已核验运行进程、历史会话、待处理及返回能力分别展示。Codex、Claude Code、Hermes、Pi按公开安装入口核验；不支持的安装形态、权限不足或缺少会话来源保持未知，不因发现工具读取默认账户库。CPU首样本未知，100%表示一个逻辑核；内存是进程工作集，不代表独占物理内存或Token/费用。进程发现约5秒、资源约1秒、安装缓存最多60秒，页面标明来源和时间。
 
@@ -114,11 +131,11 @@ $observerData = Join-Path (Get-Location) 'work/example-profile'
 
 基础项目管理无需 SSH、Zellij、WezTerm 或 reader。已有用户也通过自己的 profile 登记这些资源；源码不提供个人服务器、工具路径、完整性摘要或启动器默认值。设置页显示每段的“未配置 / 已禁用 / 已配置”和重启提示。“已配置”仅表示通过配置校验，实际连接还会核验来源、版本和身份。
 
-高级文件采用 version 2，包含固定四段 remote、terminal、workbench、launchers。随仓库提供的 [integration-settings.example.json](integration-settings.example.json) 四段均为 null，可直接校验。首次复制到 ignored `work/` 后编辑自己的值；已有本机配置文件时直接编辑，保留其现有内容：
+高级文件采用 version 2，包含固定四段 remote、terminal、workbench、launchers。随仓库提供的 [integration-settings.example.json](examples/integrations/integration-settings.example.json) 四段均为 null，可直接校验。首次复制到 ignored `work/` 后编辑自己的值；已有本机配置文件时直接编辑，保留其现有内容：
 
 ```powershell
 New-Item -ItemType Directory -Force work | Out-Null
-Copy-Item integration-settings.example.json work/integration-settings.json
+Copy-Item examples/integrations/integration-settings.example.json work/integration-settings.json
 $settingsFile = (Resolve-Path work/integration-settings.json).Path
 & '.venv/Scripts/python.exe' -m session_panel.profile validate-settings --file $settingsFile
 & '.venv/Scripts/python.exe' -m session_panel.profile import-settings --file $settingsFile
@@ -197,7 +214,7 @@ launchers 仅由已登记 id 触发，页面不能传目标或额外参数。cmd
 
 ## 本机与远端 reader 环境
 
-本机 `.venv` 安装 requirements.txt 的 MCP 1.30.0。需要远端消息时，另在自己的远端专用虚拟环境安装 requirements-reader.txt（Claude Agent SDK 0.2.163、MCP 1.30.0），再填写 reader_python 和 reader_mcp_version。不要覆盖现有虚拟环境、系统 pip 或 Claude 配置；安装后单独验证 reader 身份与能力。
+本机 `.venv` 安装 requirements.txt 的 MCP 1.30.0。需要远端消息时，另在自己的远端专用虚拟环境安装 tools/remote-reader/requirements.txt（Claude Agent SDK 0.2.163、MCP 1.30.0），再填写 reader_python 和 reader_mcp_version。不要覆盖现有虚拟环境、系统 pip 或 Claude 配置；安装后单独验证 reader 身份与能力。
 
 远端 MCP 1.26.0 仅作为明确配置的旧环境迁移兼容值，设置摘要会提示升级；本机依赖升级不会升级远端，也不证明旧远端的依赖风险已处理。reader 缺失时消息显示 sdk_unavailable；已支持的版本不等于你的远端已验证。管理记录导入和高级参数导入是两个独立操作，旧 registry 导入不会自动迁移 SSH、工具路径或启动器。
 

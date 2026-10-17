@@ -32,7 +32,7 @@ class ProfileTests(unittest.TestCase):
             self.assertTrue(profile.public()["can_import"])
             self.assertEqual(profile.codex_threads()["status"], "not_configured")
             with closing(sqlite3.connect(profile.store.path)) as connection:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
                 self.assertIsNone(connection.execute("SELECT name FROM sqlite_master WHERE name LIKE 'execution%'").fetchone())
             configured = {"codex": {"enabled": False, "db_path": str(Path(directory) / "explicit.sqlite")}}
             profile.settings(configured)
@@ -67,9 +67,9 @@ class ProfileTests(unittest.TestCase):
                 else:
                     profile = Profile.open(directory)
                     with closing(sqlite3.connect(profile.store.path)) as connection:
-                        connection.execute({"future": "PRAGMA user_version=2", "extra": "CREATE TABLE extra(x)", "column": "ALTER TABLE projects ADD COLUMN extra TEXT"}[mode])
+                        connection.execute({"future": "PRAGMA user_version=3", "extra": "CREATE TABLE extra(x)", "column": "ALTER TABLE projects ADD COLUMN extra TEXT"}[mode])
                         connection.commit()
-                with self.assertRaises(WorkspaceError):
+                with self.assertRaises(ProfileError):
                     Profile.open(directory)
 
 

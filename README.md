@@ -70,6 +70,15 @@ $observerData = Join-Path (Get-Location) 'work/example-profile'
 
 ## 导入旧记录与恢复
 
+管理库使用schema2，配置仍独立兼容v1/v2/v3；备份manifest1对应schema1，manifest2对应schema2。新空profile直接初始化schema2，已有schema1不会随启动自动升级：先正常停止自己使用该profile的实例，再显式执行离线迁移。命令不会终止其他程序；锁忙、未知表/版本、校验失败或超预算会拒绝并保留原库及已生成备份，不截断历史值。
+
+```powershell
+& '.venv/Scripts/python.exe' -m session_panel.profile status --data-dir 'C:/example/SessionPanel/main'
+& '.venv/Scripts/python.exe' -m session_panel.profile migrate-tasks --data-dir 'C:/example/SessionPanel/main'
+```
+
+迁移将旧tasks/todos收为一个可写模型，保留来源及原ID（包括空待办ID）、重复标题、原顺序、时间和NULL；旧接口通过适配读写同一模型。数据库中的tasks/todos是只读兼容视图，不能再用旧程序或直接SQL写入。新列表的顺序单独保存，不伪造两种来源的历史先后。
+
 在空 profile 的“来源与导入”填写旧数据目录的绝对路径，例如 `C:/example/previous-panel`。固定读取 `progress-registry.json`，以及可选的 `progress-manual.json`、`progress-todos.json`、`workspace-state.sqlite3`。只导入全部合法项目、人工进度、待办、工作台任务和人工用量；保留原 ID、顺序、关联与已有时间。未登记项目的记录进入兼容区；没有原时间的导入快照显示“来源未提供时间”。
 
 导入不改源目录、不读或复制 execution/审批/事件/私人正文，不导入个人来源设置。非法、重复、schema 不兼容或超预算的批次整批拒绝并给出字段定位；不会只取旧页面前 500/100 条。目的 profile 必须业务为空且未导入过，来源与目的目录不能重合或互相包含。已有记录应另选空 `--data-dir`，不能覆盖或合并导入。
@@ -78,10 +87,14 @@ $observerData = Join-Path (Get-Location) 'work/example-profile'
 
 ```powershell
 & '.venv/Scripts/python.exe' -m session_panel.profile restore --backup 'C:/example/SessionPanel/main/backups/<备份目录>' --data-dir 'C:/example/SessionPanel/restored'
+# Only when restore reports schema1 / migration_required:
+& '.venv/Scripts/python.exe' -m session_panel.profile migrate-tasks --data-dir 'C:/example/SessionPanel/restored'
 & '.venv/Scripts/python.exe' -m session_panel.gateway --data-dir 'C:/example/SessionPanel/restored' --port 14401
 ```
 
 恢复会校验 manifest、文件大小/哈希、schema 与 SQLite 完整性。停止自己的旧实例后另行启动恢复目录；不在线切换，不删除原 profile 或导入后的新记录。真实个人数据是否符合导入合同需实际校验，隔离 fixture 验证不能替代个人迁移结果。
+
+恢复旧备份会先保留其schema1结构，再由上述命令显式迁移。需要退回旧程序时，先停新版实例并运行 `python -m session_panel.profile preserve-tasks --data-dir <绝对profile目录>`，验证包含升级后全部新增/变更的schema2私密备份，再把升级前旧备份恢复到另一个空目录。原schema2目录和保全件必须保留；保全不是把新语义自动反写旧库，单独回退代码不代表数据已无损降级。
 
 新记录保存在所选 profile，源码旁旧 JSON/SQLite 与既有服务保留原位。任务负责人表示人工分配，不向 Agent 发送命令。资讯含来源与采样时间，不是推送流。
 

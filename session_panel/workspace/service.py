@@ -15,6 +15,7 @@ from session_panel.workspace.store import WorkspaceError, WorkspaceStore, path_k
 DEFAULT_DB = progress.REGISTRY.with_name("workspace-state.sqlite3")
 BEIJING = timezone(timedelta(hours=8))
 PROVIDERS = ("codex", "claude", "grok", "dsh", "opencode")
+TASK_PROVIDERS = (*PROVIDERS, "hermes", "pi")
 TASK_STATES = ("todo", "doing", "blocked", "review", "done")
 TASK_FIELDS = {"title", "project_id", "provider_id", "state", "session_key"}
 RECORD_FIELDS = {"id", "provider_id", "product", "day", "metric", "value", "currency", "window_label", "note"}
@@ -254,6 +255,102 @@ class WorkspaceService:
         return {"items": [{**row, "session_link_state": self.link_state(row, sessions, registry)} for row in rows],
                 "total": total, "offset": offset, "limit": limit}
 
+    def page_items(self, **params):
+        if self.profile is None:
+            raise ValueError("profile_required")
+        if (params.get("provider_id") is not None and params["provider_id"] not in TASK_PROVIDERS
+                or params.get("state") is not None and params["state"] not in TASK_STATES
+                or "project_id" in params and not project_id_valid(params["project_id"])):
+            from session_panel.profiles.profile import ProfileError
+            raise ProfileError("invalid_query")
+        page = self.store.list_items(**params)
+        return self._item_page(page, self.sessions(), self.registered_projects())
+
+    def _item_page(self, page, sessions, registry):
+        return {**page, "items": [{**row, "session_link_state": self.link_state(row, sessions, registry)}
+                                  for row in page["items"]]}
+
+    def save_item(self, body, *, update=False):
+        from session_panel.profiles.profile import ProfileError
+        from session_panel.workspace.task_schema import MAX_REVISION
+        def invalid(field=None):
+            raise ProfileError("invalid_item", field)
+        if self.profile is None:
+            raise ValueError("profile_required")
+        if not isinstance(body, dict):
+            invalid()
+        if update:
+            if set(body) != {"id", "expected_revision", "changes"}:
+                invalid()
+            try:
+                item_id = canonical_uuid(body["id"])
+            except (ValueError, TypeError):
+                invalid("id")
+            revision = body["expected_revision"]
+            if type(revision) is not int or not 1 <= revision <= MAX_REVISION:
+                invalid("expected_revision")
+            fields = body["changes"]
+            if not isinstance(fields, dict) or not fields or set(fields) - TASK_FIELDS:
+                invalid("changes")
+            old = self.store.get_item(item_id)
+            # A stale request is never validated against a newer row's grandfather limits.
+            if old["revision"] != revision:
+                raise WorkspaceError("item_changed")
+            fields = {key: value for key, value in fields.items() if value != old[key]}
+        else:
+            if "title" not in body or set(body) - TASK_FIELDS:
+                invalid()
+            fields = {"project_id": None, "provider_id": None, "state": "todo", "session_key": None, **body}
+            old, item_id, revision = None, None, None
+        if "title" in fields:
+            title = fields["title"]
+            maximum = max(2000, len(old["title"])) if old else 2000
+            if not isinstance(title, str) or not title.strip() or len(title) > maximum:
+                invalid("title")
+            try:
+                self.store._check_title(title)
+            except WorkspaceError as error:
+                if str(error) == "invalid_item":
+                    invalid("title")
+                raise
+            if not update:
+                fields["title"] = title.strip()
+        for name, allowed in (("provider_id", (*TASK_PROVIDERS, None)), ("state", TASK_STATES)):
+            if name in fields and fields[name] not in allowed:
+                invalid(name)
+        if "project_id" in fields and fields["project_id"] is not None and not project_id_valid(fields["project_id"]):
+            invalid("project_id")
+        merged = {**old, **fields} if old else fields
+        registry = self.registered_projects()
+        if "project_id" in fields and fields["project_id"] is not None:
+            project = next((row for row in registry if row["id"] == fields["project_id"]), None)
+            if project is None or project["archived"]:
+                invalid("project_id")
+        link_changed = old is None or any(name in fields for name in ("project_id", "provider_id", "session_key"))
+        key = merged["session_key"]
+        sessions = self.sessions() if key is not None else unavailable(0)
+        session_cwd = None
+        if key is not None and link_changed:
+            if merged["provider_id"] != "codex" or merged["project_id"] is None or not isinstance(key, str) or not key.startswith("codex:"):
+                invalid("session_key")
+            try:
+                canonical_uuid(key[6:])
+            except (ValueError, TypeError):
+                invalid("session_key")
+            project = next((row for row in registry if row["id"] == merged["project_id"]), None)
+            if project is None or project["archived"]:
+                invalid("project_id")
+            session = next((row for row in sessions["items"] if row["session_key"] == key), None)
+            if session is None or not sessions["available"]:
+                raise WorkspaceError("session_not_in_sample")
+            if observation_owner(session["cwd"], registry) != merged["project_id"]:
+                raise WorkspaceError("session_project_mismatch")
+            session_cwd = session["cwd"]
+        # Preserve no-op CAS: the store receives an unchanged allowed field, never an empty patch.
+        item = self.store.save_item(fields or {"title": old["title"]}, item_id=item_id,
+                                    expected_revision=revision, session_cwd=session_cwd)
+        return {"item": {**item, "session_link_state": self.link_state(item, sessions, registry)}}
+
     def page_records(self, **params):
         rows, total = self.store.list_records(**params)
         return {"items": rows, "total": total, "offset": params.get("offset", 0), "limit": params.get("limit", 50)}
@@ -266,11 +363,14 @@ class WorkspaceService:
             todos = self.store.list_todos()
             rows, total = self.store.list_tasks()
             tasks = self._task_page(rows, total, sessions, registry)
+            items = self._item_page(self.store.list_items(), sessions, registry)
             records = self.page_records()
             return {"status": "ok", "sampled_at": datetime.now(timezone.utc).isoformat(), "today": today(),
                     "projects": {"status": "available", "reason": None, "items": self.profile_projects(registry, sessions)},
                     "todos": {"status": "available", "reason": None, **todos},
-                    "tasks": {"status": "available", "reason": None, **tasks}, "records": records["items"],
+                    "tasks": {"status": "available", "reason": None, **tasks},
+                    "items": items["items"], "items_page": items, "task_providers": list(TASK_PROVIDERS),
+                    "records": records["items"],
                     "records_total": records["total"], "records_limit": records["limit"],
                     "providers": [{**item, "capabilities": {**item["capabilities"], "open_existing_ui": False,
                                                             "observe_sessions": item["id"] == "codex"}, "entrypoints": []}
@@ -307,7 +407,7 @@ class WorkspaceService:
         title, project_id, provider_id, state, key = (body[name] for name in
                                                      ("title", "project_id", "provider_id", "state", "session_key"))
         if (not isinstance(title, str) or not 1 <= len(title.strip()) <= 160
-                or not isinstance(project_id, str) or provider_id not in (*PROVIDERS, None)
+                or not isinstance(project_id, str) or provider_id not in (*TASK_PROVIDERS, None)
                 or state not in TASK_STATES):
             raise ValueError("invalid_request")
         if key is not None:

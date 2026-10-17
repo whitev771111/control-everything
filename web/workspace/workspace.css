@@ -346,6 +346,25 @@ textarea { display:block; width:100%; background:#0f1823; color:var(--text); bor
 #registration-settings summary { cursor:pointer; font-weight:700; }
 #registration-fields { min-width:0; }
 #import-result p { margin-top:10px; }
+.item-quick fieldset { display:flex; gap:14px; align-items:end; min-width:0; }
+.item-quick .field { flex:1; min-width:0; }
+.item-quick button { margin-bottom:14px; }
+.item-toolbar .field { flex:1 1 140px; min-width:0; }
+.item-toolbar select { max-width:100%; width:100%; }
+.item-row .item-title-copy { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden; white-space:pre-wrap; overflow-wrap:anywhere; }
+.item-row .task-meta { overflow-wrap:anywhere; }
+.item-editor { position:static; margin:24px 0 0; width:100%; max-width:720px; max-height:calc(100dvh - 32px); overflow:auto; padding:24px; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:10px; }
+.item-editor fieldset { min-width:0; }
+.item-editor h2 { margin-bottom:12px; }
+.item-editor p { overflow-wrap:anywhere; }
+.item-editor .field { min-width:0; }
+.item-editor select { max-width:100%; }
+#task-center-root { min-width:0; }
+@media(max-width:700px) {
+  .item-quick fieldset { flex-direction:column; align-items:stretch; gap:0; }
+  .item-editor { padding:16px; }
+  .item-toolbar .field { flex-basis:100%; }
+}
 @media(max-width:700px) {
   .directory-row { flex-wrap:wrap; gap:4px; }
   .directory-row .field { flex-basis:100%; }

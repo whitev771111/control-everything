@@ -34,6 +34,7 @@ const reasons = {
 const viewCopy = {
   overview: ['总览', '今天，从这里开始。', '把项目、任务和工具，放回一个清晰的工作空间。', 'YOUR DEVELOPMENT DESK'],
   tasks: ['项目任务', '让下一步清楚一点。', '按项目整理任务，记录负责人、会话关联和手工状态。', 'PROJECTS & TASKS'],
+  projects: ['项目与进度', '项目的三种事实，分别看清。', '人工判断、任务分布与文档来源各自保留。', 'PROJECTS & PROGRESS'],
   runs: ['运行', '让任务真正开始。', '显式提交给 Codex，查看过程、具体审批与实际结果。', 'OWNED CODEX RUNS'],
   agents: ['Agents', '工具各有所长。', '看清已经发现什么、可以观察什么，以及尚未接入的能力。', 'YOUR AGENT TOOLKIT'],
   usage: ['用量与额度', '每一份消耗，都有来源。', '订阅窗口、每日用量与人工观察，分开记录。', 'USAGE & LIMITS'],
@@ -113,16 +114,18 @@ function showView(view) {
     if (button.dataset.view === view) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
-  $('work-grid').hidden = !['overview', 'tasks'].includes(view);
+  $('work-grid').hidden = !['overview', 'tasks', 'projects'].includes(view);
   $('overview-aside').hidden = view !== 'overview';
   $('overview-stats').hidden = view !== 'overview';
-  $('work-grid').classList.toggle('tasks-only', view === 'tasks');
+  $('work-grid').classList.toggle('tasks-only', view === 'tasks' || view === 'projects');
   const projects = $('projects-section'), tasks = $('tasks-section');
+  projects.hidden = app.profileMode && view === 'tasks';
+  tasks.hidden = app.profileMode && view === 'projects';
   projects.parentElement.insertBefore(view === 'tasks' ? tasks : projects, view === 'tasks' ? projects : tasks);
   for (const id of ['agents', 'usage', 'news', 'runs']) $(`${id}-view`).hidden = view !== id;
   if (!app.profileMode) window.WorkspaceExecution?.onView(view);
   $('all-tasks').hidden = view !== 'overview';
-  if (app.snapshot) { renderProjects(); renderTasks(); }
+  if (app.snapshot) { renderProjects(); if (!app.profileMode) renderTasks(); }
   $('settings-view').hidden = view !== 'settings' || !app.profileMode;
   if (view !== 'settings') $('registration-settings').open = false;
   history.replaceState(null, '', `#${view}`);
@@ -165,7 +168,7 @@ function renderProjects() {
     row.append(el('span', 'project-mark', String(index + 1).padStart(2, '0')), copy, measure); root.append(row);
     if (app.profileMode) {
       const actions = el('div', 'project-actions');
-      actions.append(action('编辑项目 / 来源', () => openProject(project)), action('人工记录与历史', () => openManual(project)), action(project.archived ? '恢复项目' : '归档项目', () => archiveProject(project)));
+      actions.append(action('编辑项目 / 来源', () => openProject(project)), action('人工记录与历史', () => { showView('projects'); openManual(project); }), action('查看项目事项', () => { showView('tasks'); app.taskCenter?.filterProject(project.id); }), action(project.archived ? '恢复项目' : '归档项目', () => archiveProject(project)));
       row.append(actions);
       copy.append(el('p', '', taskSummary(project.task_counts)), el('p', '', observationSummary(project.observation)));
     }
@@ -261,8 +264,10 @@ async function loadBase() {
     fillOptions($('project-filter'), [['', '全部项目'], ...snapshot.projects.items.map(item => [item.id, item.name])], selectedFilter);
     if (!$('project-filter').value) $('project-filter').value = '';
     $('new-task').disabled = !app.csrf || snapshot.projects.status !== 'available' || !snapshot.projects.items.some(item => !item.archived) || snapshot.tasks.status !== 'available';
-    if (app.profileMode) await Promise.all([loadTasks(), loadTodos()]);
-    renderStats(); renderProjects(); renderTasks(); renderTodos(); renderProviders();
+    if (app.profileMode) app.taskCenter?.update(snapshot);
+    renderStats(); renderProjects();
+    if (!app.profileMode) { renderTasks(); renderTodos(); }
+    renderProviders();
     if (!$('record-form').hidden && !$('record-day').value) $('record-day').value = snapshot.today;
   } catch (error) { message('workspace-status', error.message, true); }
   finally { $('refresh-workspace').disabled = false; }
@@ -453,12 +458,12 @@ for (const button of document.querySelectorAll('[data-view]')) button.addEventLi
 for (const button of document.querySelectorAll('[data-go]')) button.addEventListener('click', () => showView(button.dataset.go));
 $('refresh-workspace').addEventListener('click', loadBase);
 $('all-tasks').addEventListener('click', () => showView('tasks'));
-$('project-filter').addEventListener('change', () => { if (app.profileMode) { app.pages.tasks = 0; loadTasks().catch(error => message('tasks-status', error.message, true)); } else if (app.snapshot) renderTasks(); });
-$('state-filter').addEventListener('change', () => { if (app.profileMode) { app.pages.tasks = 0; loadTasks().catch(error => message('tasks-status', error.message, true)); } else if (app.snapshot) renderTasks(); });
-$('new-task').addEventListener('click', () => openTask());
+$('project-filter').addEventListener('change', () => { if (!app.profileMode && app.snapshot) renderTasks(); });
+$('state-filter').addEventListener('change', () => { if (!app.profileMode && app.snapshot) renderTasks(); });
+$('new-task').addEventListener('click', () => { if (!app.profileMode) openTask(); });
 $('cancel-task').addEventListener('click', () => { $('task-form').hidden = true; app.taskId = null; $('new-task').focus(); });
-$('task-provider').addEventListener('change', () => sessionOptions($('task-session').value));
-$('task-form').addEventListener('submit', saveTask);
+$('task-provider').addEventListener('change', () => { if (!app.profileMode) sessionOptions($('task-session').value); });
+$('task-form').addEventListener('submit', event => { if (!app.profileMode) return saveTask(event); event.preventDefault(); });
 $('refresh-quota').addEventListener('click', () => loadUsage(true));
 $('new-record').addEventListener('click', () => openRecord());
 $('cancel-record').addEventListener('click', () => { $('record-form').hidden = true; app.recordId = null; $('new-record').focus(); });
@@ -472,7 +477,7 @@ showView(location.hash.slice(1) || 'overview');
 async function bootstrap() {
   try { const value = await api('/api/bootstrap'); app.csrf = typeof value.csrf_token === 'string' ? value.csrf_token : ''; app.capabilities = value.capabilities || {}; app.profileMode = app.capabilities.profile === true; }
   catch { message('workspace-status', '保存凭据不可用，仍可尝试读取信息。', true); }
-  if (app.profileMode) { setupProfile(); try { await loadProfile(); } catch (error) { message('workspace-status', error.message, true); } }
+  if (app.profileMode) { setupProfile(); setupTaskCenter(); try { await loadProfile(); } catch (error) { message('workspace-status', error.message, true); } }
   else { window.WorkspaceExecution?.init({ api, post, showView, getSnapshot: () => app.snapshot });
     if (!window.WorkspaceExecution) message('execution-status', '执行页面资源尚未就绪；请在新版服务启动后刷新。现有任务仍可使用。', true); }
   if (app.profileMode) window.WorkspaceObservation?.start({ fetchJson: api, postJson: post });
@@ -525,7 +530,7 @@ async function loadTodos() {
 function setupProfile() {
   $('new-project').hidden = false; document.querySelector('[data-view="settings"]').hidden = false;
   document.querySelector('[data-view="runs"]').hidden = true;
-  document.querySelector('.sidebar-links').replaceChildren(el('p', 'nav-label', '项目进度'), link('进度与待办 ↗', '/progress'));
+  document.querySelector('.sidebar-links').replaceChildren(el('p', 'nav-label', '项目进度'));
   $('provider-sessions-link').hidden = !(app.capabilities.remote_sessions || app.capabilities.workbench);
   document.querySelector('#sessions-status').previousElementSibling.querySelector('a').hidden = !app.capabilities.remote_sessions;
   for (const [after, id] of [['tasks-list', 'tasks-pager'], ['records-list', 'records-pager'], ['todos-list', 'todos-pager']]) { const root = el('div', 'pager'); root.id = id; $(after).after(root); }
@@ -547,6 +552,20 @@ function setupProfile() {
     event.preventDefault(); showView('settings'); $('registration-settings').open = true;
   });
   if (app.view === 'runs') showView('overview'); else showView(app.view);
+}
+function setupTaskCenter() {
+  document.querySelector('.sidebar-links').append(action('人工记录与历史', () => showView('projects')));
+  document.querySelector('[data-view="projects"]').hidden = false;
+  const navigation = document.querySelector('[data-view="tasks"]'); navigation.textContent = '☷ 任务中心';
+  viewCopy.tasks = ['任务中心', '让下一步清楚一点。', '全局和项目事项共用一份记录，快速记录后再补充细节。', 'TASK CENTER'];
+  $('legacy-tasks').hidden = true;
+  $('todos-list').closest('section').hidden = true;
+  $('projects-section').querySelector('a[href="/progress"]').hidden = true;
+  $('profile-empty').querySelector('p').textContent = '可以先记录全局事项；需要项目归属时再添加项目。已有记录可导入当前空 profile。';
+  if (!window.WorkspaceTaskCenter) { message('workspace-status', '任务中心资源未就绪，请刷新页面。', true); return; }
+  app.taskCenter = window.WorkspaceTaskCenter.create({ root: $('task-center-root'), fetchJson: api, postJson: post,
+    canWrite: () => Boolean(app.csrf), onSaved: loadBase });
+  showView(app.view);
 }
 async function loadProfile(preserveDraft = false) {
   app.profile = await api('/api/profile'); const value = app.profile;

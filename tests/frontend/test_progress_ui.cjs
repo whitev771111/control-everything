@@ -49,6 +49,14 @@ async function historyOrder(firstId, secondId, firstOffset, secondOffset, firstR
   assert.equal(new URL(f.requests[1].url, 'http://fixture').searchParams.get('offset'), String(secondOffset));
 }
 (async () => {
+  await test('profile progress redirects to the sole workspace manual editor; legacy resources remain mapped', () => {
+    const gateway = fs.readFileSync(path.join(root, 'session_panel/http/gateway.py'), 'utf8');
+    assert.match(gateway, /path\.path == "\/progress"[^\n]*self\.profile\(\) is not None/);
+    assert.ok(gateway.includes('self.send_header("Location", "/workspace#projects")'));
+    for (const resource of ['/progress.js', '/progress.css']) assert.ok(gateway.includes(`"${resource}"`));
+    const html = fs.readFileSync(path.join(root, 'web/workspace/workspace.html'), 'utf8');
+    assert.equal((html.match(/id="manual-form"/g) || []).length, 1);
+  });
   for (const [surface, label] of [['#progress-rail', 'rail'], ['#progress-board', 'board']]) await test(`${label}: archived -> active -> archived -> active`, () => {
     const f = fixture(); assert.equal(todoDisabled(f), true);
     for (const [index, expected] of [[1, false], [0, true], [1, false]]) { clickProject(f, surface, index); assert.equal(todoDisabled(f), expected); assert.equal(f.node('#todo-zone').children[0].children[1].disabled, expected); }

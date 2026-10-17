@@ -32,7 +32,8 @@ SESSION_ROUTE = re.compile(r"/api/sessions/([^/]+)(?:/(messages|focus))?\Z")
 EXECUTION_RUN_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)\Z")
 EXECUTION_ACTION_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)/(cancel|approvals/([^/]+))\Z")
 PROFILE_POST = {"/api/profile/settings", "/api/profile/import", "/api/profile/observations", "/api/workspace/projects/save",
-                "/api/workspace/projects/restore", "/api/workspace/progress"}
+                "/api/workspace/projects/restore", "/api/workspace/progress",
+                "/api/workspace/items", "/api/workspace/items/update"}
 PROFILE_CAPABILITIES = {"profile": True, "project_management": True, "execution": False,
                         "personal_launchers": False, "remote_sessions": False, "terminal": False, "workbench": False,
                         "quota": True, "news": True}
@@ -200,6 +201,13 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         if path.path == "/health" and not path.query:
             return self.reply(200, {"app": APP, "protocol_version": 1})
+        if path.path == "/progress" and not path.query and self.profile() is not None:
+            self.send_response(302)
+            self.send_header("Location", "/workspace#projects")
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
         static = {
             "/": ("sessions/index.html", "text/html; charset=utf-8"),
             "/app.js": ("sessions/app.js", "text/javascript; charset=utf-8"),
@@ -209,6 +217,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/progress.css": ("progress/progress.css", "text/css; charset=utf-8"),
             "/workspace": ("workspace/workspace.html", "text/html; charset=utf-8"),
             "/workspace.js": ("workspace/workspace.js", "text/javascript; charset=utf-8"),
+            "/task-center.js": ("workspace/task-center.js", "text/javascript; charset=utf-8"),
             "/execution.js": ("workspace/execution.js", "text/javascript; charset=utf-8"),
             "/observation.js": ("workspace/observation.js", "text/javascript; charset=utf-8"),
             "/workspace.css": ("workspace/workspace.css", "text/css; charset=utf-8"),
@@ -529,8 +538,13 @@ class PanelHandler(BaseHTTPRequestHandler):
             extra = {key: value for key, value in (("field", error.field), ("message", error.message)) if value is not None}
         else:
             reason = str(error)
-            status = 409 if reason == "store_busy" else 500
-            reason = reason if reason in {"store_busy", "storage_error"} else "storage_error"
+            status = (404 if reason == "item_not_found" else
+                      409 if reason in {"store_busy", "item_changed", "list_changed", "order_exhausted", "revision_exhausted",
+                                        "session_not_in_sample", "session_project_mismatch"} else
+                      422 if reason in {"invalid_item", "text_budget"} else 500)
+            reason = reason if reason in {"store_busy", "storage_error", "schema_error", "item_not_found", "item_changed",
+                "list_changed", "order_exhausted", "revision_exhausted", "session_not_in_sample", "session_project_mismatch",
+                "invalid_item", "text_budget"} else "storage_error"
             extra = {}
         self._discard_rejected_post_body()
         self.reply(status, {"status": "unknown", "reason": reason, "source": self.server.__dict__.get("source"),
@@ -570,6 +584,20 @@ class PanelHandler(BaseHTTPRequestHandler):
         elif route == "/api/codex/threads":
             value = profile.codex_threads(codex_offset(path.query))
             self.reply(200 if value["available"] else 503, value)
+        elif route == "/api/workspace/items":
+            try:
+                params = page_params(path.query, extra=("project_id", "scope", "provider_id", "state", "list_revision"))
+                if "list_revision" in params:
+                    if not re.fullmatch(r"[0-9]{1,16}", params["list_revision"]):
+                        raise ValueError("invalid_query")
+                    params["list_revision"] = int(params["list_revision"])
+                    if not 1 <= params["list_revision"] <= 9007199254740991:
+                        raise ValueError("invalid_query")
+                if params.get("scope", "all") not in ("all", "active", "archived", "orphan", "global"):
+                    raise ValueError("invalid_query")
+                self.reply(200, workspace.page_items(**params))
+            except ValueError:
+                raise ProfileError("invalid_query") from None
         elif route == "/api/workspace/tasks":
             params = page_params(path.query, extra=("project_id", "scope"))
             if params.get("scope", "all") not in ("all", "active", "archived", "orphan"):
@@ -615,8 +643,11 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.reject(400, "invalid_request")
             return True
         try:
-            body = self.read_json_body(max_bytes=65536 if route == "/api/profile/observations" else 16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
-            if route == "/api/profile/settings":
+            body = self.read_json_body(max_bytes=262144 if route in ("/api/workspace/items", "/api/workspace/items/update") else
+                65536 if route == "/api/profile/observations" else 16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
+            if route in ("/api/workspace/items", "/api/workspace/items/update"):
+                value = self.server.workspace.save_item(body, update=route.endswith("/update"))
+            elif route == "/api/profile/settings":
                 value = profile.settings(body)
                 value["restart_required"] = self.server.startup_integrations is not None and profile.integrations() != self.server.startup_integrations
             elif route == "/api/profile/observations":

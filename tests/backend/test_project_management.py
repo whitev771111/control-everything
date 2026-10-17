@@ -75,8 +75,7 @@ class ProjectManagementTests(unittest.TestCase):
         self.assertEqual(changed["state"], "done")
         with self.assertRaises(ValueError):
             self.workspace.save_task(self.task(item["id"]))
-        with self.store.connection() as connection:
-            connection.execute("UPDATE tasks SET project_id='orphan',provider_id='codex',session_key=? WHERE id=?", ("codex:" + str(uuid4()), task["id"]))
+        self.store.save_task(self.task('orphan', provider_id='codex', session_key='codex:' + str(uuid4())), task['id'])
         with patch.object(self.workspace, "sessions", side_effect=AssertionError("NULL must skip sample")):
             edited = self.workspace.save_task({**self.task("orphan"), "id": task["id"]}, update=True)["task"]
         self.assertEqual(edited["project_id"], "orphan")
@@ -108,7 +107,10 @@ class ProjectManagementTests(unittest.TestCase):
         item = self.create()
         stamp = "2026-01-01T00:00:00Z"
         with self.store.connection() as connection:
-            connection.executemany("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)", [(str(uuid4()), "task", item["id"], None, "done" if index == 500 else "todo", None, "manual", stamp, stamp) for index in range(501)])
+            connection.execute('BEGIN IMMEDIATE')
+            for index in range(501):
+                self.store._create_item(connection, self.task(item['id'], state='done' if index == 500 else 'todo'),
+                                        created_at=stamp, updated_at=stamp)
         self.assertEqual(self.store.task_counts()[item["id"]]["total"], 501)
         self.assertEqual(self.store.task_counts()[item["id"]]["done"], 1)
         page = self.workspace.page_tasks(offset=500, limit=100)

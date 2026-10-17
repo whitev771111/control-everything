@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/workspace.css">
   <script src="/execution.js" defer></script>
   <script src="/observation.js" defer></script>
+  <script src="/task-center.js" defer></script>
   <script src="/workspace.js" defer></script>
 </head>
 <body>
@@ -18,6 +19,7 @@
       <nav class="navigation" aria-label="主导航">
         <button type="button" data-view="overview" aria-current="page"><span aria-hidden="true">◫</span>总览</button>
         <button type="button" data-view="tasks"><span aria-hidden="true">☷</span>项目任务</button>
+        <button type="button" data-view="projects" hidden><span aria-hidden="true">◫</span>项目与进度</button>
         <button type="button" data-view="runs"><span aria-hidden="true">▷</span>运行</button>
         <button type="button" data-view="agents"><span aria-hidden="true">⌘</span>Agents</button>
         <button type="button" data-view="usage"><span aria-hidden="true">◷</span>用量与额度</button>
@@ -41,9 +43,9 @@
             <section id="manual-panel" class="editor" hidden><h3 id="manual-title"></h3><div id="project-facts" class="project-facts"></div><form id="manual-form"><fieldset id="manual-fields"><div class="form-grid"><label class="field">人工状态<select id="manual-state" required><option value="">请选择状态</option><option>未开始</option><option>在做</option><option>等我</option><option>完成</option></select></label><label class="field">人工百分比（可留空）<input id="manual-percent" type="number" min="0" max="100" step="any" placeholder="未填写"></label></div><label class="field full">人工说明<textarea id="manual-note" maxlength="1000" rows="3"></textarea></label><div class="form-actions"><button type="submit" class="button primary">保存人工记录</button><button id="clear-percent" type="button" class="button secondary">清空百分比</button></div></fieldset><p id="manual-feedback" class="feedback" role="status"></p></form><h3>人工历史</h3><div id="manual-history"></div><div id="history-pager" class="pager"></div></section>
             <details id="compatibility" hidden><summary>兼容记录 · 未登记项目</summary><p class="section-note">保留原项目 ID。可以编辑原人工记录，或填写真实目录以恢复登记。</p><div id="compatibility-list"></div><div id="compatibility-pager" class="pager"></div></details>
           </section>
-          <section id="tasks-section" class="section" aria-labelledby="tasks-title"><div class="section-heading"><div><p class="eyebrow">TASKS</p><h2 id="tasks-title">接下来做什么</h2></div><button id="new-task" class="button primary" type="button" disabled>＋ 新建任务</button></div><div class="task-toolbar"><label for="project-filter">项目</label><select id="project-filter"><option value="">全部项目</option></select><label for="state-filter">状态</label><select id="state-filter"><option value="">全部状态</option><option value="todo">待办</option><option value="doing">进行中</option><option value="blocked">阻塞</option><option value="review">待验收</option><option value="done">完成</option></select></div><p id="tasks-status" class="section-note"></p>
+          <section id="tasks-section" class="section" aria-label="任务"><div id="task-center-root" hidden></div><div id="legacy-tasks"><div class="section-heading"><div><p class="eyebrow">TASKS</p><h2 id="tasks-title">接下来做什么</h2></div><button id="new-task" class="button primary" type="button" disabled>＋ 新建任务</button></div><div class="task-toolbar"><label for="project-filter">项目</label><select id="project-filter"><option value="">全部项目</option></select><label for="state-filter">状态</label><select id="state-filter"><option value="">全部状态</option><option value="todo">待办</option><option value="doing">进行中</option><option value="blocked">阻塞</option><option value="review">待验收</option><option value="done">完成</option></select></div><p id="tasks-status" class="section-note"></p>
             <form id="task-form" class="editor" hidden><fieldset id="task-fields"><legend id="task-form-title">新建任务</legend><label class="field full" for="task-title">任务名称<input id="task-title" required maxlength="160" placeholder="写下一个具体的下一步" autocomplete="off"></label><div class="form-grid"><label class="field" for="task-project">所属项目<select id="task-project" required></select></label><label class="field" for="task-provider">计划负责工具<select id="task-provider"><option value="">暂不分配</option></select></label><label class="field" for="task-state">手工状态<select id="task-state"><option value="todo">待办</option><option value="doing">进行中</option><option value="blocked">阻塞</option><option value="review">待验收</option><option value="done">完成</option></select></label><label class="field" for="task-session">关联 Codex 会话<select id="task-session"><option value="">不关联会话</option></select></label></div><p class="form-hint">分配工具仅记录负责人，不发送任务。会话关联不创建或恢复会话。</p><div class="form-actions"><button class="button primary" type="submit">保存任务</button><button id="cancel-task" class="button secondary" type="button">取消</button></div></fieldset><p id="task-feedback" class="feedback" role="status" aria-live="polite"></p></form>
-            <div id="tasks-list" class="task-list"></div><button id="all-tasks" class="text-button" type="button">查看全部项目任务 →</button>
+            <div id="tasks-list" class="task-list"></div><button id="all-tasks" class="text-button" type="button">查看全部项目任务 →</button></div>
           </section>
         </div>
         <aside id="overview-aside" class="overview-aside" aria-label="今日信息">

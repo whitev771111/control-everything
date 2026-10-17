@@ -14,6 +14,7 @@ from uuid import uuid4
 from session_panel.profiles.profile import (CONFIG_MAX_BYTES, ProfileError, absolute_path,
                                           config_file_lock, strict_json, validate_config)
 from session_panel.profiles import observation_settings
+from session_panel.workspace import task_schema
 from session_panel.sessions.source import canonical_uuid
 from session_panel.workspace.service import WorkspaceService, TASK_STATES, PROVIDERS, finite_number
 from session_panel.workspace.store import (BASE_SCHEMA, MANAGEMENT_TABLES, WorkspaceError, WorkspaceStore,
@@ -263,10 +264,13 @@ def create_backup(profile):
         (temporary / "profile.json").write_text(json.dumps(profile.config(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         connection = sqlite3.connect(temporary / "management.sqlite3")
         try:
-            counts = {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in MANAGEMENT_TABLES}
+            version = connection.execute('PRAGMA user_version').fetchone()[0]
+            task_schema.validate_schema(connection, version)
+            tables = task_schema.SCHEMA1_TABLES if version == 1 else MANAGEMENT_TABLES
+            counts = {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}
         finally:
             connection.close()
-        manifest = {"version": 1, "schema_version": 1, "created_at": now_utc(), "origin_data_dir": str(profile.data_dir),
+        manifest = {"version": version, "schema_version": version, "created_at": now_utc(), "origin_data_dir": str(profile.data_dir),
                     "files": {name: {"size": (temporary / name).stat().st_size, "sha256": digest(temporary / name)} for name in BACKUP_FILES}, "counts": counts}
         (temporary / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         validate_backup(temporary)
@@ -301,12 +305,19 @@ def insert_batch(connection, batch, receipt):
         connection.execute("INSERT INTO project_manual VALUES(?,?,?,?,?)", (*values, None))
         connection.execute("INSERT INTO project_manual_history VALUES(?,?,?,?,?,?,?)", (str(uuid4()), *values, None, "import"))
     for position, todo in enumerate(batch["todos"]):
-        connection.execute("INSERT INTO todos VALUES(?,?,?,?,?,?,?)", (todo["id"], todo["project_id"], todo["text"], int(todo["done"]), None, None, position))
-    for table, columns in (("tasks", TASK_COLUMNS), ("manual_records", RECORD_COLUMNS)):
+        row = {**todo, 'done': int(todo['done']), 'position': position, 'created_at': None, 'updated_at': None}
+        task_schema.insert_item(connection, task_schema.mapped_item('todo', row, position))
+    # Preserve the old SQLite task sequence independently from todo position.
+    ordered = sorted(batch['tasks'], key=lambda row: row['id'])
+    ordered.sort(key=lambda row: row['updated_at'], reverse=True)
+    for position, row in enumerate(ordered, len(batch['todos'])):
+        task_schema.insert_item(connection, task_schema.mapped_item('task', row, position))
+    for table, columns in (("manual_records", RECORD_COLUMNS),):
         names = columns.split(",")
         connection.executemany(f"INSERT INTO {table}({columns}) VALUES({','.join('?' for _ in names)})", [tuple(row[key] for key in names) for row in batch[table]])
     connection.execute("INSERT INTO profile_imports VALUES(?,?,?,?,?,?)", (receipt["id"], receipt["imported_at"], receipt["source_path"],
                        json.dumps(receipt["source_fingerprints"], sort_keys=True), json.dumps(receipt["counts"], sort_keys=True), receipt["backup_path"]))
+    task_schema.bump_list_revision(connection)
 
 
 def import_legacy(profile, source_dir):
@@ -317,15 +328,29 @@ def import_legacy(profile, source_dir):
     writer = None
     with profile.config_lock, config_file_lock(profile.data_dir), profile.store.write_lock:
         try:
+            # Backup outside the write transaction; recheck the exact target below.
+            with profile.store.connection() as current:
+                if current.execute('SELECT COUNT(*) FROM profile_imports').fetchone()[0]:
+                    raise ProfileError('already_imported', status=409)
+                if not profile.store.is_empty(current):
+                    raise ProfileError('profile_not_empty', status=409)
+            backup = create_backup(profile)
+            snapshot = sqlite3.connect((backup / 'management.sqlite3').resolve().as_uri() + '?mode=ro', uri=True)
+            try:
+                expected_facts = task_schema.table_facts(snapshot, 2)
+            finally:
+                snapshot.close()
             writer = sqlite3.connect(profile.store.path, isolation_level=None, timeout=5)
             writer.execute("PRAGMA busy_timeout=5000")
             writer.execute("PRAGMA foreign_keys=ON")
             writer.execute("BEGIN IMMEDIATE")
+            profile.store.checked_management_connection(writer)
+            if task_schema.table_facts(writer, 2) != expected_facts:
+                raise ProfileError('import_target_changed', status=409)
             if writer.execute("SELECT COUNT(*) FROM profile_imports").fetchone()[0]:
                 raise ProfileError("already_imported", status=409)
             if not profile.store.is_empty(writer):
                 raise ProfileError("profile_not_empty", status=409)
-            backup = create_backup(profile)
             # The SQLite batch is a committed read snapshot; JSON inputs must
             # still match the validated bytes before this transaction writes.
             root = Path(source_dir).resolve()
@@ -371,10 +396,11 @@ def validate_backup(directory):
             invalid("manifest", "budget_exceeded")
         manifest = strict_json(manifest_path.read_text(encoding="utf-8"))
         if (not isinstance(manifest, dict) or set(manifest) != {"version", "schema_version", "created_at", "origin_data_dir", "files", "counts"}
-                or type(manifest["version"]) is not int or manifest["version"] != 1
-                or type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1
+                or type(manifest["version"]) is not int or manifest["version"] not in (1, 2)
+                or type(manifest["schema_version"]) is not int or manifest["schema_version"] != manifest['version']
                 or not isinstance(manifest["files"], dict) or set(manifest["files"]) != BACKUP_FILES
-                or not isinstance(manifest["counts"], dict) or set(manifest["counts"]) != set(MANAGEMENT_TABLES)
+                or not isinstance(manifest["counts"], dict) or set(manifest["counts"]) != set(
+                    task_schema.SCHEMA1_TABLES if manifest['version'] == 1 else MANAGEMENT_TABLES)
                 or not absolute_path(manifest["origin_data_dir"])):
             invalid("manifest")
         timestamp(manifest["created_at"], "manifest.created_at")
@@ -392,10 +418,15 @@ def validate_backup(directory):
         connection = sqlite3.connect((root / "management.sqlite3").as_uri() + "?mode=ro", uri=True)
         try:
             connection.execute("PRAGMA query_only=ON")
-            if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)] or connection.execute("PRAGMA user_version").fetchone()[0] != 1:
+            if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)] or connection.execute("PRAGMA user_version").fetchone()[0] != manifest['schema_version']:
                 invalid("management.sqlite3")
-            WorkspaceStore(root / "management.sqlite3", profile=True).validate_schema(connection)
-            for table in MANAGEMENT_TABLES:
+            task_schema.validate_schema(connection, manifest['schema_version'])
+            if connection.execute('PRAGMA foreign_key_check').fetchone():
+                invalid('management.sqlite3')
+            if manifest['schema_version'] == 2:
+                for title, in connection.execute('SELECT title FROM task_items'):
+                    task_schema.check_text(title)
+            for table in manifest['counts']:
                 count = manifest["counts"][table]
                 if type(count) is not int or count < 0 or connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] != count:
                     invalid("manifest.counts." + table)
@@ -424,7 +455,8 @@ def restore_backup(backup_dir, data_dir):
             if digest(temporary / copied) != manifest["files"][original]["sha256"]:
                 invalid("backup", "source_changed")
         # Recheck source before publishing; restoration never overwrites a profile.
-        validate_backup(backup)
+        if validate_backup(backup) != manifest:
+            invalid('backup', 'source_changed')
         config_path = temporary / "profile.json"
         config = validate_config(strict_json(config_path.read_text(encoding="utf-8")))
         if config["version"] == 3:
@@ -434,18 +466,19 @@ def restore_backup(backup_dir, data_dir):
             Profile(temporary)._write_config(config)
             if validate_config(strict_json(config_path.read_text(encoding="utf-8"))) != config:
                 invalid("backup", "restore_changed")
-            if digest(temporary / "workspace-state.sqlite3") != manifest["files"]["management.sqlite3"]["sha256"]:
-                invalid("backup", "source_changed")
-            connection = sqlite3.connect((temporary / "workspace-state.sqlite3").as_uri() + "?mode=ro", uri=True)
-            try:
-                WorkspaceStore(temporary / "workspace-state.sqlite3", profile=True).validate_schema(connection)
-                if (connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
-                        or connection.execute("PRAGMA user_version").fetchone()[0] != 1
-                        or any(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] != count
-                               for table, count in manifest["counts"].items())):
-                    invalid("backup", "invalid_backup")
-            finally:
-                connection.close()
+        if digest(temporary / "workspace-state.sqlite3") != manifest["files"]["management.sqlite3"]["sha256"]:
+            invalid("backup", "source_changed")
+        connection = sqlite3.connect((temporary / "workspace-state.sqlite3").as_uri() + "?mode=ro", uri=True)
+        try:
+            task_schema.validate_schema(connection, manifest['schema_version'])
+            if (connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+                    or connection.execute('PRAGMA foreign_key_check').fetchone() is not None
+                    or connection.execute("PRAGMA user_version").fetchone()[0] != manifest['schema_version']
+                    or any(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] != count
+                           for table, count in manifest["counts"].items())):
+                invalid("backup", "invalid_backup")
+        finally:
+            connection.close()
         if target.exists():
             target.rmdir()
         temporary.rename(target)

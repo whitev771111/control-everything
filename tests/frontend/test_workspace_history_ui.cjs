@@ -44,6 +44,24 @@ async function race(firstId, secondId, firstOffset, secondOffset, olderFirst = f
   assert.equal(new URL(f.requests[0].url, 'http://fixture').searchParams.get('offset'), String(firstOffset));
 }
 (async () => {
+  await test('profile snapshot feeds the shared task center once and never dispatches old task/todo reads', async () => {
+    const load = source.match(/async function loadBase\([^]*?\n\}/)[0], nodes = new Map(), calls = [];
+    const node = id => { if (!nodes.has(id)) nodes.set(id, { value: '', hidden: true, textContent: '' }); return nodes.get(id); };
+    const snapshot = { status: 'ok', today: '2026-10-17', sampled_at: null, projects: { status: 'available', items: [] }, tasks: { status: 'available', items: [], total: 0 }, sessions: { available: false, items: [] }, items_page: { items: [], total: 0, offset: 0, limit: 50, list_revision: 1 } };
+    const context = vm.createContext({ $: node, api: async url => { calls.push(url); return snapshot; },
+      app: { profileMode: true, csrf: 'fixture', taskCenter: { update: value => { assert.equal(value, snapshot); calls.push('task-center'); } } },
+      window: {}, dateTime: () => '', message() {}, fillOptions() {}, renderStats() {}, renderProjects() {}, renderProviders() {},
+      renderTasks() { throw new Error('legacy tasks dispatched'); }, renderTodos() { throw new Error('legacy todos dispatched'); } });
+    vm.runInContext(load, context); await vm.runInContext('loadBase()', context);
+    assert.deepEqual(calls, ['/api/workspace', 'task-center']);
+    assert.ok(source.includes("if (!app.profileMode) return saveTask(event)"));
+  });
+  await test('project task distribution uses full supplied counts independently from manual percent', () => {
+    const summary = source.match(/function taskSummary\([^]*?\n\}/)[0];
+    const context = vm.createContext({ stateNames: { todo: '待办', doing: '进行中', blocked: '阻塞', review: '待验收', done: '完成' } });
+    vm.runInContext(summary, context);
+    assert.match(vm.runInContext('taskSummary({total:532,todo:500,doing:10,blocked:5,review:7,done:10})', context), /532 条.*待办 500.*完成 10/);
+  });
   await test('same project page20 -> reopen page0, late old response ignored', async () => { const f = fixture(); f.run('app.pages.history=20; var older=loadHistory();'); f.open('a'); f.requests[1].resolve(response(0, 'CURRENT')); await tick(); f.requests[0].resolve(response(20, 'STALE')); await f.run('older'); assert.match(f.node('manual-history').textContent, /CURRENT/); assert.ok(!f.node('manual-history').textContent.includes('STALE')); assert.match(f.node('history-pager').textContent, /1–20 \/ 45/); });
   await test('same project page0 slow -> page20 fast', () => race('a', 'a', 0, 20));
   await test('same project page20 slow -> page0 fast', () => race('a', 'a', 20, 0));

@@ -210,7 +210,7 @@ def snapshot(value, key, generation, revision, config=None):
         token(item["instance_id"])
         require(item["instance_id"] not in seen)
         require(item["classification"] in ("provider", "custom_exe"))
-        require((item["classification"] == "provider" and item["provider_id"] in {"codex", "claude", "hermes", "pi"}
+        require((item["classification"] == "provider" and item["provider_id"] in {"codex", "claude", "opencode", "hermes", "pi"}
                  and item["kind"] in ("cli", "desktop", "host")) or
                 (item["classification"] == "custom_exe" and item["provider_id"] is None and item["kind"] == "custom_exe"))
         require(type(item["registration_ids"]) is list and len(item["registration_ids"]) <= 32)
@@ -265,7 +265,8 @@ def candidates(value):
     require(value["coverage"]["status"] in ("complete", "limited"))
     integer(value["coverage"]["omitted"])
     require(type(value["candidates"]) is list and len(value["candidates"]) <= 64)
-    allowed = {"codex": {"npm_command", "codex_desktop"}, "claude": {"npm_command"},
+    allowed = {"codex": {"npm_command", "codex_desktop"}, "claude": {"npm_command", "native_executable"},
+               "opencode": {"npm_command", "native_executable"},
                "pi": {"npm_command"}, "hermes": {"hermes_launcher"}}
     for item in value["candidates"]:
         exact(item, {"provider_id", "locator_kind", "path", "version"})
@@ -273,5 +274,7 @@ def candidates(value):
                 and item["locator_kind"] in allowed.get(item["provider_id"], set()))
         require(type(item["path"]) is str and 0 < len(item["path"]) <= 2048
                 and re.match(r"^[A-Za-z]:[\\/]", item["path"]) and not any(ord(char) < 32 for char in item["path"]))
+        if item["locator_kind"] == "native_executable":
+            require(item["path"].lower().endswith(".exe"))
         require(item["version"] is None or type(item["version"]) is str and re.fullmatch(r"[A-Za-z0-9.+_-]{1,80}", item["version"]))
     return value

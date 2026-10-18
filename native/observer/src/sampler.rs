@@ -230,6 +230,7 @@ fn discover(
             "pythonw.exe",
             "codex.exe",
             "claude.exe",
+            "opencode.exe",
             "hermes.exe",
             "hermes-agent.exe",
             "chatgpt.exe",
@@ -246,7 +247,8 @@ fn discover(
                             .then(|| (String::new(), "custom_exe"))
                     })
                     && (provider.is_empty()
-                        || ["codex", "claude", "hermes", "pi"].contains(&provider.as_str()))
+                        || ["codex", "claude", "opencode", "hermes", "pi"]
+                            .contains(&provider.as_str()))
                 {
                     if result.len() == 256 {
                         omitted += 1;

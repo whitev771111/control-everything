@@ -69,7 +69,10 @@ impl Observations {
                 ("custom_exe", None, "executable") => {
                     row.path.to_ascii_lowercase().ends_with(".exe")
                 }
-                ("builtin", Some("codex" | "claude" | "pi"), "npm_command")
+                ("builtin", Some("claude" | "opencode"), "native_executable") => {
+                    row.path.to_ascii_lowercase().ends_with(".exe")
+                }
+                ("builtin", Some("codex" | "claude" | "opencode" | "pi"), "npm_command")
                 | ("builtin", Some("hermes"), "hermes_launcher")
                 | ("builtin", Some("codex"), "codex_desktop") => true,
                 _ => false,
@@ -148,5 +151,39 @@ mod tests {
         }
         assert!(local_locator("C:/example/tool.exe"));
         assert!(local_locator(r"D:\example\tool.exe"));
+    }
+    #[test]
+    fn native_matrix_extensions_and_existing_budgets_remain_strict() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../protocol.json")).unwrap();
+        let mut value: Observations =
+            serde_json::from_value(schema["registration_vectors"][2]["observations"].clone())
+                .unwrap();
+        for provider in ["claude", "opencode"] {
+            value.registrations[0].provider_id = Some(provider.into());
+            value.validate().unwrap();
+        }
+        for provider in ["codex", "pi", "hermes", "unknown"] {
+            value.registrations[0].provider_id = Some(provider.into());
+            assert!(value.validate().is_err());
+        }
+        value.registrations[0].provider_id = Some("opencode".into());
+        value.registrations[0].path = "C:/example/tool.cmd".into();
+        assert!(value.validate().is_err());
+        value.registrations[0].path = "C:/example/tool.exe".into();
+        let original = value.registrations[0].clone();
+        value.registrations = (0..33)
+            .map(|n| {
+                let mut row = original.clone();
+                row.id = format!("{n:032x}");
+                row
+            })
+            .collect();
+        assert!(value.validate().is_err());
+        value.registrations.truncate(25);
+        for row in &mut value.registrations {
+            row.path = format!("C:/example/{}{}.exe", row.id, "x".repeat(1900));
+        }
+        assert!(value.validate().is_err());
     }
 }

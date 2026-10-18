@@ -49,10 +49,13 @@ def validate(value):
                 or row["binding_state"] not in ("confirmed", "rebind_required")):
             invalid()
         if row["category"] == "builtin":
-            allowed = {"codex": {"npm_command", "codex_desktop"}, "claude": {"npm_command"},
+            allowed = {"codex": {"npm_command", "codex_desktop"}, "claude": {"npm_command", "native_executable"},
+                       "opencode": {"npm_command", "native_executable"},
                        "pi": {"npm_command"}, "hermes": {"hermes_launcher"}}
             if type(row["provider_id"]) is not str or row["locator_kind"] not in allowed.get(row["provider_id"], set()):
                 invalid("observations.locator_kind")
+            if row["locator_kind"] == "native_executable" and ntpath.splitext(row["path"])[1].lower() != ".exe":
+                invalid("observations.path")
         elif row["category"] == "custom_exe":
             if row["provider_id"] is not None or row["locator_kind"] != "executable" or ntpath.splitext(row["path"])[1].lower() != ".exe":
                 invalid("observations.path")

@@ -150,8 +150,8 @@
       "config_hash": "sha256 hex",
       "candidates": [
         {
-          "provider_id": "codex or claude or hermes or pi",
-          "locator_kind": "npm_command or hermes_launcher or codex_desktop",
+          "provider_id": "codex or claude or opencode or hermes or pi",
+          "locator_kind": "npm_command or native_executable or hermes_launcher or codex_desktop",
           "path": "explicit settings only absolute locator",
           "version": null
         }
@@ -271,10 +271,11 @@
     "Protocol v2 does not change profile_key/profile/v1 or named-pipe identity domains.",
     "Observations exact keys revision,registrations; normalize registrations sorted by id, recursively sorted JSON keys, UTF-8, no spaces/ascii escaping/slash escaping. revision0 allowed only for empty legacy state; v3 persistent revision starts1.",
     "Configuration revision/hash differ from scope_revision. Sync registrations CAS on base pair; same target pair idempotent. ACK is receipt, not installation verification. Every sample carries its actual config pair. Pending full snapshot has empty registrations/instances/resources and current application pair.",
-    "category builtin uses fixed provider codex/claude/hermes/pi and compatible npm_command/hermes_launcher/codex_desktop; custom_exe uses null provider, executable locator. Windows local only; enabled bool; binding_state confirmed/rebind_required.",
+    "category builtin uses codex=npm_command|codex_desktop, claude/opencode=npm_command|native_executable, pi=npm_command, hermes=hermes_launcher; custom_exe uses null provider, executable locator. Windows local only; enabled bool; binding_state confirmed/rebind_required.",
     "registration status: available/limited/not_found/not_configured/unknown; duplicate_of_id null except duplicate_installation. Instance classification provider/custom_exe; custom provider_id null, kind custom_exe, session/pending unknown. Unique process/resource regardless of registration references.",
     "Default observed-instance/console returns limited, action_id null; first registration slice issues only verified registered GUI manual_navigation grants. Config commit revokes all grants; returns require exact current config pair.",
-    "Candidate query explicit only, existing catalog no additional scan; 64 rows/64KiB, no title/argv. Unavailable source does not prevent saving registration intent."
+    "Candidate query explicit only, existing catalog no additional scan; 64 rows/64KiB, no title/argv. Unavailable source does not prevent saving registration intent.",
+    "native_executable is a local PE .exe confirmed by the user for claude/opencode; it does not establish a publisher signature. Generic interpreter/shell hosts are unsupported. Candidates grant no observation or window capability before confirmation; verified files retain exact file identity and replacement invalidation."
   ],
   "profile_key_encoding": "SHA256(ASCII session-panel-observer/profile/v1 + NUL + uint32LE raw SID length + raw binary SID + uint64LE FILE_ID_INFO.VolumeSerialNumber + FILE_ID_128.Identifier[16])",
   "profile_key_vector": {
@@ -340,6 +341,66 @@
       },
       "canonical_utf8": "{\"registrations\":[{\"binding_state\":\"confirmed\",\"category\":\"custom_exe\",\"enabled\":true,\"environment_id\":\"windows:local\",\"id\":\"0123456789abcdef0123456789abcdef\",\"label\":\"Example tool\",\"locator_kind\":\"executable\",\"path\":\"C:/example/tool.exe\",\"provider_id\":null}],\"revision\":1}",
       "sha256": "5642a57927e9759307e5cdb9a9f1f4b4b008a2b656a7b14c4e41affbedcaa4bd"
+    },
+    {
+      "observations": {
+        "revision": 1,
+        "registrations": [
+          {
+            "id": "00000000000000000000000000000002",
+            "category": "builtin",
+            "provider_id": "claude",
+            "environment_id": "windows:local",
+            "label": "Example tool",
+            "locator_kind": "native_executable",
+            "path": "C:/example/claude.exe",
+            "enabled": true,
+            "binding_state": "confirmed"
+          }
+        ]
+      },
+      "canonical_utf8": "{\"registrations\":[{\"binding_state\":\"confirmed\",\"category\":\"builtin\",\"enabled\":true,\"environment_id\":\"windows:local\",\"id\":\"00000000000000000000000000000002\",\"label\":\"Example tool\",\"locator_kind\":\"native_executable\",\"path\":\"C:/example/claude.exe\",\"provider_id\":\"claude\"}],\"revision\":1}",
+      "sha256": "517e2a659e1205ece42740cd03478296d0112c0be510906a16037661340eb53b"
+    },
+    {
+      "observations": {
+        "revision": 1,
+        "registrations": [
+          {
+            "id": "00000000000000000000000000000003",
+            "category": "builtin",
+            "provider_id": "opencode",
+            "environment_id": "windows:local",
+            "label": "Example tool",
+            "locator_kind": "native_executable",
+            "path": "C:/example/opencode.exe",
+            "enabled": true,
+            "binding_state": "confirmed"
+          }
+        ]
+      },
+      "canonical_utf8": "{\"registrations\":[{\"binding_state\":\"confirmed\",\"category\":\"builtin\",\"enabled\":true,\"environment_id\":\"windows:local\",\"id\":\"00000000000000000000000000000003\",\"label\":\"Example tool\",\"locator_kind\":\"native_executable\",\"path\":\"C:/example/opencode.exe\",\"provider_id\":\"opencode\"}],\"revision\":1}",
+      "sha256": "c3dacce494a65a57ac41439ccfb6d2d19b95872f6c7eb1be0988163a7badc3b8"
+    },
+    {
+      "observations": {
+        "revision": 1,
+        "registrations": [
+          {
+            "id": "00000000000000000000000000000004",
+            "category": "builtin",
+            "provider_id": "opencode",
+            "environment_id": "windows:local",
+            "label": "Example tool",
+            "locator_kind": "npm_command",
+            "path": "C:/example/opencode.cmd",
+            "enabled": true,
+            "binding_state": "confirmed"
+          }
+        ]
+      },
+      "canonical_utf8": "{\"registrations\":[{\"binding_state\":\"confirmed\",\"category\":\"builtin\",\"enabled\":true,\"environment_id\":\"windows:local\",\"id\":\"00000000000000000000000000000004\",\"label\":\"Example tool\",\"locator_kind\":\"npm_command\",\"path\":\"C:/example/opencode.cmd\",\"provider_id\":\"opencode\"}],\"revision\":1}",
+      "sha256": "63594521c06e6f648ca45d65053e39d9701ef43be14842260c8ac964efab43fc"
     }
   ],
   "unverified_grant": {

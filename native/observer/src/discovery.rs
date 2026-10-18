@@ -181,6 +181,46 @@ fn pe_image(path: &Path, x64_only: bool) -> bool {
 fn pe_x64(path: &Path) -> bool {
     pe_image(path, true)
 }
+fn opencode_shim(command: &Path) -> bool {
+    let Some(text) = read_public(command) else {
+        return false;
+    };
+    text.replace('\\', "/").lines().any(|line| {
+        let line = line.trim().strip_prefix("$input | ").unwrap_or(line.trim());
+        let line = line.strip_prefix("endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & ").unwrap_or(line);
+        [
+            (
+                "\"%_prog%\" ",
+                "\"%dp0%/node_modules/opencode-ai/bin/opencode\" %*",
+            ),
+            (
+                "& \"$basedir/node$exe\" ",
+                "\"$basedir/node_modules/opencode-ai/bin/opencode\" $args",
+            ),
+            (
+                "& \"node$exe\" ",
+                "\"$basedir/node_modules/opencode-ai/bin/opencode\" $args",
+            ),
+            (
+                "exec \"$basedir/node\" ",
+                "\"$basedir/node_modules/opencode-ai/bin/opencode\" \"$@\"",
+            ),
+            (
+                "exec node ",
+                "\"$basedir/node_modules/opencode-ai/bin/opencode\" \"$@\"",
+            ),
+            (
+                "exec \"$PROG_EXE\" ",
+                "\"$basedir_win/node_modules/opencode-ai/bin/opencode\" \"$@\"",
+            ),
+        ]
+        .iter()
+        .any(|(runtime, target)| {
+            line.strip_prefix(runtime)
+                .is_some_and(|tail| tail.trim_start() == *target)
+        })
+    })
+}
 fn npm(command: &Path, provider: &str, package: &str, bin: &str) -> Option<Installation> {
     let directory = command.parent()?;
     let root = directory.join("node_modules").join(package);
@@ -196,13 +236,20 @@ fn npm(command: &Path, provider: &str, package: &str, bin: &str) -> Option<Insta
     let allowed = match provider {
         "codex" => target == "bin/codex.js",
         "claude" => ["bin/claude.exe", "cli.js"].contains(&target),
+        "opencode" => ["bin/opencode", "./bin/opencode"].contains(&target),
         "pi" => target == "dist/bundle/cli.js",
         _ => false,
     };
     if !allowed {
         return None;
     }
+    if provider == "opencode" && !opencode_shim(command) {
+        return None;
+    }
     let entry = identity::final_path(&root.join(target)).ok()?;
+    if provider == "opencode" && !entry.starts_with(root.canonicalize().ok()?) {
+        return None;
+    }
     let mut images = Vec::new();
     if target.ends_with(".exe") {
         images.push(entry.clone());
@@ -223,6 +270,34 @@ fn npm(command: &Path, provider: &str, package: &str, bin: &str) -> Option<Insta
             let native = base.join("vendor/x86_64-pc-windows-msvc/codex/codex.exe");
             if native.is_file() {
                 images.push(identity::final_path(&native).ok()?);
+            }
+        }
+    }
+    if provider == "opencode" {
+        for name in ["opencode-windows-x64", "opencode-windows-x64-baseline"] {
+            let expected = manifest
+                .get("optionalDependencies")
+                .and_then(|v| v.get(name))
+                .and_then(Value::as_str);
+            for base in [
+                root.join("node_modules").join(name),
+                directory.join("node_modules").join(name),
+            ] {
+                let platform: Option<Value> = read_public(&base.join("package.json"))
+                    .and_then(|v| serde_json::from_str(&v).ok());
+                if let (Some(expected), Some(platform)) = (expected, platform)
+                    && platform["name"] == name
+                    && platform["version"].as_str() == Some(expected)
+                {
+                    let image = base.join("bin/opencode.exe");
+                    if pe_image(&image, true)
+                        && let (Ok(image), Ok(base)) =
+                            (identity::final_path(&image), base.canonicalize())
+                        && image.starts_with(base)
+                    {
+                        images.push(image);
+                    }
+                }
             }
         }
     }
@@ -313,11 +388,20 @@ impl Catalog {
             ("dsh", "dsh", ""),
             ("dsh", "dsh-tui", ""),
             ("dsh", "dst", ""),
-            ("opencode", "opencode", ""),
+            ("opencode", "opencode", "opencode-ai"),
         ] {
             for candidate in path_commands(command) {
                 if self.entries.len() >= 64 {
                     break;
+                }
+                if ["claude", "opencode"].contains(&provider)
+                    && candidate
+                        .extension()
+                        .is_some_and(|v| v.eq_ignore_ascii_case("exe"))
+                    && pe_image(&candidate, false)
+                {
+                    self.native_candidate(provider, &candidate);
+                    continue;
                 }
                 let found = if !package.is_empty() {
                     npm(&candidate, provider, package, command)
@@ -337,14 +421,31 @@ impl Catalog {
                 if let Some(install) = found
                     && seen.insert((install.provider.clone(), install.entry.clone()))
                 {
-                    if ["codex", "claude", "pi", "hermes"].contains(&provider) {
+                    if ["codex", "claude", "opencode", "pi", "hermes"].contains(&provider) {
                         self.candidate_rows.push(json!({"provider_id":provider,"locator_kind":if provider=="hermes"{"hermes_launcher"}else{"npm_command"},"path":public_locator(&candidate),"version":install.version}));
                     }
                     self.entries.push(install);
                 }
             }
         }
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            let candidate = PathBuf::from(home).join(".local/bin/claude.exe");
+            self.native_candidate("claude", &candidate);
+        }
         self.apply_registrations(observations, &mut seen);
+    }
+    fn native_candidate(&mut self, provider: &str, candidate: &Path) {
+        if pe_image(candidate, false)
+            && let Some(path) = public_locator(candidate)
+            && !self.candidate_rows.iter().any(|row| {
+                row["path"].as_str().is_some_and(|old| {
+                    old.replace('/', "\\")
+                        .eq_ignore_ascii_case(&path.replace('/', "\\"))
+                })
+            })
+        {
+            self.candidate_rows.push(json!({"provider_id":provider,"locator_kind":"native_executable","path":path,"version":null}));
+        }
     }
     fn apply_registrations(
         &mut self,
@@ -376,6 +477,7 @@ impl Catalog {
                         let package = match provider {
                             "codex" => "@openai/codex",
                             "claude" => "@anthropic-ai/claude-code",
+                            "opencode" => "opencode-ai",
                             "pi" => "@earendil-works/pi-coding-agent",
                             _ => "",
                         };
@@ -391,6 +493,13 @@ impl Catalog {
                         )
                     }
                     "hermes_launcher" => hermes(selected),
+                    "native_executable" => pe_image(selected, false).then(|| Installation {
+                        provider: row.provider_id.clone().unwrap_or_default(),
+                        command: "user-confirmed-native".into(),
+                        entry: selected.into(),
+                        images: vec![selected.into()],
+                        version: None,
+                    }),
                     "codex_desktop" => registered_desktop_path(selected).then(|| Installation {
                         provider: "codex".into(),
                         command: "codex-desktop".into(),
@@ -413,7 +522,7 @@ impl Catalog {
                     .iter()
                     .any(|n| s.eq_ignore_ascii_case(n))
                 });
-                if custom && known_host {
+                if (custom || row.locator_kind == "native_executable") && known_host {
                     verified.status = "limited";
                     verified.reason = Some("entry_unsupported");
                 } else if (custom && pe_image(selected, false)) || install.is_some() {
@@ -514,7 +623,7 @@ impl Catalog {
             let installed=!matches.is_empty()||(*provider=="codex"&&self.desktop_installed);
             let mut commands:Vec<_>=matches.iter().map(|x|x.command.clone()).collect();commands.sort();commands.dedup();
             json!({"provider_id":provider,"status":if installed{"available"}else{"not_found"},
-                "reason":if installed{None}else{Some("supported_entry_not_found")},"source":"public_installation",
+                "reason":if installed{None}else{Some("supported_entry_not_found")},"source":if matches.iter().any(|x|x.command=="user-confirmed-native"){"user_confirmed_installation"}else{"public_installation"},
                 "commands":commands,
                 "version":matches.first().and_then(|x|x.version.clone())})
         }).collect()
@@ -618,11 +727,13 @@ fn script_installation<'a>(
     installations.iter().find(|install| {
         let compatible = match runtime {
             "node.exe" => {
-                ["codex", "claude", "pi"].contains(&install.provider.as_str())
-                    && install
-                        .entry
-                        .extension()
-                        .is_some_and(|extension| extension.eq_ignore_ascii_case("js"))
+                (install.provider == "opencode"
+                    && install.entry.file_name().is_some_and(|v| v == "opencode"))
+                    || (["codex", "claude", "pi"].contains(&install.provider.as_str())
+                        && install
+                            .entry
+                            .extension()
+                            .is_some_and(|extension| extension.eq_ignore_ascii_case("js")))
             }
             "python.exe" | "pythonw.exe" => install.provider == "hermes",
             _ => false,
@@ -697,6 +808,292 @@ fn desktop_codex(process: &ProcessIdentity) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn synthetic_pe(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut bytes = vec![0u8; 70];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[60..64].copy_from_slice(&64u32.to_le_bytes());
+        bytes[64..70].copy_from_slice(b"PE\0\0\x64\x86");
+        std::fs::write(path, bytes).unwrap();
+    }
+    #[test]
+    fn native_candidates_deduplicate_windows_separators_and_case() {
+        let root =
+            std::env::temp_dir().join(format!("observer-native-path-{}", identity::random_id()));
+        let image = root.join("claude.exe");
+        synthetic_pe(&image);
+        let alternate = PathBuf::from(
+            image
+                .to_str()
+                .unwrap()
+                .replace('\\', "/")
+                .replace("claude.exe", "CLAUDE.EXE"),
+        );
+        let mut catalog = Catalog::default();
+        catalog.native_candidate("claude", &image);
+        catalog.native_candidate("claude", &alternate);
+        assert_eq!(catalog.candidates().len(), 1);
+        let other = root.join("other/claude.exe");
+        synthetic_pe(&other);
+        catalog.native_candidate("claude", &other);
+        assert_eq!(catalog.candidates().len(), 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn native_candidates_need_confirmation_and_bound_file_identity() {
+        let root = std::env::temp_dir().join(format!("observer-native-{}", identity::random_id()));
+        let image = root.join("claude.exe");
+        synthetic_pe(&image);
+        let mut catalog = Catalog::default();
+        catalog.native_candidate("claude", &image);
+        catalog.native_candidate("claude", &image);
+        assert_eq!(catalog.candidates().len(), 1);
+        assert!(catalog.entries.is_empty());
+        assert!(catalog.registrations.is_empty());
+        for provider in ["claude", "opencode"] {
+            let row = registration(
+                "00000000000000000000000000000001",
+                &image,
+                "builtin",
+                Some(provider),
+                "native_executable",
+            );
+            catalog.apply_registrations(
+                &Observations {
+                    revision: 1,
+                    registrations: vec![row.clone()],
+                },
+                &mut HashSet::new(),
+            );
+            assert!(catalog.registrations[0].valid());
+            assert_eq!(
+                catalog.registrations[0].install.as_ref().unwrap().provider,
+                provider
+            );
+            for disabled in [true, false] {
+                let mut inactive = row.clone();
+                inactive.enabled = !disabled;
+                if !disabled {
+                    inactive.binding_state = "rebind_required".into();
+                }
+                catalog.apply_registrations(
+                    &Observations {
+                        revision: 2,
+                        registrations: vec![inactive],
+                    },
+                    &mut HashSet::new(),
+                );
+                assert!(!catalog.registrations[0].valid());
+            }
+        }
+        let row = registration(
+            "00000000000000000000000000000001",
+            &image,
+            "builtin",
+            Some("claude"),
+            "native_executable",
+        );
+        let mut duplicate = row.clone();
+        duplicate.id = "00000000000000000000000000000002".into();
+        duplicate.provider_id = Some("opencode".into());
+        catalog.apply_registrations(
+            &Observations {
+                revision: 3,
+                registrations: vec![row.clone(), duplicate],
+            },
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            catalog.registrations[1].reason,
+            Some("duplicate_installation")
+        );
+        assert!(!catalog.registrations[1].valid());
+        std::fs::rename(&image, root.join("old.exe")).unwrap();
+        assert!(!catalog.registrations[0].valid());
+        catalog.apply_registrations(
+            &Observations {
+                revision: 4,
+                registrations: vec![row],
+            },
+            &mut HashSet::new(),
+        );
+        assert!(!catalog.registrations[0].valid());
+        synthetic_pe(&image);
+        assert!(!catalog.registrations[0].valid());
+        for name in [
+            "node.exe",
+            "python.exe",
+            "pythonw.exe",
+            "cmd.exe",
+            "powershell.exe",
+            "pwsh.exe",
+        ] {
+            let host = root.join(name);
+            synthetic_pe(&host);
+            let row = registration(
+                "00000000000000000000000000000001",
+                &host,
+                "builtin",
+                Some("opencode"),
+                "native_executable",
+            );
+            catalog.apply_registrations(
+                &Observations {
+                    revision: 4,
+                    registrations: vec![row],
+                },
+                &mut HashSet::new(),
+            );
+            assert_eq!(catalog.registrations[0].reason, Some("entry_unsupported"));
+            assert!(!catalog.registrations[0].valid());
+        }
+        std::fs::write(&image, "not a PE").unwrap();
+        let mut catalog = Catalog::default();
+        catalog.native_candidate("claude", &image);
+        assert!(catalog.candidates().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn opencode_package_checks_shim_manifest_platform_and_replacement() {
+        let root =
+            std::env::temp_dir().join(format!("observer-opencode-{}", identity::random_id()));
+        let package = root.join("node_modules/opencode-ai");
+        std::fs::create_dir_all(package.join("bin")).unwrap();
+        let command = root.join("opencode.cmd");
+        let shim = r#""%_prog%" "%dp0%\node_modules\opencode-ai\bin\opencode" %*"#;
+        std::fs::write(&command, shim).unwrap();
+        std::fs::write(package.join("bin/opencode"), "// synthetic, never executed").unwrap();
+        let manifest = json!({"name":"opencode-ai","version":"1.2.27","bin":{"opencode":"./bin/opencode"},
+            "optionalDependencies":{"opencode-windows-x64":"1.2.27","opencode-windows-x64-baseline":"1.2.27"}});
+        std::fs::write(package.join("package.json"), manifest.to_string()).unwrap();
+        assert!(
+            npm(&command, "opencode", "opencode-ai", "opencode")
+                .unwrap()
+                .images
+                .is_empty()
+        );
+        for (name, base) in [
+            (
+                "opencode-windows-x64",
+                root.join("node_modules/opencode-windows-x64"),
+            ),
+            (
+                "opencode-windows-x64-baseline",
+                package.join("node_modules/opencode-windows-x64-baseline"),
+            ),
+        ] {
+            synthetic_pe(&base.join("bin/opencode.exe"));
+            std::fs::write(
+                base.join("package.json"),
+                json!({"name":name,"version":"1.2.27"}).to_string(),
+            )
+            .unwrap();
+        }
+        let install = npm(&command, "opencode", "opencode-ai", "opencode").unwrap();
+        assert_eq!(install.images.len(), 2);
+        assert_eq!(
+            recognized(
+                "node.exe",
+                &[install.entry.to_str().unwrap()],
+                std::slice::from_ref(&install)
+            ),
+            Some("opencode".into())
+        );
+        assert_eq!(
+            recognized(
+                "node.exe",
+                &["-e", install.entry.to_str().unwrap()],
+                std::slice::from_ref(&install)
+            ),
+            None
+        );
+        let row = registration(
+            "00000000000000000000000000000001",
+            &command,
+            "builtin",
+            Some("opencode"),
+            "npm_command",
+        );
+        let mut catalog = Catalog::default();
+        catalog.apply_registrations(
+            &Observations {
+                revision: 1,
+                registrations: vec![row],
+            },
+            &mut HashSet::new(),
+        );
+        assert!(catalog.registrations[0].valid());
+        let image = root.join("node_modules/opencode-windows-x64/bin/opencode.exe");
+        std::fs::rename(&image, image.with_file_name("old.exe")).unwrap();
+        synthetic_pe(&image);
+        assert!(!catalog.registrations[0].valid());
+        for changes in [
+            json!({"name":"opencode"}),
+            json!({"bin":{"opencode":"../opencode"}}),
+            json!({"bin":{"opencode":"C:/example/other/opencode"}}),
+            json!({"bin":{"other":"bin/opencode"}}),
+        ] {
+            let mut invalid = manifest.clone();
+            for (key, value) in changes.as_object().unwrap() {
+                invalid[key] = value.clone();
+            }
+            std::fs::write(package.join("package.json"), invalid.to_string()).unwrap();
+            assert!(npm(&command, "opencode", "opencode-ai", "opencode").is_none());
+        }
+        std::fs::write(package.join("package.json"), manifest.to_string()).unwrap();
+        for invalid in [
+            "echo opencode",
+            r#"rem "%dp0%\node_modules\opencode-ai\bin\opencode""#,
+            r#""%_prog%" "other.js" "%dp0%\node_modules\opencode-ai\bin\opencode" %*"#,
+        ] {
+            std::fs::write(&command, invalid).unwrap();
+            assert!(npm(&command, "opencode", "opencode-ai", "opencode").is_none());
+        }
+        for supported in [
+            shim,
+            r#"endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & "%_prog%"  "%dp0%\node_modules\opencode-ai\bin\opencode" %*"#,
+            r#"& "$basedir/node$exe"  "$basedir/node_modules/opencode-ai/bin/opencode" $args"#,
+            r#"$input | & "node$exe" "$basedir/node_modules/opencode-ai/bin/opencode" $args"#,
+            r#"exec "$basedir/node" "$basedir/node_modules/opencode-ai/bin/opencode" "$@""#,
+            r#"exec "$PROG_EXE"  "$basedir_win/node_modules/opencode-ai/bin/opencode" "$@""#,
+        ] {
+            std::fs::write(&command, supported).unwrap();
+            assert!(npm(&command, "opencode", "opencode-ai", "opencode").is_some());
+        }
+        for name in ["opencode-windows-x64", "opencode-windows-x64-baseline"] {
+            let base = if name.ends_with("baseline") {
+                package.join("node_modules").join(name)
+            } else {
+                root.join("node_modules").join(name)
+            };
+            for invalid in [
+                json!({"name":"other","version":"1.2.27"}),
+                json!({"name":name,"version":"1.2.26"}),
+            ] {
+                std::fs::write(base.join("package.json"), invalid.to_string()).unwrap();
+                assert!(
+                    npm(&command, "opencode", "opencode-ai", "opencode")
+                        .unwrap()
+                        .images
+                        .len()
+                        < 2
+                );
+            }
+            std::fs::write(
+                base.join("package.json"),
+                json!({"name":name,"version":"1.2.27"}).to_string(),
+            )
+            .unwrap();
+            std::fs::write(base.join("bin/opencode.exe"), "invalid PE").unwrap();
+        }
+        assert!(
+            npm(&command, "opencode", "opencode-ai", "opencode")
+                .unwrap()
+                .images
+                .is_empty()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
     fn registration(
         id: &str,
         path: &Path,

@@ -86,6 +86,9 @@ class WorkspaceService:
         self._desktop_cached = None
         self._desktop_good = None
         self._desktop_until = 0
+        if profile is not None:
+            from control_everything.workspace.project_selection import WorkspaceSelection
+            self.selection = WorkspaceSelection(profile)
 
     def desktop_snapshot(self):
         """Keep one source's last usable metadata; stale facts can never authorize binding."""
@@ -236,7 +239,8 @@ class WorkspaceService:
             except ValueError:
                 cached["config_pair"] = None
                 cached["reason"] = "config_unavailable"
-        registry = self.registered_projects() if self.profile is not None else []
+        context = self._project_context() if self.profile is not None else {"visible": [], "history": [], "stored": {}}
+        registry = context["visible"]
         value = project_observations(cached, registry)
         if self.profile is not None:
             for row in value["registrations"]:
@@ -248,25 +252,39 @@ class WorkspaceService:
                                      and (intent.get("category") == "custom_exe" or intent.get("locator_kind") == "codex_desktop")))
             for instance in value["instances"]:
                 instance["registration_labels"] = [configured[identity]["label"] for identity in instance["registration_ids"] if identity in configured]
-        return value, registry
+        return value, context
 
-    def registered_projects(self, *, desktop=None):
+    def registered_projects(self, *, desktop=None, stored=None, include_excluded=False):
         if self.profile is not None:
             desktop = self.desktop_snapshot() if desktop is None else desktop
             external = self._desktop_projects(desktop)
             by_id = {row["id"]: row for row in external}
+            excluded = set(self.profile.workbench_config()["excluded_project_ids"]) if not include_excluded else set()
             local = []
-            for row in self.store.list_projects():
+            for saved in self.store.list_projects() if stored is None else stored:
+                row = dict(saved)
+                if row["id"] in excluded:
+                    continue
                 if row["source"]["kind"] == "codex":
                     if row["id"] in by_id:
-                        continue
-                    row.update(read_only=True, source_available=False, binding_available=False)
+                        row = {**by_id[row["id"]], "archived": row["archived"]}
+                    else:
+                        row.update(read_only=True, source_available=False, binding_available=False)
                 local.append(row)
-            return local + external
+            return local
         try:
             return progress.load_registry(self.registry_path)
         except (OSError, ValueError, TypeError):
             raise WorkspaceError("workspace_unavailable") from None
+
+    def _project_context(self, *, desktop=None):
+        """Reuse one stored registry for visible choices and complete history in a request."""
+        desktop = self.desktop_snapshot() if desktop is None else desktop
+        stored = self.store.list_projects()
+        excluded = set(self.profile.workbench_config()["excluded_project_ids"])
+        history = self.registered_projects(desktop=desktop, stored=stored, include_excluded=True)
+        return {"stored": {row["id"]: row for row in stored}, "history": history,
+                "visible": [row for row in history if row["id"] not in excluded], "desktop": desktop}
 
     def projects(self, registry):
         if self.profile is not None:
@@ -302,7 +320,7 @@ class WorkspaceService:
             desktop = self.desktop_snapshot() if desktop is None else desktop
             full = next((row for row in desktop["items"] if row["session_key"] == task["session_key"]), None)
             project = next((row for row in registry if row["id"] == task["project_id"]), None)
-            if project and project.get("read_only"):
+            if project and (project.get("read_only") or project.get("source", {}).get("kind") == "codex"):
                 if full is None or desktop["status"] != "available":
                     return "not_in_current_sample"
                 return "verified" if full["assignment_state"] == "assigned" and full["project_id"] == project["id"] else "project_mismatch"
@@ -348,12 +366,15 @@ class WorkspaceService:
 
     def page_tasks(self, **params):
         rows, total = self.store.list_tasks(**params)
-        sessions, registry = self.sessions(), self.registered_projects()
+        sessions = self.sessions()
+        context = self._project_context() if self.profile is not None else None
+        registry = context["history"] if context is not None else self.registered_projects()
         return self._task_page(rows, total, sessions, registry,
-                               offset=params.get("offset", 0), limit=params.get("limit", 50))
+                               offset=params.get("offset", 0), limit=params.get("limit", 50),
+                               desktop=context["desktop"] if context is not None else None)
 
-    def _task_page(self, rows, total, sessions, registry, *, offset=0, limit=50):
-        desktop = self.desktop_snapshot()
+    def _task_page(self, rows, total, sessions, registry, *, offset=0, limit=50, desktop=None):
+        desktop = self.desktop_snapshot() if desktop is None else desktop
         return {"items": [{**row, "session_link_state": self.link_state(row, sessions, registry, desktop)} for row in rows],
                 "total": total, "offset": offset, "limit": limit}
 
@@ -365,12 +386,17 @@ class WorkspaceService:
                 or "project_id" in params and not project_id_valid(params["project_id"])):
             raise ProfileError("invalid_query")
         page = self.store.list_items(**params)
-        return self._item_page(page, self.sessions(), self.registered_projects())
+        return self._item_page(page, self.sessions(), self._project_context())
 
-    def _item_page(self, page, sessions, registry):
-        desktop = self.desktop_snapshot()
-        return {**page, "items": [{**row, "session_link_state": self.link_state(row, sessions, registry, desktop)}
-                                  for row in page["items"]]}
+    def _item_projection(self, row, sessions, context):
+        visible = {project["id"] for project in context["visible"]}
+        stored = context["stored"]
+        return {**row, "project_excluded": row["project_id"] in stored and row["project_id"] not in visible,
+                "project_name": stored.get(row["project_id"], {}).get("name"),
+                "session_link_state": self.link_state(row, sessions, context["history"], context["desktop"])}
+
+    def _item_page(self, page, sessions, context):
+        return {**page, "items": [self._item_projection(row, sessions, context) for row in page["items"]]}
 
     def save_item(self, body, *, update=False):
         from control_everything.workspace.task_schema import MAX_REVISION
@@ -423,7 +449,8 @@ class WorkspaceService:
             invalid("project_id")
         merged = {**old, **fields} if old else fields
         desktop = self.desktop_snapshot()
-        registry = self.registered_projects(desktop=desktop)
+        context = self._project_context(desktop=desktop)
+        registry = context["visible"]
         if "project_id" in fields and fields["project_id"] is not None:
             project = next((row for row in registry if row["id"] == fields["project_id"]), None)
             if project is None or project["archived"]:
@@ -431,7 +458,7 @@ class WorkspaceService:
         link_changed = old is None or any(name in fields for name in ("project_id", "provider_id", "session_key"))
         project = next((row for row in registry if row["id"] == merged["project_id"]), None)
         projection = None
-        if project and project.get("read_only") and link_changed:
+        if project and project.get("read_only") and link_changed and merged["session_key"] is not None:
             if not project.get("binding_available"):
                 raise WorkspaceError("session_not_in_sample")
             projection = project
@@ -472,7 +499,7 @@ class WorkspaceService:
         item = self.store.save_item(fields or {"title": old["title"]}, item_id=item_id,
                                     expected_revision=revision, session_cwd=session_cwd,
                                     codex_project=projection, codex_session_project_id=session_project_id)
-        return {"item": {**item, "session_link_state": self.link_state(item, sessions, registry, desktop)}}
+        return {"item": self._item_projection(item, sessions, context)}
 
     def page_records(self, **params):
         rows, total = self.store.list_records(**params)
@@ -481,12 +508,13 @@ class WorkspaceService:
     def snapshot(self):
         sessions = self.sessions()
         if self.profile is not None:
-            observations, registry = self._observations_with_projects()
+            observations, context = self._observations_with_projects()
+            registry = context["visible"]
             from control_everything.workspace.observations import summary
             todos = self.store.list_todos()
             rows, total = self.store.list_tasks()
-            tasks = self._task_page(rows, total, sessions, registry)
-            items = self._item_page(self.store.list_items(), sessions, registry)
+            tasks = self._task_page(rows, total, sessions, context["history"], desktop=context["desktop"])
+            items = self._item_page(self.store.list_items(), sessions, context)
             records = self.page_records()
             return {"status": "ok", "sampled_at": datetime.now(timezone.utc).isoformat(), "today": today(),
                     "projects": {"status": "available", "reason": None, "items": self.profile_projects(registry, sessions)},
@@ -540,7 +568,8 @@ class WorkspaceService:
             canonical_uuid(key[6:])
         task_id = canonical_uuid(body["id"]) if update else None
         existing = self.store.get_task(task_id) if update else None
-        registry = self.registered_projects()
+        context = self._project_context() if self.profile is not None else None
+        registry = context["visible"] if context is not None else self.registered_projects()
         project = next((row for row in registry if row["id"] == project_id), None)
         if self.profile is not None and (project_id.startswith("cx-") or project and project.get("read_only")):
             raise ValueError("invalid_request")
@@ -554,7 +583,7 @@ class WorkspaceService:
         unchanged = existing and all(existing[name] == body[name] for name in ("project_id", "provider_id", "session_key"))
         sessions = self.sessions() if key is not None else unavailable(0)
         if key is not None and not unchanged:
-            desktop = self.desktop_snapshot() if self.profile is not None else None
+            desktop = context["desktop"] if context is not None else None
             if desktop is not None and desktop["status"] != "not_configured":
                 session = next((row for row in desktop["items"] if row["session_key"] == key), None)
                 if session is None or desktop["status"] != "available" or not desktop["complete"]:
@@ -572,7 +601,8 @@ class WorkspaceService:
             if not owns:
                 raise WorkspaceError("session_project_mismatch")
         task = self.store.save_task({**body, "title": title.strip()}, task_id)
-        return {"status": "ok", "task": {**task, "session_link_state": self.link_state(task, sessions, registry)}}
+        return {"status": "ok", "task": {**task, "session_link_state": self.link_state(task, sessions,
+            context["history"] if context is not None else registry, context["desktop"] if context is not None else None)}}
 
     def save_record(self, body, *, _validate_only=False):
         if not isinstance(body, dict) or set(body) != RECORD_FIELDS:

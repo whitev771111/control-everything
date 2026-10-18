@@ -20,14 +20,19 @@ def path_key(value):
     return value
 
 
-def validate_project(body, *, restore=False):
+def imported_id_valid(value):
+    return type(value) is str and re.fullmatch(r"(?:cl|oc)-[0-9a-f]{24}", value) is not None
+
+
+def validate_project(body, *, restore=False, allow_imported_id=False):
     fields = {"project_id", "name", "directories", "source"} if restore else {"id", "name", "archived", "directories", "source"}
     def invalid(field, reason="invalid_project"):
         raise ProfileError(reason, field)
     if not isinstance(body, dict) or set(body) != fields:
         invalid("project")
     identity = body["project_id"] if restore else body["id"]
-    if identity is not None and (not project_id_valid(identity) or identity.startswith("cx-")):
+    if identity is not None and (not project_id_valid(identity) or identity.startswith("cx-")
+            or identity.startswith(("cl-", "oc-")) and not (allow_imported_id and imported_id_valid(identity))):
         invalid("id")
     if restore and identity is None:
         invalid("project_id")
@@ -74,6 +79,19 @@ def validate_project(body, *, restore=False):
                 or ".." in relative.split("/") or kind == "wfc" and relative != "docs/current"):
             invalid("source.relative_path", "invalid_source")
     return {"id": identity, "name": name.strip(), "archived": archived, "directories": checked, "source": source}
+
+
+def validate_stored_imported_project(body):
+    if not isinstance(body, dict) or not imported_id_valid(body.get("id")):
+        raise ProfileError("invalid_project", "id")
+    return validate_project(body, allow_imported_id=True)
+
+
+def validate_candidate_project(body):
+    value = validate_stored_imported_project(body)
+    if value["archived"] or value["source"] != {"kind": "none", "directory_id": None, "relative_path": None}:
+        raise ProfileError("invalid_project", "source")
+    return value
 
 
 def validate_codex_project(body):

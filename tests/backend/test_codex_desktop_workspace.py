@@ -52,8 +52,20 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
 
     def create(self, index=28, project=None):
         session = self.source['items'][index]
+        identity = project or session['project_id']
+        if identity in self.ids:
+            self.select(identity)
         return self.workspace.save_item(dict(title='Explicit item', provider_id='codex',
-            project_id=project or session['project_id'], session_key=session['session_key']))['item']
+            project_id=identity, session_key=session['session_key']))['item']
+
+    def select(self, identity):
+        if any(row['id'] == identity for row in self.profile.store.list_projects()):
+            return
+        desktop = self.workspace.desktop_snapshot()
+        projection = next(row for row in self.workspace._desktop_projects(desktop) if row['id'] == identity)
+        if not projection['binding_available']:
+            raise WorkspaceError('session_not_in_sample')
+        self.profile.store.join_candidate(projection, expected_revision=self.profile.store.list_revision())
 
     def test_reads_do_not_materialize_and_source_summary_never_contains_full_items(self):
         before = self.profile.store.list_items()['list_revision']
@@ -63,7 +75,7 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         self.assertEqual(len(second['items']), 13)
         self.assertEqual(len({row['session_key'] for row in page['items'] + second['items']}), 33)
         snapshot = self.workspace.snapshot()
-        self.assertEqual(len(snapshot['projects']['items']), 2)
+        self.assertEqual(len(snapshot['projects']['items']), 0)
         self.assertNotIn('items', snapshot['codex_desktop'])
         self.assertEqual(snapshot['sessions']['items'], [])
         self.assertEqual(self.profile.store.list_projects(), [])
@@ -87,8 +99,10 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
             self.create(28, self.ids[1])
 
     def test_unknown_conflict_and_explicit_projectless_are_separate(self):
+        self.select(self.ids[0])
         self.source['items'].append({**self.source['items'][33], 'session_key': 'codex:' + str(uuid4()),
                                      'assignment_state': 'conflict', 'project_id': self.ids[0]})
+        self.refresh()
         self.assertEqual(self.workspace.page_codex_sessions(scope='projectless')['total'], 1)
         self.assertEqual(self.workspace.page_codex_sessions(scope='unknown')['total'], 2)
         self.assertEqual(self.workspace.page_codex_sessions(project_id=self.ids[0])['total'], 16)
@@ -147,8 +161,11 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         stale = self.workspace.page_codex_sessions()
         self.assertEqual((stale['status'], stale['total']), ('stale', 33))
         self.assertTrue(all(not row['binding_available'] for row in stale['items']))
+        manual = self.workspace.save_item({'title': 'Unlinked manual item', 'project_id': self.ids[0]})['item']
+        self.assertIsNone(manual['session_key'])
         with self.assertRaisesRegex(WorkspaceError, 'session_not_in_sample'):
-            self.workspace.save_item({'title': 'No new item', 'project_id': self.ids[0]})
+            self.workspace.save_item({'title': 'Cannot link stale session', 'project_id': old['project_id'],
+                                      'provider_id': 'codex', 'session_key': old['session_key']})
         updated = self.workspace.save_item(dict(id=old['id'], expected_revision=1,
                                                changes={'state': 'blocked'}), update=True)['item']
         self.assertEqual(updated['session_key'], old['session_key'])
@@ -164,6 +181,26 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         self.refresh()
         self.assertFalse(self.workspace.page_codex_sessions()['complete'])
 
+    def test_excluded_codex_history_retains_verified_identity_and_state_edit(self):
+        item = self.create()
+        selection = self.workspace.selection
+        selection.change({'action': 'remove', 'project_id': item['project_id'], 'selection_token': selection.token()})
+        self.assertEqual(self.workspace.registered_projects(), [])
+        page = self.workspace.page_items()
+        self.assertTrue(page['items'][0]['project_excluded'])
+        self.assertEqual(page['items'][0]['session_link_state'], 'verified')
+        updated = self.workspace.save_item({'id': item['id'], 'expected_revision': 1, 'changes': {'state': 'review'}}, update=True)['item']
+        self.assertEqual(updated['session_key'], item['session_key'])
+        self.assertEqual(updated['session_link_state'], 'verified')
+        self.assertEqual(updated, self.workspace.page_items()['items'][0])
+        for read in (self.workspace.snapshot, self.workspace.page_items):
+            with patch.object(self.profile.store, 'list_projects', wraps=self.profile.store.list_projects) as registry:
+                value = read()
+            self.assertEqual(registry.call_count, 1)
+            projected = value['items_page']['items'][0] if 'items_page' in value else value['items'][0]
+            self.assertTrue(projected['project_excluded'])
+            self.assertEqual(projected['session_link_state'], 'verified')
+
     def test_incomplete_projection_budget_and_failure_without_cache(self):
         self.source['complete'] = False
         page = self.workspace.page_codex_sessions()
@@ -174,18 +211,19 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         self.source['complete'] = True
         self.source['projects'][0]['name'] = 'x' * 81
         self.refresh()
-        self.assertEqual(len(self.workspace.registered_projects()), 2)
+        self.assertEqual(len(self.workspace.registered_projects()), 0)
         with self.assertRaisesRegex(WorkspaceError, 'session_not_in_sample'):
             self.create()
 
-    def test_materialization_and_item_failure_roll_back_together(self):
+    def test_item_failure_preserves_explicitly_selected_project(self):
+        self.select(self.ids[0])
         actual = self.profile.store._create_item
         with patch.object(self.profile.store, '_create_item', side_effect=WorkspaceError('text_budget')):
             with self.assertRaisesRegex(WorkspaceError, 'text_budget'):
                 self.create()
-        self.assertEqual(self.profile.store.list_projects(), [])
+        self.assertEqual(len(self.profile.store.list_projects()), 1)
         self.assertEqual(self.profile.store.list_items()['total'], 0)
-        self.assertEqual(self.profile.store.list_items()['list_revision'], 1)
+        self.assertEqual(self.profile.store.list_items()['list_revision'], 2)
         with patch.object(self.profile.store, '_create_item', wraps=actual):
             self.create()
         self.assertEqual(len(self.profile.store.list_projects()), 1)
@@ -197,12 +235,12 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
             raise WorkspaceError('storage_error')
         with patch.object(self.profile.store, '_materialize_codex_project', side_effect=fail_after_insert):
             with self.assertRaisesRegex(WorkspaceError, 'storage_error'):
-                self.create()
+                self.select(self.ids[0])
         self.assertEqual(self.profile.store.list_projects(), [])
         self.assertEqual(self.profile.store.list_items()['total'], 0)
         with self.assertRaises(ProfileError):
             self.workspace.save_item({'title': 'Bad', 'project_id': self.ids[0],
-                                      'codex_project': self.workspace.registered_projects()[0]})
+                                      'codex_project': self.workspace._desktop_projects(self.workspace.desktop_snapshot())[0]})
         with self.assertRaises(ValueError):
             self.workspace.save_task(dict(title='Legacy', project_id=self.ids[0], provider_id=None,
                                           state='todo', session_key=None))
@@ -218,6 +256,7 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         self.assertEqual(self.profile.store.list_projects(), [])
 
     def test_stale_cas_does_not_materialize_and_move_preserves_uuid(self):
+        self.select(self.ids[0])
         old = self.workspace.save_item({'title': 'Global'})['item']
         actual = self.profile.store.save_item
         def race(fields, **kwargs):
@@ -227,7 +266,7 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         with patch.object(self.profile.store, 'save_item', side_effect=race):
             with self.assertRaisesRegex(WorkspaceError, 'item_changed'):
                 self.workspace.save_item(dict(id=old['id'], expected_revision=1, changes=changes), update=True)
-        self.assertEqual(self.profile.store.list_projects(), [])
+        self.assertEqual(len(self.profile.store.list_projects()), 1)
         moved = self.workspace.save_item(dict(id=old['id'], expected_revision=2, changes=changes), update=True)['item']
         self.assertEqual((moved['id'], moved['revision'], moved['state']), (old['id'], 3, 'review'))
 
@@ -283,6 +322,8 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         for headers in ({'X-Session-CSRF': ''}, {'Origin': ''}, {'Host': 'bad'}):
             self.assertNotEqual(self.request('/api/workspace/items', 'POST', body, headers)[0], 200)
         self.assertEqual(self.profile.store.list_projects(), [])
+        self.assertEqual(self.request('/api/workspace/items', 'POST', body)[0], 422)
+        self.select(self.ids[0])
         self.assertEqual(self.request('/api/workspace/items', 'POST', body)[0], 200)
 
     def test_legacy_task_cannot_bind_an_external_assignment_to_a_manual_project(self):

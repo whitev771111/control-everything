@@ -99,7 +99,10 @@ def validate_manifest(document):
     if (type(source['commit']) is not str or not re.fullmatch(r'[0-9a-f]{40}', source['commit'])
             or type(source['dirty']) is not bool or type(source['files_hash']) is not str or not HEX.fullmatch(source['files_hash'])):
         raise ManifestError('source_identity')
-    if canonical_json(document['compatibility']) != canonical_json({'native_protocol': 2, 'profile_identity': 1, 'management_schema': 2, 'profile_config': [1, 2, 3]}):
+    # Old immutable products remain verifiable during upgrade and maintenance.
+    compatibility = {'native_protocol': 2, 'profile_identity': 1, 'management_schema': 2}
+    if canonical_json(document['compatibility']) not in (
+            canonical_json({**compatibility, 'profile_config': versions}) for versions in ([1, 2, 3], [1, 2, 3, 4])):
         raise ManifestError('compatibility')
     native = document['native']
     exact(native, {'relative', 'manifest_sha256', 'mode'}, 'native_fields')

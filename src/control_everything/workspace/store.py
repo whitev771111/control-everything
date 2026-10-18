@@ -11,6 +11,7 @@ from uuid import uuid4
 from control_everything.input_validation import ProfileError
 from control_everything.workspace.validation import (
     project_id_valid, path_key, validate_project, validate_codex_project, finite_number, observation_owner,
+    imported_id_valid, validate_candidate_project,
 )
 from control_everything.workspace import task_schema as tasks
 from control_everything.workspace.task_schema import BASE_SCHEMA, MANAGEMENT_SCHEMA
@@ -195,11 +196,17 @@ class WorkspaceStore:
             return items
 
     def save_project(self, body, *, restore=False):
-        item = validate_project(body, restore=restore)
-        identity, stamp = item["id"], now_utc()
+        if type(body) is not dict:
+            raise ProfileError("invalid_project", "project")
+        identity, stamp = body.get("project_id" if restore else "id"), now_utc()
+        if identity is not None and not project_id_valid(identity):
+            raise ProfileError("invalid_project", "id")
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute("SELECT * FROM projects WHERE id=?", (identity,)).fetchone()
+            imported_edit = existing is not None and imported_id_valid(identity) and not restore
+            item = validate_project(body, restore=restore, allow_imported_id=imported_edit)
+            old_bindings = {tuple(row) for row in connection.execute("SELECT binding_id,path_key FROM project_directories WHERE project_id=?", (identity,))}
             marker = connection.execute("SELECT kind FROM project_sources WHERE project_id=?", (identity,)).fetchone()
             if marker is not None and marker[0] == "codex":
                 raise ProfileError("invalid_project", "id", message="read_only_project")
@@ -212,8 +219,10 @@ class WorkspaceStore:
                 raise ProfileError("not_found", "id", status=404)
             if existing is None and connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0] >= 1000:
                 raise ProfileError("invalid_project", "projects", message="project_budget_exceeded")
-            if not item["archived"]:
+            if imported_edit or not item["archived"]:
                 for binding in item["directories"]:
+                    if imported_edit and (binding["id"], binding["path_key"]) in old_bindings:
+                        continue
                     if connection.execute("""SELECT 1 FROM project_directories d JOIN projects p ON p.id=d.project_id
                         WHERE p.archived=0 AND d.path_key=? AND p.id!=?""", (binding["path_key"], identity or "")).fetchone():
                         raise ProfileError("directory_conflict", "directories", status=409)
@@ -229,6 +238,33 @@ class WorkspaceStore:
             connection.execute("INSERT INTO project_sources VALUES(?,?,?,?)", (identity, *(item["source"][key] for key in ("kind", "directory_id", "relative_path"))))
             tasks.bump_list_revision(connection)
         return next(row for row in self.list_projects() if row["id"] == identity)
+
+    def list_revision(self):
+        with self.connection() as connection:
+            return connection.execute('SELECT list_revision FROM task_center_meta WHERE id=1').fetchone()[0]
+
+    def join_candidate(self, projection, *, expected_revision):
+        project = (validate_codex_project(projection) if projection.get("source", {}).get("kind") == "codex"
+                   else validate_candidate_project(projection))
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute('SELECT list_revision FROM task_center_meta WHERE id=1').fetchone()[0] != expected_revision:
+                raise ProfileError("selection_conflict", status=409)
+            if connection.execute('SELECT 1 FROM projects WHERE id=?', (project['id'],)).fetchone():
+                return False
+            if project['source']['kind'] == 'codex':
+                self._materialize_codex_project(connection, projection)
+            else:
+                if connection.execute('SELECT COUNT(*) FROM projects').fetchone()[0] >= 1000:
+                    raise ProfileError('invalid_project', 'projects', message='project_budget_exceeded')
+                stamp = now_utc()
+                position = connection.execute('SELECT COALESCE(MAX(position),-1)+1 FROM projects').fetchone()[0]
+                connection.execute('INSERT INTO projects VALUES(?,?,?,?,?,?)', (project['id'], project['name'], 0, stamp, stamp, position))
+                connection.executemany('INSERT INTO project_directories VALUES(?,?,?,?,?)',
+                    [(project['id'], row['id'], row['path'], row['path_key'], int(row['id'] == 'main')) for row in project['directories']])
+                connection.execute('INSERT INTO project_sources VALUES(?,?,?,?)', (project['id'], 'none', None, None))
+            tasks.bump_list_revision(connection)
+        return True
 
     def manual_rows(self):
         with self.connection() as connection:

@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlsplit
 from control_everything.sessions.source import HOST, PORT, canonical_uuid
 from control_everything.sessions.codex_index import list_threads as list_codex_threads
 from control_everything.sessions.observer_client import ObserverClient
-from control_everything.http import observation_routes
+from control_everything.http import observation_routes, onboarding_routes
 from control_everything.workspace.progress import MANUAL, REGISTRY, TODOS, add_todo, board, set_progress, toggle_todo, load_todos
 from control_everything.integrations.launchers import LauncherCatalog, catalog, start
 from control_everything.integrations.desk import headlines, pulse
@@ -38,6 +38,7 @@ EXECUTION_ACTION_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)/(can
 PROFILE_POST = {"/api/profile/settings", "/api/profile/import", "/api/profile/observations", "/api/workspace/projects/save",
                 "/api/workspace/projects/restore", "/api/workspace/progress",
                 "/api/workspace/items", "/api/workspace/items/update"}
+PROFILE_POST.update(onboarding_routes.POST_ROUTES)
 PROFILE_CAPABILITIES = {"profile": True, "project_management": True, "execution": False,
                         "personal_launchers": False, "remote_sessions": False, "terminal": False, "workbench": False,
                         "quota": True, "news": True}
@@ -230,6 +231,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/progress.css": ("progress/progress.css", "text/css; charset=utf-8"),
             "/workspace": ("workspace/workspace.html", "text/html; charset=utf-8"),
             "/workspace.js": ("workspace/workspace.js", "text/javascript; charset=utf-8"),
+            "/onboarding.js": ("workspace/onboarding.js", "text/javascript; charset=utf-8"),
             "/project-space.js": ("workspace/project-space.js", "text/javascript; charset=utf-8"),
             "/task-center.js": ("workspace/task-center.js", "text/javascript; charset=utf-8"),
             "/execution.js": ("workspace/execution.js", "text/javascript; charset=utf-8"),
@@ -561,7 +563,9 @@ class PanelHandler(BaseHTTPRequestHandler):
     def profile_get(self, path):
         profile, workspace = self.profile(), self.server.workspace
         route = path.path
-        if route == "/api/bootstrap":
+        if route in onboarding_routes.GET_ROUTES:
+            onboarding_routes.handle_get(self, path)
+        elif route == "/api/bootstrap":
             if path.query:
                 raise ValueError("invalid_query")
             self.reply(200, {"csrf_token": self.server.csrf_token, "app": APP, "capabilities": self.server.capabilities})
@@ -659,10 +663,13 @@ class PanelHandler(BaseHTTPRequestHandler):
         try:
             body = self.read_json_body(max_bytes=262144 if route in ("/api/workspace/items", "/api/workspace/items/update") else
                 65536 if route == "/api/profile/observations" else 16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
-            if route in ("/api/workspace/items", "/api/workspace/items/update"):
+            if route in onboarding_routes.POST_ROUTES:
+                value = onboarding_routes.handle_post(self, route, body)
+            elif route in ("/api/workspace/items", "/api/workspace/items/update"):
                 value = self.server.workspace.save_item(body, update=route.endswith("/update"))
             elif route == "/api/profile/settings":
                 value = profile.settings(body)
+                self.server.workspace.selection.invalidate()
                 value["restart_required"] = self.server.startup_integrations is not None and profile.integrations() != self.server.startup_integrations
             elif route == "/api/profile/observations":
                 value = self.server.workspace.save_observation_settings(body)

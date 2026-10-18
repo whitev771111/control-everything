@@ -16,13 +16,14 @@ from control_everything.input_validation import ProfileError, absolute_path
 from control_everything.paths import default_profile_dir
 from control_everything.sessions import codex_index
 from control_everything.sessions import observation_settings as observations
+from control_everything.profiles import workbench_settings as workbench
 from control_everything.workspace.store import WorkspaceStore, WorkspaceError
 from control_everything.profiles.integration_settings import (
     EMPTY_INTEGRATIONS, InvalidSettings, integration_summary, validate_integrations,
 )
 
 DEFAULT_CONFIG = {"version": 2, "codex": {"enabled": False, "db_path": None}, "integrations": EMPTY_INTEGRATIONS}
-CONFIG_MAX_BYTES = 65536
+CONFIG_MAX_BYTES = 256 * 1024
 
 
 def unique_object(pairs):
@@ -64,11 +65,13 @@ def resolve_data_dir(data_dir=None, *, environ=None, platform=None, home=None):
 
 
 def validate_config(config):
-    if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] not in (1, 2, 3):
+    if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] not in (1, 2, 3, 4):
         raise ProfileError("invalid_config", "version")
     expected = {"version", "codex"} if config["version"] == 1 else {"version", "codex", "integrations"}
-    if config["version"] == 3:
+    if config["version"] >= 3:
         expected.add("observations")
+    if config["version"] == 4:
+        expected.add("workbench")
     if set(config) != expected:
         raise ProfileError("invalid_config", "version")
     codex = config["codex"]
@@ -79,10 +82,14 @@ def validate_config(config):
         raise ProfileError("invalid_config", "codex")
     if config["version"] >= 2:
         checked_integrations(config["integrations"])
-    if config["version"] == 3:
+    if config["version"] >= 3:
         observations.validate(config["observations"])
-        if config["observations"]["revision"] == 0:
+        if config["version"] == 3 and config["observations"]["revision"] == 0:
             raise ProfileError("invalid_config", "observations.revision")
+    if config["version"] == 4:
+        workbench.validate(config["workbench"])
+        if config["workbench"]["revision"] == 0:
+            raise ProfileError("invalid_config", "workbench.revision")
     return config
 
 
@@ -224,6 +231,8 @@ class Profile:
             original = self.config()
             config = normalized_config(original)
             config["codex"] = body["codex"]
+            if config["version"] == 4 and config["codex"] != original["codex"]:
+                config["workbench"]["revision"] = self._next_workbench_revision(config["workbench"])
             validate_config(config)
             if original["version"] == 1:
                 from control_everything.profiles.profile_import import create_backup
@@ -235,6 +244,53 @@ class Profile:
     def observation_guard(self):
         with self.config_lock, config_file_lock(self.data_dir):
             yield
+
+    selection_guard = observation_guard
+
+    @staticmethod
+    def _next_workbench_revision(value):
+        if value["revision"] >= workbench.MAX_REVISION:
+            raise ProfileError("invalid_config", "workbench.revision")
+        return value["revision"] + 1
+
+    def workbench_config(self):
+        return workbench.from_config(self.config())
+
+    def write_workbench_locked(self, original, value, *, codex=None):
+        """Caller owns selection_guard; publish exactly one profile update."""
+        config = normalized_config(original)
+        value = workbench.validate(value)
+        value["revision"] = self._next_workbench_revision(workbench.from_config(original))
+        config.update(version=4, workbench=value)
+        config.setdefault("observations", copy.deepcopy(observations.EMPTY))
+        if codex is not None:
+            config["codex"] = codex
+        validate_config(config)
+        if original["version"] < 4:
+            from control_everything.profiles.profile_import import create_backup
+            create_backup(self)
+        self._write_config(config)
+        return value
+
+    def save_source(self, body):
+        if (type(body) is not dict or set(body) != {"expected_revision", "provider", "enabled", "path"}
+                or type(body["expected_revision"]) is not int or body["provider"] not in ("codex", "claude", "opencode")
+                or type(body["enabled"]) is not bool
+                or body["path"] is not None and not workbench.local_path(body["path"])
+                or body["enabled"] and body["path"] is None):
+            raise ProfileError("invalid_config", "source")
+        with self.selection_guard():
+            original = self.config()
+            current = workbench.from_config(original)
+            if current["revision"] != body["expected_revision"]:
+                raise ProfileError("config_conflict", "workbench", status=409)
+            codex = None
+            if body["provider"] == "codex":
+                codex = {"enabled": body["enabled"], "db_path": body["path"]}
+            else:
+                current["sources"][body["provider"]] = {"enabled": body["enabled"], "path": body["path"]}
+            value = self.write_workbench_locked(original, current, codex=codex)
+        return {"status": "ok", "workbench_revision": value["revision"]}
 
     def observation_config(self):
         return observations.from_config(self.config())
@@ -268,9 +324,12 @@ class Profile:
                 raise ProfileError("invalid_config", "observations.revision")
             proposed["revision"] = current["revision"] + 1
             config = normalized_config(original)
-            config.update(version=3, observations=proposed)
+            new_kind = any(row["locator_kind"] == "native_executable" or row["provider_id"] == "opencode" for row in rows)
+            config.update(version=max(4 if new_kind else 3, config["version"]), observations=proposed)
+            if config["version"] == 4 and "workbench" not in config:
+                config["workbench"] = {**workbench.from_config(original), "revision": 1}
             validate_config(config)
-            if original["version"] < 3:
+            if original["version"] < config["version"]:
                 from control_everything.profiles.profile_import import create_backup
                 create_backup(self)
             self._write_config(config)

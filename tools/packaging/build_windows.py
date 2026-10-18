@@ -394,7 +394,7 @@ def write_product_manifest(stage, version, source):
             for name, path in sorted(files.items()) if name != 'product.json']
     document = {'schema': 1, 'product': 'session-panel', 'version': version, 'target': 'windows-x86_64',
                 'python': '3.13.16', 'source': source,
-                'compatibility': {'native_protocol': 2, 'profile_identity': 1, 'management_schema': 2, 'profile_config': [1, 2, 3]},
+                'compatibility': {'native_protocol': 2, 'profile_identity': 1, 'management_schema': 2, 'profile_config': [1, 2, 3, 4]},
                 'native': {'relative': api.NATIVE_EXE, 'manifest_sha256': api.sha256(Path(stage) / api.NATIVE_MANIFEST), 'mode': 'release'},
                 'files': rows}
     document['closure'] = api.manifest_closure(document)

@@ -80,9 +80,27 @@ class PayloadFixture(unittest.TestCase):
 class ManifestTests(PayloadFixture):
     def test_complete_closure_and_deterministic_version_identity(self):
         stage, document = self.payload()
+        self.assertEqual(document['compatibility']['profile_config'], [1, 2, 3, 4])
         self.assertEqual(MANIFEST.verify_payload(stage, strict_native=True), document)
         self.assertEqual(MANIFEST.manifest_closure(document), document['closure'])
         self.assertEqual([row['path'] for row in document['files']], sorted(row['path'] for row in document['files']))
+
+    def test_current_and_previous_profile_compatibility_remain_exact(self):
+        stage, document = self.payload()
+        document['compatibility']['profile_config'] = [1, 2, 3]
+        self.publish(stage, document)
+        self.assertEqual(MANIFEST.verify_payload(stage, strict_native=True), document)
+        for versions in ([1, 2], [1, 2, 3, 5], [1, 2, 3, 4, 5], [True, 2, 3, 4], [4, 3, 2, 1]):
+            with self.subTest(versions=versions):
+                document['compatibility']['profile_config'] = versions
+                self.publish(stage, document)
+                with self.assertRaisesRegex(MANIFEST.ManifestError, 'compatibility'):
+                    MANIFEST.verify_payload(stage)
+        document['compatibility']['profile_config'] = [1, 2, 3, 4]
+        document['compatibility']['management_schema'] = 3
+        self.publish(stage, document)
+        with self.assertRaisesRegex(MANIFEST.ManifestError, 'compatibility'):
+            MANIFEST.verify_payload(stage)
 
     def test_missing_or_corrupt_native_is_runtime_degradation_but_build_failure(self):
         stage, document = self.payload()

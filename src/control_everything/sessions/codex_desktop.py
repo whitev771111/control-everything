@@ -51,7 +51,7 @@ def _signature(path):
         return None
 
 
-def _config(path):
+def _config(path, *, projects_only=False):
     if not path.exists():
         return None
     if path.stat().st_size > MAX_CONFIG_BYTES:
@@ -64,7 +64,8 @@ def _config(path):
                        parse_constant=lambda _: (_ for _ in ()).throw(ValueError("invalid_config")))
     if not isinstance(value, dict):
         raise ValueError("invalid_config")
-    return {key: value[key] for key in CONFIG_KEYS if key in value}
+    keys = (CONFIG_KEYS[0], CONFIG_KEYS[3], CONFIG_KEYS[4], CONFIG_KEYS[5]) if projects_only else CONFIG_KEYS
+    return {key: value[key] for key in keys if key in value}
 
 
 def _host_value(config, key, directory):
@@ -138,7 +139,7 @@ def _select_text(column, maximum):
             + column + ",1," + str(maximum + 1) + ") ELSE 0 END")
 
 
-def _database(path):
+def _database(path, *, projects_only=False):
     connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.25)
     deadline = time.monotonic() + QUERY_SECONDS
     steps = 0
@@ -150,17 +151,20 @@ def _database(path):
     try:
         connection.execute("PRAGMA query_only=ON")
         connection.execute("BEGIN")
-        columns = _columns(connection, "threads")
-        if not {"id", "cwd", "created_at", "updated_at", "archived", "source", "project_id"} <= columns:
+        if projects_only and any(connection.execute("SELECT type FROM sqlite_master WHERE name=?", (table,)).fetchone() != ('table',)
+                                 for table in ('projects', 'project_roots')):
             raise ValueError("schema_unavailable")
-        counts = connection.execute("""SELECT COUNT(*), COALESCE(SUM(archived=1),0),
+        columns = _columns(connection, "threads") if not projects_only else {"project_id"}
+        if not projects_only and not {"id", "cwd", "created_at", "updated_at", "archived", "source", "project_id"} <= columns:
+            raise ValueError("schema_unavailable")
+        counts = (0, 0, 0, 0, 0) if projects_only else connection.execute("""SELECT COUNT(*), COALESCE(SUM(archived=1),0),
             COALESCE(SUM(substr(source,1,12)='{"subagent":'),0),
             COALESCE(SUM(source IS NULL OR (source NOT IN ('cli','exec','vscode')
                 AND substr(source,1,12)!='{"subagent":')),0),
             COALESCE(SUM(source IN ('cli','exec','vscode')),0) FROM threads""").fetchone()
         optional = [_select_text(field, MAX_TITLE if field != "project_id" else 36) if field in columns else "NULL"
                     for field in ("title", "name", "project_id")]
-        rows = connection.execute("SELECT " + _select_text("id", 36) + "," + _select_text("cwd", 4096)
+        rows = [] if projects_only else connection.execute("SELECT " + _select_text("id", 36) + "," + _select_text("cwd", 4096)
                                   + ",created_at,updated_at,archived,source," + ",".join(optional)
                                   + " FROM threads WHERE source IN ('cli','exec','vscode')"
                                   + " ORDER BY updated_at DESC,id ASC LIMIT ?", (MAX_THREADS + 1,)).fetchall()
@@ -275,7 +279,7 @@ def _merge(source_id, directory, config, database):
             "source_id": source_id, "projects": projects, "items": items, "coverage": coverage, "complete": complete}
 
 
-def read_desktop(db_path=None):
+def read_desktop(db_path=None, *, projects_only=False):
     """Read only explicitly selected local metadata; never discover a personal source."""
     if db_path is None:
         return _empty("source_disabled")
@@ -289,8 +293,8 @@ def read_desktop(db_path=None):
         watched = (path, path.with_name(path.name + "-wal"), config_path)
         for _ in range(2):
             before = tuple(_signature(file) for file in watched)
-            config = _config(config_path)
-            database = _database(path)
+            config = _config(config_path, projects_only=projects_only)
+            database = _database(path, projects_only=projects_only)
             result = _merge(source_id, path.parent, config, database)
             if before == tuple(_signature(file) for file in watched):
                 return result

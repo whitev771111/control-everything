@@ -202,7 +202,7 @@ node tests/e2e/verify_workspace.cjs --fixture
 实现者仅运行经代码核过的无listener合成合同；真实旧连接/多进程停写、CLI迁移恢复回退、HTTP/Edge以及全量discover由验收负责人承接并保存全部退出码、失败和清理收据。纯单测入口为 `tests.backend.test_task_store` 与 `tests.backend.test_task_migration`；它们只操作TemporaryDirectory，不是用户迁移验收。
 
 1. 在本机任务记录中写明目标、范围和实际验证结果；开始和结束均核对 `git status`、diff，注明未验证项。
-2. 当前采用直接提交并推送 main 的快速开发方式，不强制 PR、独立审查或等待远端 CI。需要并行隔离时再使用分支或 worktree；共用工作树先协调文件归属。
+2. 当前快速开发不强制 PR、独立审查或等待远端 CI；界面变更先在 develop 提供真实预览，项目主导者确认后才合入并推送 main。需要并行隔离时再使用分支或 worktree；共用工作树先协调文件归属。
 3. 执行与改动相称的本地验证；每次迭代独立提交，信息说明原因。代码、数据迁移和发布仍需各自实际验证，不能把未运行的检查称为通过。
 4. 按任务授权提交和推送。使用显式文件清单暂存并检查 staged diff，推送前检查上游和完整 outgoing commit 区间。不要将别人的未提交改动混入自己的提交。
 
@@ -294,4 +294,7 @@ Ctrl+C 停网关即可停本批查询，原 Claude/SSH/Zellij 对话继续运行
 
 项目工作空间由 `web/workspace/project-space.js` 负责项目导航、全部事项、待处理和会话展示，任务编辑与分页继续复用 `task-center.js` 的同一份事项。`attention` 查询范围在数据库分页前筛选人工状态为阻塞或待验收的事项；进程运行和普通待办不属于该范围。`workspace.js` 负责装配。
 
-本机 Codex 项目适配器为 `sessions/codex_desktop.py`：只读显式来源及相邻桌面配置，先合并归属再分页，不按目录合并项目。旧 `codex_index.py` 与六字段、12 条接口保持兼容。内部完整快照不直接返回工作台首页；会话页通过 `/api/workspace/codex/sessions` 分页获取。外部项目使用来源实例与项目 ID 的稳定身份，只读刷新不写管理库；首次事项保存才在同一事务内保存项目、目录、规范 `codex` 来源标记和事项。标记复用已有管理表与备份闭包，schema 和 manifest 版本保持；手工项目保存拒绝该来源，已有外部项目也不得通过伪造来源覆盖。来源陈旧、读取不完整或归属冲突不得授权新关联，原事项状态编辑须保留。
+本机 Codex 项目适配器为 `sessions/codex_desktop.py`：只读显式来源及相邻桌面配置，先合并归属再分页，不按目录合并项目。旧 `codex_index.py` 与六字段、12 条接口保持兼容。内部完整快照不直接返回工作台首页；会话页通过 `/api/workspace/codex/sessions` 分页获取。外部项目使用来源实例与项目 ID 的稳定身份，只读刷新不写管理库；用户显式加入时先在同一事务内保存项目、目录及规范 `codex` 来源标记，后续事项仍在同库事务内校验保存。标记复用已有管理表与备份闭包，schema 和 manifest 版本保持；手工项目保存拒绝该来源，已有外部项目也不得通过伪造来源覆盖。来源陈旧、读取不完整或归属冲突不得授权新关联，原事项状态编辑须保留。
+
+
+项目接入由 `sessions/project_sources.py` 提供固定三来源只读元数据，`workspace/project_selection.py` 负责显式加入和移出，`profiles/workbench_settings.py` 保存许可与移出意图，`http/onboarding_routes.py` 只装配请求。前端完整选择流程在 `web/workspace/onboarding.js`，主脚本负责刷新协调；资源必须同时纳入 HTTP、MANIFEST 和 build_assets 白名单。合成合同：`python -m unittest -v tests.backend.test_project_sources tests.backend.test_workbench_selection tests.backend.test_onboarding_routes` 与 `node --test tests/frontend/test_onboarding_ui.cjs`。真实产品启动和浏览器验收另由验收负责人留证。

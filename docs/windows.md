@@ -39,4 +39,7 @@ python tests/e2e/verify_installed_product.py --payload 'C:/example/build/payload
 python tests/e2e/verify_installed_product.py --payload 'C:/example/build-a/payload' --installer 'C:/example/build-a/setup.exe' --second-payload 'C:/example/build-b/payload' --second-installer 'C:/example/build-b/setup.exe' --evidence 'C:/example/acceptance/new-two-version-run'
 ```
 
-报告区分当前机器受控 PATH、14 个资源、运行时/原生状态、HTTP 维护阻塞、两个 profile、资料及备份保留等实际结果。第二组版本、真实资讯 Job 生命周期、桌面返回、可选 SSH、真实工具及干净 Win10/Win11 验证分别留证；某一项成功不能代替其他项。公开发布文件只取明确白名单，合成验收日志留在单独短期 Actions artifact，真实个人数据不上传。
+报告区分当前机器受控 PATH、前端资源、运行时/原生状态、HTTP 维护阻塞、两个 profile、资料及备份保留等实际结果。第二组版本、真实资讯 Job 生命周期、桌面返回、可选 SSH、真实工具及干净 Win10/Win11 验证分别留证；某一项成功不能代替其他项。公开发布文件只取明确白名单，合成验收日志留在单独短期 Actions artifact，真实个人数据不上传。
+
+
+新安装从“添加项目”进入三个默认工具，程序登记与项目来源读取各自确认；只展示用户选择加入的项目。非标准安装可登记本机 EXE，并手工添加项目目录。普通用户使用产品内运行时和原生组件，不需要 Node、Rust 或作者的预注册配置。来源格式范围、许可、移出及 v4 备份恢复行为见[使用指南](usage.md)。界面开发先提供 develop 真实预览，确认后合入 main；源码检查不能替代实际安装与浏览器验收。

@@ -190,3 +190,34 @@ test('quick and detail drafts retain identity across project and attention navig
   const saving = f.get('item-quick-form').fire('submit');
   assert.equal(f.writes[0].payload.project_id, 'p'); await settleWrite(f, saving);
 });
+
+for (const entry of ['quick', 'detail']) test(`${entry} permits an unlinked manual item in a selected Codex project while its source is unavailable`, async () => {
+  const projectId = 'cx-' + '1'.repeat(24);
+  const f = fixture(page([]), { projects: [{ id: projectId, name: 'Codex project', read_only: true, binding_available: false }] });
+  f.snapshot.codex_desktop = { status: 'unavailable' }; f.api.update(f.snapshot);
+  const loading = f.api.setContext({ projectId }); f.reads.at(-1).resolve(page([])); await loading;
+  let saving;
+  if (entry === 'quick') {
+    f.get('item-quick-title').value = 'Manual next step'; await f.get('item-quick-title').fire('input');
+    saving = f.get('item-quick-form').fire('submit');
+  } else {
+    f.api.open(); f.get('item-title').value = 'Manual next step';
+    assert.equal(f.get('item-session_key').value, ''); saving = f.get('item-form').fire('submit');
+  }
+  assert.equal(f.writes.length, 1); assert.equal(f.writes[0].payload.project_id, projectId);
+  assert.ok(!f.writes[0].payload.session_key);
+  await settleWrite(f, saving, { item: item({ title: 'Manual next step', project_id: projectId }) });
+});
+
+test('unavailable Codex source still blocks a new nonempty session association and openSession', async () => {
+  const projectId = 'cx-' + '1'.repeat(24), key = 'codex:00000000-0000-4000-8000-000000000009';
+  const session = { session_key: key, thread_id: key.slice(6), cwd: 'C:/example/project', assignment_state: 'assigned', project_id: projectId, binding_available: true };
+  const f = fixture(page([]), { projects: [{ id: projectId, name: 'Codex', read_only: true, binding_available: false }], sessions: [session] });
+  f.snapshot.codex_desktop = { status: 'stale' }; f.api.update(f.snapshot);
+  assert.equal(f.api.openSession(session, projectId), false);
+  const loading = f.api.setContext({ projectId }); f.reads.at(-1).resolve(page([])); await loading;
+  f.api.open(); f.get('item-title').value = 'Linked next step'; f.get('item-provider_id').value = 'codex';
+  await f.get('item-provider_id').fire('change'); f.get('item-session_key').value = key;
+  await f.get('item-form').fire('submit');
+  assert.equal(f.writes.length, 0); assert.match(f.get('item-feedback').textContent, /Codex 来源当前不能建立新关联/);
+});

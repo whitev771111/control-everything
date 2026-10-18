@@ -47,6 +47,8 @@ declare namespace WorkspaceObservationTypes {
     projects: readonly ProjectLabel[];
     start(options: Options): void;
     renderProjectRefs(): void;
+    onSaved(callback: () => void | Promise<void>): void;
+    configure(provider: string | null, candidate?: Candidate): Promise<void>;
   }
 }
 interface Window { WorkspaceObservation: WorkspaceObservationTypes.PublicApi; }

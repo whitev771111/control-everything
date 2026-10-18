@@ -251,6 +251,7 @@ function renderTodos() {
 }
 function renderProviders() {
   const root = $('providers-list'); root.replaceChildren();
+  const other = el('details', 'technical-details'); other.append(el('summary', '', '其他接入'));
   const discovery = { found: '已发现命令', not_found: '未发现命令', unknown: '发现状态未知' };
   for (const provider of app.snapshot.providers) {
     const row = el('article', 'provider-row'), heading = el('div', 'provider-heading'), name = el('div'), detail = el('div', 'provider-details'), badges = el('div', 'capabilities'), links = el('div', 'provider-links');
@@ -274,8 +275,10 @@ function renderProviders() {
       const explanation = el('details', 'provider-explanation'); explanation.append(el('summary', '', '能力说明'), el('p', '', provider.observation_note)); detail.append(explanation);
     } else detail.append(el('p', '', provider.observation_note));
     if (!app.profileMode) for (const entry of provider.entrypoints || []) links.append(link(`${entry.label} ↗`, entry.href));
-    row.append(heading, detail, links); root.append(row);
+    row.append(heading, detail, links);
+    if (app.profileMode && !['codex', 'claude', 'opencode'].includes(provider.id)) other.append(row); else root.append(row);
   }
+  if (other.children.length > 1) root.append(other);
   if (!app.profileMode) window.WorkspaceExecution?.refresh();
   const sessions = app.snapshot.sessions; $('sessions-list').replaceChildren();
   $('sessions-status').textContent = sessions.available ? `本机身份元数据 · 当前 ${sessions.items.length} / ${sessions.total_visible} 条可见记录（每页最多 ${sessions.limit} 条）· ${dateTime(sessions.sampled_at)} 采样。活动与完成未知。` : reason(sessions.reason);
@@ -286,27 +289,56 @@ function renderProviders() {
     $('sessions-list').append(row);
   }
 }
-async function loadBase() {
-  $('refresh-workspace').disabled = true;
-  try {
-    const snapshot = await api('/api/workspace');
-    if (snapshot.status !== 'ok') throw new Error('工作空间尚未返回可用数据');
-    app.snapshot = snapshot;
-    if (app.profileMode && window.WorkspaceObservation) window.WorkspaceObservation.projects = snapshot.projects.items;
-    $('today').textContent = `${snapshot.today} · 北京时间`;
-    message('workspace-status', `更新于 ${dateTime(snapshot.sampled_at)}`);
-    const selectedFilter = $('project-filter').value;
-    fillOptions($('project-filter'), [['', '全部项目'], ...snapshot.projects.items.map(item => [item.id, item.name])], selectedFilter);
-    if (!$('project-filter').value) $('project-filter').value = '';
-    $('new-task').disabled = !app.csrf || snapshot.projects.status !== 'available' || !snapshot.projects.items.some(item => !item.archived) || snapshot.tasks.status !== 'available';
-    if (app.profileMode) app.taskCenter?.update(snapshot);
-    app.projectSpace?.update(snapshot);
-    if (!app.projectSpace) renderStats();
-    if (!app.projectSpace || app.view === 'projects') renderProjects();
-    if (!app.profileMode) { renderTasks(); renderTodos(); }
-    renderProviders();
-  } catch (error) { message('workspace-status', error.message, true); }
-  finally { $('refresh-workspace').disabled = false; }
+async function loadBase(options = {}) {
+  const state = app.baseRefresh ||= { requestId: 0, dirty: false, pendingRefresh: false, inFlight: null };
+  if (state.inFlight) { state.pendingRefresh = true; return state.inFlight; }
+  const editing = () => Boolean(app.taskCenter?.isEditing?.() || $('project-dialog')?.open || $('registration-settings')?.open || app.onboarding?.isEditing());
+  const retry = $('refresh-workspace');
+  if (retry) retry.disabled = true;
+  state.inFlight = (async () => {
+    try {
+      do {
+        state.pendingRefresh = false;
+        const requestId = ++state.requestId;
+        const snapshot = await api('/api/workspace');
+        if (requestId !== state.requestId || state.pendingRefresh) continue;
+        if (snapshot.status !== 'ok') throw new Error('工作空间尚未返回可用数据');
+        state.dirty = editing();
+        if (options.background && state.dirty) { state.pendingSnapshot = snapshot; message('workspace-status', '有更新；编辑结束后自动显示。'); break; }
+        state.pendingSnapshot = null;
+        app.snapshot = snapshot;
+        if (app.profileMode && window.WorkspaceObservation) window.WorkspaceObservation.projects = snapshot.projects.items;
+        $('today').textContent = `${snapshot.today} · 北京时间`;
+        message('workspace-status', `更新于 ${dateTime(snapshot.sampled_at)}`);
+        const selectedFilter = $('project-filter').value;
+        fillOptions($('project-filter'), [['', '全部项目'], ...snapshot.projects.items.map(item => [item.id, item.name])], selectedFilter);
+        if (!$('project-filter').value) $('project-filter').value = '';
+        $('new-task').disabled = !app.csrf || snapshot.projects.status !== 'available' || !snapshot.projects.items.some(item => !item.archived) || snapshot.tasks.status !== 'available';
+        if (app.profileMode) app.taskCenter?.update(snapshot);
+        app.projectSpace?.update(snapshot);
+        if (!app.projectSpace) renderStats();
+        if (!app.projectSpace || app.view === 'projects') renderProjects();
+        if (!app.profileMode) { renderTasks(); renderTodos(); }
+        renderProviders();
+        if (retry) retry.hidden = true;
+      } while (state.pendingRefresh);
+    } catch (error) { message('workspace-status', error.message, true); if (retry) retry.hidden = false; }
+    finally { if (retry) retry.disabled = false; }
+  })();
+  try { await state.inFlight; } finally { state.inFlight = null; }
+}
+
+function setupAutomaticRefresh() {
+  let timer, debounce;
+  const refresh = () => { if (!document.hidden) { loadBase({ background: true }); app.onboarding?.refresh(); } };
+  const schedule = () => { clearTimeout(debounce); if (!document.hidden) debounce = setTimeout(refresh, 1000); };
+  const visibility = () => { clearInterval(timer); clearTimeout(debounce); if (!document.hidden) { timer = setInterval(refresh, 30000); schedule(); } };
+  document.addEventListener('visibilitychange', visibility);
+  window.addEventListener('focus', schedule);
+  window.addEventListener('pagehide', () => { clearInterval(timer); clearTimeout(debounce); });
+  window.addEventListener('pageshow', visibility);
+  document.addEventListener('focusout', () => { if (app.baseRefresh?.pendingSnapshot) schedule(); });
+  visibility();
 }
 
 function sessionOptions(selected = '') {
@@ -372,7 +404,7 @@ async function loadUsage(refresh = false) {
 }
 for (const button of document.querySelectorAll('[data-view]')) button.addEventListener('click', () => showView(button.dataset.view));
 for (const button of document.querySelectorAll('[data-go]')) button.addEventListener('click', () => showView(button.dataset.go));
-$('refresh-workspace').addEventListener('click', loadBase);
+$('refresh-workspace')?.addEventListener('click', loadBase);
 $('all-tasks').addEventListener('click', () => showView('tasks'));
 $('project-filter').addEventListener('change', () => { if (!app.profileMode && app.snapshot) renderTasks(); });
 $('state-filter').addEventListener('change', () => { if (!app.profileMode && app.snapshot) renderTasks(); });
@@ -392,7 +424,9 @@ async function bootstrap() {
   else { window.WorkspaceExecution?.init({ api, post, showView, getSnapshot: () => app.snapshot });
     if (!window.WorkspaceExecution) message('execution-status', '执行页面资源尚未就绪；请在新版服务启动后刷新。现有任务仍可使用。', true); }
   if (app.profileMode) window.WorkspaceObservation?.start({ fetchJson: api, postJson: post });
+  if (app.profileMode) window.WorkspaceObservation?.onSaved?.(loadBase);
   await Promise.allSettled([loadBase(), loadUsage()]);
+  if (app.profileMode) setupAutomaticRefresh();
   if (!app.profileMode) window.WorkspaceExecution?.onView(app.view);
 }
 function action(label, callback) {
@@ -443,7 +477,10 @@ function setupProfile() {
   fillOptions(scope, [['all', '全部项目记录'], ['active', '活动项目'], ['archived', '归档项目'], ['orphan', '未登记项目']], 'all');
   $('project-filter').parentElement.prepend(scope);
   scope.addEventListener('change', () => { app.pages.tasks = 0; loadTasks().catch(error => message('tasks-status', error.message, true)); });
-  $('new-project').addEventListener('click', () => openProject()); $('empty-add-project').addEventListener('click', () => openProject());
+  app.onboarding = window.WorkspaceOnboarding?.create({ dialog: $('onboarding-dialog'), fetchJson: api, postJson: post,
+    onChanged: loadBase, manual: () => openProject(), manage: () => showView('projects'),
+    configure: (provider, candidate) => { showView('settings'); window.WorkspaceObservation?.configure?.(provider, candidate); } });
+  $('new-project').addEventListener('click', () => app.onboarding?.open()); $('empty-add-project').addEventListener('click', () => app.onboarding?.open());
   $('empty-import').addEventListener('click', () => { showView('settings'); $('import-source-dir').focus(); });
   $('empty-settings').addEventListener('click', () => { showView('settings'); $('codex-db-path').focus(); });
   $('cancel-project').addEventListener('click', () => { $('project-form').hidden = true; $('project-dialog').close(); });
@@ -471,7 +508,13 @@ function setupTaskCenter() {
   app.projectSpace = window.WorkspaceProjectSpace?.create({
     root: $('project-space'), navigation: $('project-navigation'), taskRoot: $('task-center-root'), tasks: app.taskCenter,
     navigate: showView,
-    manage: project => { openProject(project); },
+    manage: project => { if (project) openProject(project); else app.onboarding?.open(); },
+    manual: () => openProject(),
+    remove: async project => {
+      if (app.taskCenter?.isEditing?.() || $('project-dialog').open) { message('workspace-status', '请先保存或关闭当前草稿，再移出项目。', true); return; }
+      try { await app.onboarding.remove(project); showView('overview'); }
+      catch (error) { message('workspace-status', `${error.message}。项目与草稿仍保留。`, true); }
+    },
     readSessions: params => api(`/api/workspace/codex/sessions?${new URLSearchParams(params)}`),
     onSession: (session, projectId) => {
       if (!app.taskCenter.openSession(session, projectId)) return;
@@ -574,7 +617,15 @@ async function saveProject(event) {
   $('project-fields').disabled = true;
   try { const result = await post(route, body); if (result.status !== 'ok' || !result.project) throw new Error('服务未确认保存');
     $('project-form').hidden = true; await loadBase(); await loadProfile(true); openManual(app.snapshot.projects.items.find(item => item.id === result.project.id));
-  } catch (error) { fieldError('project-feedback', error, { name: $('project-name'), source: $('project-source-kind'), 'source.relative_path': $('project-source-path'), 'source.directory_id': $('project-source-directory') }); }
+  } catch (error) {
+    fieldError('project-feedback', error, { name: $('project-name'), source: $('project-source-kind'), 'source.relative_path': $('project-source-path'), 'source.directory_id': $('project-source-directory') });
+    if (error.reason === 'directory_conflict') {
+      const key = path => path.replaceAll('\\', '/').replace(/\/+$/, '').toLocaleLowerCase();
+      const existing = app.snapshot.projects.items.filter(project => project.id !== body.id && project.directories.some(binding => body.directories.some(value => key(value.path) === key(binding.path))));
+      for (const project of existing) $('project-feedback').append(action(`打开已有项目 · ${project.name}`, () => { $('project-dialog').close(); app.projectSpace?.open(project.id); }));
+      $('project-feedback').append(action('查看之前管理过的项目并重新加入', () => { $('project-dialog').close(); return app.onboarding?.open(); }));
+    }
+  }
   finally { $('project-fields').disabled = false; }
 }
 async function archiveProject(project) {

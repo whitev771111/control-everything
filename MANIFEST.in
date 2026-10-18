@@ -6,6 +6,7 @@ recursive-include src/control_everything *.py
 include web/sessions/index.html web/sessions/app.js web/sessions/style.css
 include web/progress/progress.html web/progress/progress.js web/progress/progress.css
 include web/workspace/workspace.html web/workspace/workspace.js web/workspace/workspace.css
+include web/workspace/onboarding.js
 include web/workspace/task-center.js
 include web/workspace/project-space.js web/workspace/execution.js web/workspace/observation.js
 include web/workspace/news.js web/workspace/quota.js

@@ -64,6 +64,17 @@ test('project content navigation and settings appear only in the main panel', ()
   f.click('待处理'); assert.equal(f.routes.at(-1), 'project/p/attention');
 });
 
+test('same-named imported projects expose distinct source badges and navigation labels', () => {
+  const f = fixture();
+  const projects = ['cl-', 'oc-', 'cx-'].map(prefix => ({ ...f.project, id: prefix + '1'.repeat(24), name: 'Local tools' }));
+  f.api.update({ projects: { status: 'available', items: projects }, sessions: { available: false, items: [] } });
+  f.api.show('overview');
+  assert.match(f.root.textContent, /来自 Claude Code/); assert.match(f.root.textContent, /来自 OpenCode/); assert.match(f.root.textContent, /来自 Codex/);
+  assert.equal(new Set(f.navigation.children.map(value => value.attributes['aria-label'])).size, 3);
+  assert.match(f.navigation.children[0].textContent, /Claude Code/); assert.match(f.navigation.children[1].title, /OpenCode/);
+  assert.doesNotMatch(f.navigation.textContent, /已连接|实时/);
+});
+
 for (const route of ['overview', 'records', 'materials', 'unknown', undefined]) test(`old or unknown project route ${route} falls back to all items without losing draft`, () => {
   const f = fixture(), input = new Element('input'); input.value = 'keep draft'; f.taskRoot.append(input);
   f.api.route('p', 'sessions'); f.api.show('project');

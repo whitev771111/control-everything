@@ -2,7 +2,7 @@
 'use strict';
 (() => {
   const tabs = { tasks: '全部事项', attention: '待处理', sessions: '会话' };
-  function create({ root, navigation, taskRoot, tasks, navigate, manage, readSessions, onSession }) {
+  function create({ root, navigation, taskRoot, tasks, navigate, manage, manual, remove, readSessions, onSession }) {
     let snapshot = null, selected = null, tab = 'tasks', view = 'overview';
     let sessionScope = 'active', sessionKey = '', sessionPage = null, sessionRequest = 0, sessionReading = false, sessionError = '', sampleKey = '';
     const taskHome = taskRoot.parentElement;
@@ -18,6 +18,7 @@
     const project = () => snapshot?.projects.items.find(item => item.id === selected);
     const blank = text => node('p', 'empty-state', text);
     const attention = item => (item.task_counts?.blocked || 0) + (item.task_counts?.review || 0);
+    const origin = item => item.id.startsWith('cl-') ? '来自 Claude Code · 人工管理' : item.id.startsWith('oc-') ? '来自 OpenCode · 人工管理' : item.id.startsWith('cx-') || item.source?.kind === 'codex' ? '来自 Codex' : '手工项目';
     function open(id, next = 'tasks') {
       selected = id; tab = next; navigate(`project/${encodeURIComponent(id)}/${next}`);
     }
@@ -27,8 +28,9 @@
         if (item.archived && item.id !== selected) continue;
         const value = button(item.name, () => open(item.id), 'project-nav-button');
         value.dataset.initial = [...item.name][0] || 'P';
-        value.setAttribute('aria-label', item.name);
-        value.title = item.name;
+        value.setAttribute('aria-label', `${item.name} · ${origin(item)}`);
+        value.title = `${item.name} · ${origin(item)}`;
+        if (item.id.startsWith('cl-') || item.id.startsWith('oc-') || item.id.startsWith('cx-')) value.append(node('small', 'project-nav-origin', origin(item).split(' · ')[0]));
         if (view === 'project' && selected === item.id) value.setAttribute('aria-current', 'page');
         navigation.append(value);
       }
@@ -41,7 +43,11 @@
       if (!snapshot) { root.append(blank('正在读取项目…')); return; }
       if (snapshot.projects.status !== 'available') { root.append(blank('项目读取失败，请刷新重试。')); return; }
       const items = snapshot.projects.items.filter(item => !item.archived);
-      if (!items.length) root.append(blank('添加一个项目，或先记下一条全局事项。'));
+      if (!items.length) {
+        root.append(blank('选择已有项目加入工作台；也可以手工登记目录。'));
+        root.append(button('选择已有项目', () => manage(null), 'button primary'));
+        if (manual) root.append(button('手工添加目录', manual));
+      }
       const grid = node('div', 'project-cards');
       for (const item of items) {
         const card = node('article', 'project-card');
@@ -64,12 +70,14 @@
         }
         card.append(distribution);
         const meta = node('div', 'project-card-meta');
+        meta.append(node('span', 'badge', origin(item)));
         meta.append(node('span', '', `${item.task_counts?.total || 0} 项任务`));
         const states = [['doing', '进行中'], ['review', '待验收'], ['blocked', '阻塞'], ['done', '完成'], ['todo', '待办']];
         const distributionLabel = states.filter(([key]) => item.task_counts?.[key]).map(([key, label]) => `${label} ${item.task_counts[key]}`).join(' · ');
         if (distributionLabel) meta.append(node('span', 'project-state-caption', distributionLabel));
         if (item.manual_recorded) meta.append(node('span', '', `人工 · ${item.state}${typeof item.percent === 'number' ? ` ${item.percent}%` : ''}`));
         meta.append(button('进入项目 →', () => open(item.id), 'text-button'));
+        if (remove) meta.append(button('移出工作台', () => remove(item), 'text-button'));
         card.append(meta); grid.append(card);
       }
       root.append(grid);
@@ -142,11 +150,14 @@
       if (!item) { root.append(blank(snapshot ? '项目已不存在，请从左侧重新选择。' : '正在读取项目…')); return; }
       const header = node('div', 'section-heading');
       header.append(node('h2', '', item.name));
+      header.append(node('span', 'badge', origin(item)));
       if (item.read_only || item.source?.kind === 'codex') {
         header.append(node('span', 'badge', 'Codex · 只读'), button('来源设置', () => navigate('settings')));
       } else header.append(button('项目设置', () => manage(item)));
+      if (remove) header.append(button('移出工作台', () => remove(item)));
       header.setAttribute('class', 'section-heading project-heading');
       root.append(header);
+      if (remove) root.append(node('p', 'section-note', '移出保留事项与历史，之后可重新加入。'));
       const navigation = node('nav', 'project-tabs'); navigation.setAttribute('aria-label', '项目内容');
       for (const [key, label] of Object.entries(tabs)) {
         const value = button(label, () => open(item.id, key), 'project-tab');

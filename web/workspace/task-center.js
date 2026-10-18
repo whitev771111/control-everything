@@ -82,8 +82,7 @@
     function syncBusy() {
       quickFields.disabled = editorFields.disabled = writing || !canWrite();
       heading.lastElementChild.disabled = writing || !canWrite();
-      if (!bindingAllowed(quickProject ?? contextProject)) quickSave.disabled = true;
-      else quickSave.disabled = writing || !canWrite();
+      quickSave.disabled = writing || !canWrite();
       refreshButton.disabled = reading;
       for (const control of [scope, project, provider, state]) control.disabled = reading;
       for (const control of list.querySelectorAll('button')) control.disabled = writing || !canWrite();
@@ -99,7 +98,7 @@
         const copy = node('div', 'task-copy'), meta = node('div', 'task-meta');
         copy.append(node('strong', 'item-title-copy', item.title));
         meta.append(node('span', `task-state state-${item.state}`, `${states[item.state] || '未知'} · 手工`),
-          node('span', '', projectName(item.project_id)), node('span', '', providers[item.provider_id] || item.provider_id || '未分配工具'));
+          node('span', '', item.project_excluded ? `${item.project_name || item.project_id}（已移出）` : projectName(item.project_id)), node('span', '', providers[item.provider_id] || item.provider_id || '未分配工具'));
         if (item.session_key) meta.append(node('span', '', { verified: '会话关联已核验', not_in_current_sample: '关联暂不在当前样本', project_mismatch: '关联与项目不匹配' }[item.session_link_state] || '关联状态未知'));
         const rowActions = node('div', 'task-actions'); rowActions.append(button('编辑详情', () => open(item)));
         if (onProject && projects.some(project => project.id === item.project_id)) rowActions.append(button('打开项目', () => onProject(item.project_id)));
@@ -145,8 +144,8 @@
     function checkBinding() {
       const target = controls.project_id.value;
       const associationChanged = editingId === null || ['project_id', 'provider_id', 'session_key'].some(key => controls[key].value !== initialFields[key]);
-      if (associationChanged && !bindingAllowed(target)) throw new Error(issues.codex_binding_unavailable);
       const key = controls.session_key.value, selected = pickedSessions.get(key) || sessions.find(row => row.session_key === key);
+      if (associationChanged && key && !bindingAllowed(target)) throw new Error(issues.codex_binding_unavailable);
       if (!associationChanged || !key || !selected) return;
       if (selected.binding_available === false || ['unknown', 'conflict'].includes(selected.assignment_state) || (pickedSessions.has(key) && desktopStatus && desktopStatus !== 'available')) throw new Error(issues.codex_binding_unavailable);
       const targetProject = projects.find(row => row.id === target);
@@ -231,7 +230,7 @@
       const payload = { title: quickTitle.value.trim() };
       const targetProject = quickProject ?? contextProject;
       if (targetProject) payload.project_id = targetProject;
-      try { if (!bindingAllowed(targetProject)) throw new Error(issues.codex_binding_unavailable); validate(payload, payload.title, 2000); }
+      try { validate(payload, payload.title, 2000); }
       catch (error) { feedback(quickFeedback, `${error.message} 输入已保留。`, true); return; }
       await write(payload, quickFeedback, () => { quickTitle.value = ''; quickProject = null; hint.hidden = true; });
     });
@@ -287,6 +286,7 @@
       return refresh(0);
     }
     return { update, refresh, open, openSession, setContext,
+      isEditing: () => writing || dialog.open || Boolean(quickTitle.value),
       filterState(value) { state.value = value; return refresh(0); },
       filterProject(id) { return setContext({ projectId: id }); } };
   }

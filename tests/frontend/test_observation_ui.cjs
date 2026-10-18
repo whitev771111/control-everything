@@ -80,7 +80,7 @@ test('profile capability setup keeps local registration navigation visible when 
     }
     return nodes.get(id);
   };
-  const context = vm.createContext({ $: node, app: { capabilities: {}, view: 'overview', pages: {} },
+  const context = vm.createContext({ $: node, window: {}, api() {}, post() {}, loadBase() {}, app: { capabilities: {}, view: 'overview', pages: {} },
     document: { querySelector(selector) {
       if (selector === '#agents-view .section-heading a') return node('open-registration-settings');
       return node(selector);
@@ -321,7 +321,7 @@ test('legal no-sample snapshot is consumed with unknown coverage and no invented
   f.reads[0].resolve({ status: 'unknown', reason: 'connecting', sampled_at_ms: null, generation: null, config_revision: null, config_hash: null,
     coverage: { status: 'unknown' }, installations: [], resources: [], instances: [], project_refs: [], unassigned: [] });
   await tick();
-  assert.match(f.node('observation-status').textContent, /覆盖未知/);
+  assert.match(f.node('observation-resource-summary').textContent, /覆盖未知/);
   assert.doesNotMatch(f.node('observation-status').textContent, /观察读取失败/);
   assert.match(f.node('native-instances').textContent, /数量未知/);
   assert.equal(f.writes.length, 0);
@@ -334,7 +334,8 @@ for (const mode of ['missing', 'null', 'minimal', 'nullable']) test(`observed re
   if (mode === 'minimal') value.registrations = [{ registration_id: registrationId, status: 'pending' }];
   if (mode === 'nullable') value.registrations = [{ registration_id: registrationId, status: 'future_status', label: null, category: null, can_pick: null, reason: null }];
   f.reads[0].resolve(value); await tick();
-  assert.match(f.node('observation-status').textContent, /可用.*覆盖未知/);
+  assert.match(f.node('observation-status').textContent, /可用/);
+  assert.match(f.node('observation-resource-summary').textContent, /覆盖未知/);
   if (mode === 'minimal' || mode === 'nullable') {
     assert.match(f.node('native-registrations').textContent, /已登记工具.*安装未核验/);
     assert.equal(pickerButton(f).disabled, true);
@@ -350,8 +351,8 @@ for (const mode of ['missing', 'null']) test(`same-version settings accept ${mod
   if (mode === 'missing') { delete settings.validation; delete settings.application; }
   else { settings.validation = null; settings.application = null; }
   await openSettings(f, settings);
-  assert.match(f.node('registrations-status').textContent, /已应用同版本新样本/);
-  assert.match(f.node('registrations-list').textContent, /安装未核验.*运行与会话查看观察页/);
+  assert.match(f.node('registrations-status').textContent, /登记已应用/);
+  assert.match(f.node('registrations-list').textContent, /文件身份待核验.*运行与会话查看观察页/);
   assert.equal(f.writes.length, 0);
 });
 
@@ -360,7 +361,7 @@ test('actual profile_intent pending validation stays separate from persisted reg
   const value = settingsSnapshot([configuredRow()], 2);
   value.validation = [{ registration_id: registrationId, status: 'pending', reason: 'config_pending', source: 'profile_intent', sampled_at_ms: null, duplicate_of_id: null }];
   await openSettings(f, value);
-  assert.match(f.node('registrations-list').textContent, /安装未核验.*等待后台应用/);
+  assert.match(f.node('registrations-list').textContent, /文件身份待核验.*等待后台应用/);
   assert.doesNotMatch(f.node('registrations-list').textContent, /安装已核验/);
   assert.equal(f.writes.length, 0);
 });

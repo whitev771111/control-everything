@@ -101,7 +101,8 @@
     if (value.category === 'custom_exe') return value.provider_id === null && value.locator_kind === 'executable';
     if (value.category !== 'builtin') return false;
     return (value.provider_id === 'codex' && (value.locator_kind === 'npm_command' || value.locator_kind === 'codex_desktop'))
-      || ((value.provider_id === 'claude' || value.provider_id === 'pi') && value.locator_kind === 'npm_command')
+      || ((value.provider_id === 'claude' || value.provider_id === 'opencode') && (value.locator_kind === 'npm_command' || value.locator_kind === 'native_executable'))
+      || (value.provider_id === 'pi' && value.locator_kind === 'npm_command')
       || (value.provider_id === 'hermes' && value.locator_kind === 'hermes_launcher');
   }
   function isSettings(value: unknown): value is Settings {
@@ -137,6 +138,7 @@
   function cpu(value: number | null) { return typeof value === 'number' ? `CPU ${value.toFixed(1)}%（单核）` : 'CPU 未知'; }
   let current: Snapshot | null = null;
   let api: WorkspaceObservationTypes.Options['fetchJson'], post: WorkspaceObservationTypes.Options['postJson'];
+  let saved: (() => void | Promise<void>) | undefined;
   let timer: number | undefined, polling = false, started = false;
   let expiryTimer: number | undefined, readTimer: number | undefined, instanceButtons: HTMLButtonElement[] = [];
   let pickerNonce = 0, pickerSelection: WorkspaceObservationTypes.PickerSelection | null = null, pickerTimer: number | undefined, picking = false, actionPending = false;
@@ -187,10 +189,10 @@
     if (pickerSelection && (pickerSelection.generation !== current.generation || !samePair(pickerSelection, current) || ['stale', 'unavailable'].includes(current.status))) clearPicker();
     const root = $('native-instances'); root.replaceChildren();
     const coverage = current.coverage.status === 'complete' ? '覆盖完整（仅支持入口）' : current.coverage.status === 'limited' ? '覆盖受限' : '覆盖未知';
-    $('observation-status').textContent = `${states[current.status] || '未知'} · 当前用户 Windows 本机 · ${coverage} · ${current.reason ? note(current.reason) : '安装、存活进程、资源与会话来源分别核验。'}`;
+    $('observation-status').textContent = `${states[current.status] || '未知'} · ${current.reason ? note(current.reason) : '本机工具状态已更新；项目来源分别配置。'}`;
     const installations = $('native-installations'); installations.replaceChildren();
     for (const item of current.installations) {
-      installations.append(node('span', 'badge', `${prefix}${names[item.provider_id] || item.provider_id} · 安装${states[item.status] || '未知'}${item.version ? ` · ${item.version}` : ''}`));
+      if (['codex', 'claude', 'opencode'].includes(item.provider_id)) installations.append(node('span', 'badge', `${prefix}${names[item.provider_id] || item.provider_id} · ${item.status === 'available' ? '本机存在' : '未发现受支持入口'}${item.version ? ` · ${item.version}` : ''}`));
     }
     const registered = $('native-registrations'); registered.replaceChildren(); pickerButtons = [];
     for (const item of current.registrations ?? []) {
@@ -205,7 +207,7 @@
     const resources = new Map(current.resources.map(item => [item.resource_id, item]));
     const rssValues = [...resources.values()].map(item => item.rss_bytes);
     const rss = resources.size && rssValues.every(isFiniteNumber) ? rssValues.reduce((sum, value) => sum + value, 0) : null;
-    $('observation-resource-summary').textContent = `${prefix}${resources.size} 份独立资源 · ${bytes(rss)} · 共享宿主只计一次；不按项目分摊。`;
+    $('observation-resource-summary').textContent = `${coverage} · ${current.reason ? note(current.reason) : ''} · ${prefix}${resources.size} 份独立资源 · ${bytes(rss)} · 共享宿主只计一次；不按项目分摊。`;
     if (!current.instances.length) root.append(node('p', 'section-note', current.status === 'available' && current.coverage.status === 'complete' ? '本次覆盖内未发现已认领实例。' : '当前实例数量未知，不能据此判定没有运行。'));
     const projectNames = new Map((window.WorkspaceObservation.projects || []).map(item => [item.id, item.name]));
     for (const instance of current.instances) {
@@ -308,22 +310,37 @@
     editId = row?.id || null;
     $('registration-category').value = row?.category || 'builtin';
     $('registration-provider').value = row?.provider_id || 'codex';
+    locatorOptions();
     $('registration-locator').value = row?.locator_kind === 'executable' ? 'npm_command' : row?.locator_kind || 'npm_command';
     $('registration-label').value = row?.label || '';
     $('registration-path').value = row?.path || '';
     $('registration-enabled').checked = row?.enabled ?? true;
     $('registration-confirm').checked = false;
   }
+  function locatorOptions() {
+    const provider = $('registration-provider').value;
+    const allowed: Record<string, [string, string][]> = {
+      codex: [['npm_command', 'npm 命令文件'], ['codex_desktop', 'Codex 桌面 EXE']],
+      claude: [['native_executable', '本机 EXE · 用户确认'], ['npm_command', 'npm 命令文件']],
+      opencode: [['native_executable', '本机 EXE · 用户确认'], ['npm_command', 'npm 命令文件']],
+      pi: [['npm_command', 'npm 命令文件']], hermes: [['hermes_launcher', 'Hermes Python launcher']],
+    };
+    $('registration-locator').replaceChildren(...(allowed[provider] || []).map(([value, label]) => {
+      const option = node('option', '', label); option.value = value; return option;
+    }));
+    $('registration-provider').disabled = $('registration-category').value === 'custom_exe';
+    $('registration-locator').disabled = $('registration-category').value === 'custom_exe';
+  }
   function renderSettings() {
     const root = $('registrations-list'); root.replaceChildren();
     if (!settingsValue) return;
     const live = current?.status === 'available' && samePair(current, { config_revision: settingsValue.revision, config_hash: settingsValue.hash });
-    $('registrations-status').textContent = `已保存版本 ${settingsValue.revision} · ${live ? '后台已应用同版本新样本' : note(settingsValue.application?.reason || 'config_pending')} · 安装、运行、会话与返回分别核验。`;
+    $('registrations-status').textContent = live ? '登记已应用。程序与项目来源分别配置。' : note(settingsValue.application?.reason || 'config_pending');
     const validation = new Map((live && current ? current.registrations ?? [] : settingsValue.validation ?? []).map(row => [row.registration_id, row]));
     for (const item of settingsValue.registrations) {
       const facts = validation.get(item.id), row = node('div', 'source-line');
       row.append(node('strong', '', `${item.label} · ${item.category === 'custom_exe' ? '自定义程序 / 用户指定' : names[item.provider_id]}`),
-        node('p', 'section-note', `${item.enabled ? '已启用' : '已禁用'} · ${item.binding_state === 'rebind_required' ? '待重新绑定' : '已确认本机定位'} · ${facts?.status === 'available' ? '安装已核验' : '安装未核验'} · ${facts?.reason ? note(facts.reason) : '运行与会话查看观察页'}`),
+        node('p', 'section-note', `${item.enabled ? '已启用' : '已禁用'} · ${item.binding_state === 'rebind_required' ? '待重新绑定' : item.locator_kind === 'native_executable' ? '用户确认的程序' : '已确认本机定位'} · ${facts?.status === 'available' ? '文件身份有效' : '文件身份待核验'} · ${facts?.reason ? note(facts.reason) : '运行与会话查看观察页'}`),
         node('p', 'registration-path', item.path));
       const actions: [string, () => void | Promise<void>][] = [
         [item.binding_state === 'rebind_required' ? '确认本机绑定' : '修改', () => fillEditor(item)],
@@ -367,6 +384,7 @@
       savedPair = { config_revision: value.revision, config_hash: value.hash };
       markStale('config_pending'); render(); renderSettings(); fillEditor();
       $('registrations-feedback').textContent = '登记已保存；等待后台应用与安装核验。禁用和删除不会结束外部程序或删除项目任务。';
+      await saved?.();
     } catch (error) {
       const reason = errorReason(error);
       $('registrations-feedback').textContent = reason === 'config_conflict' ? '另一面板已修改登记；已刷新列表，请按新版本重新填写后保存。' : note(reason);
@@ -379,6 +397,8 @@
       else { settingsNonce += 1; settingsValue = null; fillEditor(); $('registration-candidates').replaceChildren(); $('registrations-list').replaceChildren(); clearPicker(); }
     });
     $('registration-new').addEventListener('click', () => fillEditor());
+    $('registration-provider').addEventListener('change', () => locatorOptions());
+    $('registration-category').addEventListener('change', () => locatorOptions());
     $('registration-form').addEventListener('submit', event => {
       event.preventDefault();
       if (!$('registration-confirm').checked) { $('registrations-feedback').textContent = '请确认当前本机路径；保存只登记，不会启动或执行程序。'; return; }
@@ -393,6 +413,15 @@
   }
   window.WorkspaceObservation = {
     projects: [],
+    onSaved(callback) { saved = callback; },
+    async configure(provider, candidate) {
+      $('registration-settings').open = true;
+      await loadSettings(true);
+      fillEditor({ category: provider === null ? 'custom_exe' : 'builtin', provider_id: provider,
+        locator_kind: candidate?.locator_kind || (provider === 'claude' || provider === 'opencode' ? 'native_executable' : 'npm_command'),
+        label: provider === null ? '' : names[provider] || '', path: candidate?.path || '', enabled: true });
+      $('registration-path').focus();
+    },
     start(options) {
       if (started) return;
       api = options.fetchJson; post = options.postJson; started = true;

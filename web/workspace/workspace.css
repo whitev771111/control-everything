@@ -625,19 +625,19 @@ input,select,textarea { border-radius:7px; padding:10px 12px; }
 .onboarding-dialog::backdrop{background:#0009}
 .onboarding-tabs,.onboarding-locations,.onboarding-previous{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
 .onboarding-tabs [aria-pressed=true]{background:#4958bb;color:#fff}
-.onboarding-program{padding:14px 0;border-bottom:1px solid #444}
+.onboarding-choices{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:14px 0;border-bottom:1px solid #444}
+.onboarding-choices h3{margin:0 0 8px}
+.onboarding-choices .section-note{margin:8px 0 0}
 .onboarding-candidate{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #444}
 .onboarding-candidate p,.onboarding-locations button{overflow-wrap:anywhere;word-break:break-word;white-space:normal}
 .onboarding-drop{margin:16px 0;padding:20px;border:1px dashed #777;border-radius:10px;text-align:center;color:#aaa}
 .onboarding-dialog fieldset{border:0;padding:12px 0;min-width:0}
 .onboarding-dialog input[type=text],.onboarding-dialog input[type=search],#onboarding-path{width:100%;min-width:0}
 #workspace-status{font-size:12px;opacity:.7}#workspace-status.error{opacity:1}
-@media(max-width:480px){.onboarding-dialog{padding:16px}.onboarding-candidate{grid-template-columns:auto minmax(0,1fr)}.onboarding-candidate>button{grid-column:2;justify-self:start}}
+@media(max-width:480px){.onboarding-dialog{padding:16px}.onboarding-choices{grid-template-columns:1fr;gap:12px}.onboarding-candidate{grid-template-columns:auto minmax(0,1fr)}.onboarding-candidate>button{grid-column:2;justify-self:start}}
 
 .onboarding-picker{display:grid;grid-template-rows:auto minmax(80px,1fr) auto auto;max-height:48vh;min-height:0;gap:8px}
 .onboarding-candidates{max-height:22vh;overflow:auto;overscroll-behavior:contain}
-.onboarding-program details{margin-top:8px}
-.onboarding-program details>button{display:block;max-width:100%;overflow-wrap:anywhere;white-space:normal;margin-top:6px}
 #onboarding-source-details{margin:12px 0}
 .onboarding-drop{margin:0;padding:14px;background:var(--surface,#17191d)}
 #onboarding-add-selected{justify-self:start}

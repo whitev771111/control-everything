@@ -20,7 +20,7 @@ class Element {
   get textContent() { return this.text + this.children.map(value => value.textContent).join(''); }
 }
 function fixture(options = {}) {
-  const nodes = new Map(), calls = [], writes = [], changes = [];
+  const nodes = new Map(), calls = [], writes = [], changes = [], manual = [];
   const node = id => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
   const dialog = node('dialog'); dialog.querySelector = selector => node(selector.slice(1));
   const item = { candidate_id: 'cl-' + '1'.repeat(24), project_id: 'cl-' + '1'.repeat(24), name: '<script>literal</script>', directories: [{ id: 'main', path: 'C:/example/project' }], selected: false };
@@ -39,8 +39,8 @@ function fixture(options = {}) {
   };
   const window = {};
   vm.runInNewContext(source, { window, document: { createElement: tag => new Element(tag) }, Map, Set, console });
-  const controller = window.WorkspaceOnboarding.create({ dialog, fetchJson, postJson, onChanged: async () => changes.push(true), manual() {}, configure() {}, manage() {} });
-  return { controller, window, dialog, node, calls, writes, changes, page, overview, item };
+  const controller = window.WorkspaceOnboarding.create({ dialog, fetchJson, postJson, onChanged: async () => changes.push(true), manual: () => manual.push(true), configure() {}, manage() {} });
+  return { controller, window, dialog, node, calls, writes, changes, manual, page, overview, item };
 }
 test('HTML resource and consent controls precede workspace and default native diagnostics are folded', () => {
   assert.ok(html.indexOf('/onboarding.js') < html.indexOf('/workspace.js'));
@@ -62,6 +62,54 @@ test('three tools are present, literal candidates start unselected, click writes
   assert.equal(Object.hasOwn(f.writes[0].body, 'directories'), false);
   assert.equal(f.changes.length, 1);
   await f.controller.join(f.item.candidate_id); assert.equal(f.writes.length, 1);
+});
+
+test('project picker separates existing projects from new projects and never discovers programs', async () => {
+  const f = fixture(); await f.controller.open();
+  const picker = html.match(/<dialog id="onboarding-dialog"[^]*?<\/dialog>/)[0];
+  assert.match(picker, /从已有项目选择/);
+  assert.match(picker, /id="onboarding-manual"[^>]*>新建项目/);
+  assert.doesNotMatch(picker, /onboarding-program|onboarding-custom|EXE|程序登记/);
+  assert.equal(f.node('onboarding-tabs').children.length, 3);
+  assert.equal(f.calls.some(url => url.includes('/api/profile/observations')), false);
+  assert.match(html, /id="open-registration-settings">配置工具/);
+  f.node('onboarding-manual').listeners.click();
+  assert.equal(f.dialog.open, false); assert.equal(f.manual.length, 1);
+  assert.equal(f.writes.length, 0);
+});
+
+for (const status of ['available', 'not_configured', 'unsupported_format', 'unavailable', 'limited']) {
+  test(`${status} without candidates offers direct new-project creation without a source write`, async () => {
+    const f = fixture({ read: () => ({ status, complete: status === 'available', items: [], total: 0 }) });
+    await f.controller.open();
+    const fallback = f.node('onboarding-candidates').children.find(node => node.tagName === 'button');
+    assert.equal(fallback?.textContent, '新建项目');
+    fallback.listeners.click();
+    assert.equal(f.dialog.open, false); assert.equal(f.manual.length, 1); assert.equal(f.writes.length, 0);
+  });
+}
+
+test('candidate read failure preserves a direct new-project fallback', async () => {
+  const f = fixture({ read: () => { throw new Error('fixture offline'); } });
+  await f.controller.open();
+  assert.match(f.node('onboarding-feedback').textContent, /fixture offline/);
+  assert.equal(f.node('onboarding-retry').hidden, false);
+  f.node('onboarding-candidates').children.find(node => node.tagName === 'button').listeners.click();
+  assert.equal(f.manual.length, 1); assert.equal(f.writes.length, 0);
+});
+
+test('Codex preserves source names and paths while Claude and OpenCode describe recognized directories', async () => {
+  const f = fixture(); f.item.name = 'mianban-develop'; f.item.directories[0].path = 'C:/example/mianban-develop';
+  await f.controller.open();
+  const copy = f.node('onboarding-candidates').children[0].children[1];
+  assert.equal(copy.children[0].textContent, 'mianban-develop');
+  assert.equal(copy.children[1].textContent, 'C:/example/mianban-develop');
+  assert.equal(f.node('onboarding-candidates-title').textContent, 'Codex 项目');
+  for (const tab of f.node('onboarding-tabs').children.slice(1)) {
+    tab.listeners.click(); await tick();
+    assert.match(f.node('onboarding-candidates-title').textContent, /识别到的项目目录/);
+    assert.match(f.node('onboarding-source-note').textContent, /不导入完整桌面配置/);
+  }
 });
 test('two-step join never announces success before profile rejoin completes', async () => {
   let resolve;

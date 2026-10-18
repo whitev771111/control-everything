@@ -4,14 +4,13 @@
   const MIME = 'application/x-session-panel-project';
   const names = { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' };
   const statuses = { not_configured: '尚未确认读取来源', available: '来源可读', unavailable: '来源暂不可用',
-    unsupported_format: '不支持此格式，请手工添加目录', limited: '读取受限，暂不能加入', stale: '旧样本，请重试' };
-  function create({ dialog, fetchJson, postJson, onChanged, manual, configure, manage }) {
+    unsupported_format: '不支持此格式，可新建项目', limited: '读取受限，暂不能加入', stale: '旧样本，请重试' };
+  function create({ dialog, fetchJson, postJson, onChanged, manual, manage }) {
     const $ = id => dialog.querySelector(`#${id}`);
     const node = (tag, text, cls = '') => { const value = document.createElement(tag); value.className = cls; if (text !== undefined) value.textContent = text; return value; };
     const button = (text, fn, cls = 'button secondary') => { const value = node('button', text, cls); value.type = 'button'; value.addEventListener('click', fn); return value; };
     let overview = null, provider = 'codex', page = null, requestId = 0, busy = false, dirty = false, sampleNeedsRefresh = false;
     const drafts = new Map(), selected = new Set(), savedExcluded = new Map();
-    let programs = null, programCandidates = [], programError = '';
     const feedback = (text, failed = false) => { $('onboarding-feedback').textContent = text; $('onboarding-feedback').classList.toggle('error', failed); };
     const activeTool = () => overview?.tools.find(tool => tool.provider === provider);
     async function reloadOverview() {
@@ -24,15 +23,9 @@
       if (values.length) root.append(node('h3', '之前管理过'));
       for (const item of values) root.append(button(`${item.name} · 重新加入${item.archived ? '（已归档）' : ''}`, () => rejoin(item.project_id)));
     }
-    function renderPrograms() {
-      const root = $('onboarding-program'); root.replaceChildren();
-      const registered = programs?.registrations.filter(row => row.provider_id === provider) || [];
-      const candidates = programCandidates.filter(row => row.provider_id === provider);
-      root.append(node('strong', `程序 · ${registered.length ? '已登记' : candidates.length ? '发现候选，待确认' : '未发现受支持入口'}`));
-      const details = node('details'); details.append(node('summary', '程序登记与安装候选'));
-      details.append(node('p', programError || '程序登记与项目来源分别确认；未发现入口仍可选择项目来源。', 'section-note'));
-      for (const candidate of candidates) details.append(button(`${candidate.locator_kind === 'native_executable' ? '用户确认的程序' : '安装候选'} · ${candidate.path}`, () => { close(); configure(provider, candidate); }));
-      details.append(button('登记程序路径', () => { close(); configure(provider); })); root.append(details);
+    function newProject() { if (busy) return; close(); manual(); }
+    function renderManualFallback(text) {
+      $('onboarding-candidates').append(node('p', text, 'empty-state'), button('新建项目', newProject));
     }
     function renderSource() {
       const tool = activeTool();
@@ -41,9 +34,10 @@
       $('onboarding-path').value = draft.path;
       $('onboarding-consent').checked = draft.enabled;
       $('onboarding-source-details').open = !tool.source.enabled || drafts.has(provider);
+      $('onboarding-candidates-title').textContent = provider === 'codex' ? 'Codex 项目' : `${names[provider]} · 识别到的项目目录`;
       $('onboarding-source-note').textContent = provider === 'claude'
-        ? '此全局配置也包含其他私密设置。确认后只提取 projects 中的目录，不保存其他字段，不读取聊天正文。'
-        : provider === 'opencode' ? '只读受支持 project 表的项目目录；不读取会话或消息。其他格式可手工添加目录。'
+        ? '此全局配置与桌面端、CLI 共用，也包含其他私密设置。确认后只提取 projects 中的目录；不导入完整桌面配置，不保存其他字段，不读取聊天正文。'
+        : provider === 'opencode' ? '从受支持的本机 project 表中识别项目目录；不导入完整桌面配置，不读取会话或消息。格式不支持时可新建项目。'
           : '只读所选元数据库及相邻桌面项目配置；候选列表不读取聊天正文。';
       const locations = $('onboarding-locations'); locations.replaceChildren();
       for (const location of tool.locations.items) {
@@ -52,7 +46,6 @@
         }));
       }
       if (tool.locations.directory_hint) locations.append(node('p', `配置目录提示：${tool.locations.directory_hint}；请填写实际全局配置文件路径。`, 'section-note'));
-      renderPrograms();
     }
     function rememberDraft() {
       const draft = { path: $('onboarding-path').value, enabled: $('onboarding-consent').checked };
@@ -82,7 +75,9 @@
         });
         row.append(checkbox, copy, add); root.append(row);
       }
-      if (page?.status === 'available' && !page.items.length) root.append(node('p', '此来源没有项目，可手工添加目录。', 'empty-state'));
+      if (page && !page.items.length) renderManualFallback(page.status === 'available'
+        ? '此来源没有可选择的项目。可新建项目，填写名称和本机目录。'
+        : '暂时没有可选择的项目。可确认或重试来源，也可直接新建项目。');
       if (page && page.total > page.items.length) root.append(button(`加载更多（${page.items.length}/${page.total}）`, () => reloadCandidates(true)));
       $('onboarding-add-selected').disabled = busy || !page?.complete;
     }
@@ -98,9 +93,15 @@
         sampleNeedsRefresh = false;
         if (overview) overview.selection_token = value.selection_token;
         renderCandidates();
+        return true;
       } catch (error) {
         if (current !== requestId) return;
-        feedback(`${error.message}。当前输入已保留。`, true); $('onboarding-retry').hidden = false;
+        feedback(`${error.message}。当前输入已保留，也可直接新建项目。`, true); $('onboarding-retry').hidden = false;
+        if (!page) {
+          renderCandidates(); $('onboarding-source-status').textContent = '项目来源读取失败'; $('onboarding-retry').hidden = false;
+          renderManualFallback('暂时无法读取项目，可直接新建项目，填写名称和本机目录。');
+        }
+        return false;
       }
     }
     async function refreshJoinSample() {
@@ -202,14 +203,9 @@
       if (!dialog.open) dialog.showModal();
       feedback('正在查找来源位置…');
       try {
-        await reloadOverview(); renderSource(); await reloadCandidates(); feedback('只加入你选择的项目；不会复制代码或聊天正文。');
-        const values = await Promise.allSettled([fetchJson('/api/profile/observations'), fetchJson('/api/profile/observations/candidates')]);
-        if (!dialog.open) return;
-        programs = values[0].status === 'fulfilled' ? values[0].value : null;
-        programCandidates = values[1].status === 'fulfilled' ? values[1].value.candidates || [] : [];
-        programError = values.some(value => value.status === 'rejected') ? '程序发现暂不可用，仍可手填登记和配置项目来源。' : '';
-        renderPrograms();
-      } catch (error) { feedback(`${error.message}。仍可手工添加目录。`, true); }
+        await reloadOverview(); renderSource();
+        if (await reloadCandidates()) feedback('只加入你选择的项目；不会复制代码或聊天正文。');
+      } catch (error) { feedback(`${error.message}。仍可直接新建项目。`, true); }
     }
     $('onboarding-tabs').replaceChildren(...Object.keys(names).map(key => {
       const tab = button(names[key], () => {
@@ -218,10 +214,9 @@
         for (const child of $('onboarding-tabs').children) child.setAttribute('aria-pressed', String(child.dataset.provider === provider));
         renderSource(); renderCandidates(); reloadCandidates();
       }); tab.dataset.provider = key; tab.setAttribute('aria-pressed', String(key === provider)); return tab;
-    }), button('手工目录', () => { close(); manual(); }));
+    }));
     $('onboarding-close').addEventListener('click', close);
-    $('onboarding-manual').addEventListener('click', () => { close(); manual(); });
-    $('onboarding-custom').addEventListener('click', () => { close(); configure(null); });
+    $('onboarding-manual').addEventListener('click', newProject);
     $('onboarding-source-form').addEventListener('submit', saveSource);
     $('onboarding-source-form').addEventListener('input', rememberDraft);
     $('onboarding-search').addEventListener('input', renderCandidates);

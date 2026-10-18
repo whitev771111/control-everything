@@ -37,9 +37,9 @@
       <div class="local-note"><span class="local-dot" aria-hidden="true"></span><strong>本机工作空间</strong></div>
     </aside>
     <dialog id="onboarding-dialog" class="onboarding-dialog" aria-labelledby="onboarding-title">
-  <div class="section-heading"><h2 id="onboarding-title">选择已有项目</h2><button id="onboarding-close" type="button" class="button secondary">关闭</button></div>
+  <div class="section-heading"><h2 id="onboarding-title">添加项目</h2><button id="onboarding-close" type="button" class="button secondary">关闭</button></div>
+  <div class="onboarding-choices"><div><h3>从已有项目选择</h3><p class="section-note">从下方来源中选择要加入工作台的项目。</p></div><div><button id="onboarding-manual" type="button" class="button secondary">新建项目</button><p class="section-note">手工填写名称和本机目录，无需读取工具来源。</p></div></div>
   <nav id="onboarding-tabs" class="onboarding-tabs" aria-label="项目来源"></nav>
-  <div id="onboarding-program" class="onboarding-program"></div>
   <details id="onboarding-source-details"><summary>项目来源 · 查看或修改</summary><form id="onboarding-source-form"><fieldset id="onboarding-source-fields">
     <h3>项目来源</h3><div id="onboarding-locations" class="onboarding-locations"></div>
     <label class="field full">来源文件绝对路径<input id="onboarding-path" maxlength="2048" placeholder="选择上方位置或填写本机文件路径"></label>
@@ -47,6 +47,7 @@
     <label class="checkbox-field"><input id="onboarding-consent" type="checkbox">允许工作台读取此来源的项目元数据</label>
     <button type="submit" class="button secondary">保存来源许可</button>
   </fieldset></form></details>
+  <h3 id="onboarding-candidates-title">Codex 项目</h3>
   <div class="section-heading"><p id="onboarding-source-status" role="status"></p><button id="onboarding-retry" type="button" class="button secondary" hidden>重试读取</button></div>
   <div class="onboarding-picker"><label class="field">搜索候选<input id="onboarding-search" type="search" placeholder="名称或目录"></label>
   <div id="onboarding-candidates" class="onboarding-candidates"></div>
@@ -54,7 +55,6 @@
   <button id="onboarding-add-selected" type="button" class="button primary">加入所选项目</button></div>
   <div id="onboarding-previous" class="onboarding-previous"></div>
   <p id="onboarding-feedback" class="feedback" role="status" aria-live="polite"></p>
-  <div class="form-actions"><button id="onboarding-manual" type="button" class="button secondary">手工添加目录</button><button id="onboarding-custom" type="button" class="text-button">登记其他工具 EXE</button></div>
 </dialog>
     <main id="main" tabindex="-1">
       <header class="topbar"><p>工作空间 <span>/</span> <b id="breadcrumb">总览</b></p><span id="today" class="muted">北京时间</span></header>

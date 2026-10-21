@@ -65,7 +65,7 @@ class TaskMigrationTests(unittest.TestCase):
         self.assertEqual(rows[1]['project_id'], '')
         self.assertEqual(rows[2]['state'], 'review')
         self.assertEqual(store.get_task('same')['session_key'], 'codex:old')
-        after = self.facts(2)
+        after = self.facts(schema.SCHEMA_VERSION)
         for table in schema.KEPT_TABLES:
             self.assertEqual(after[table], before[table])
         self.assertEqual(backups.validate_backup(result['backup'])['schema_version'], 1)
@@ -135,8 +135,8 @@ class TaskMigrationTests(unittest.TestCase):
         changed = profile.store.save_item({'state': 'blocked'}, item_id=old['id'], expected_revision=old['revision'])
         self.assertEqual(changed['title'], old['title'])
         preserved = migration.preserve_tasks(str(self.path))
-        self.assertEqual(backups.validate_backup(preserved['backup'])['version'], 2)
-        new_dir = backups.restore_backup(preserved['backup'], str(self.root / 'schema2-restored'))
+        self.assertEqual(backups.validate_backup(preserved['backup'])['version'], schema.SCHEMA_VERSION)
+        new_dir = backups.restore_backup(preserved['backup'], str(self.root / 'schema8-restored'))
         self.assertEqual(Profile.open(str(new_dir)).store.get_item(old['id']), changed)
         migration_receipt = preserved['original_migration']
         backup1 = self.path / migration_receipt['backup']
@@ -175,18 +175,18 @@ class TaskMigrationTests(unittest.TestCase):
 
     def test_install_and_final_validation_faults_are_atomic(self):
         before = self.facts(1)
-        finish = schema.finish_schema2
-        def late_failure(connection, receipt):
+        finish = schema.finish_schema9
+        def late_failure(connection, receipt=None):
             finish(connection, receipt)
             raise WorkspaceError('fixture_after_ddl')
-        with patch.object(schema, 'finish_schema2', side_effect=late_failure):
+        with patch.object(schema, 'finish_schema9', side_effect=late_failure):
             with self.assertRaises(ProfileError):
                 migration.migrate_tasks(str(self.path))
         self.assertEqual(self.facts(1), before)
         validate = schema.validate_schema
         def invalid_target(connection, version):
             validate(connection, version)
-            if version == 2:
+            if version == schema.SCHEMA_VERSION:
                 raise WorkspaceError('fixture_final_validation')
         with patch.object(schema, 'validate_schema', side_effect=invalid_target):
             with self.assertRaises(ProfileError) as error:
@@ -247,8 +247,8 @@ class TaskMigrationTests(unittest.TestCase):
         profile = Profile(self.path)  # Explicit schema1 fixture; never implicit upgrade.
         save(profile, [registration()])
         original_revision = profile.observation_config()['revision']
-        for version in (1, 2):
-            if version == 2:
+        for version in (1, schema.SCHEMA_VERSION):
+            if version == schema.SCHEMA_VERSION:
                 migration.migrate_tasks(str(self.path))
                 profile = Profile.open(str(self.path))
             backup = backups.create_backup(profile)

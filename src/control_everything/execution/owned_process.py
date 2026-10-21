@@ -63,9 +63,13 @@ def query_old_job(job_name, api=None):
 
 
 class OwnedProcess:
-    def __init__(self, exe, argv, cwd, job_name, api=None):
+    def __init__(self, exe, argv, cwd, job_name, api=None, *, env=None, command_line=None,
+                 line_prefixes=()):
         self.exe, self.argv, self.cwd, self.job_name = exe, argv, cwd, job_name
         self.api = api
+        self.env = dict(env) if env is not None else None
+        self.command_line = command_line
+        self.line_prefixes = tuple(line_prefixes)
         self.job = self.process = self.stdin = self.stdout = None
         self.pid = None
         self.reader = self.writer = None
@@ -86,7 +90,13 @@ class OwnedProcess:
         try:
             self.job = self.api.create_job(self.job_name)
             self.stdin, self.stdout, child_handles = self.api.pipes()
-            self.process, thread, self.pid = self.api.spawn(self.exe, self.argv, self.cwd, child_handles)
+            spawn_kwargs = {}
+            if self.env is not None:
+                spawn_kwargs["env"] = self.env
+            if self.command_line is not None:
+                spawn_kwargs["command_line"] = self.command_line
+            self.process, thread, self.pid = self.api.spawn(self.exe, self.argv, self.cwd, child_handles,
+                                                            **spawn_kwargs)
             self.api.assign(self.job, self.process)
             self.api.resume(thread)
             self.reader = threading.Thread(target=self._read_loop, name="execution-reader", daemon=True)
@@ -120,7 +130,10 @@ class OwnedProcess:
                     line, _, pending = pending.partition(b"\n")
                     if len(line) > MAX_LINE:
                         raise ProcessError("protocol_line_too_large")
-                    value = json.loads(line.decode("utf-8"), parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+                    text = line.decode("utf-8")
+                    if any(text.startswith(prefix) for prefix in self.line_prefixes):
+                        continue
+                    value = json.loads(text, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
                     if not isinstance(value, dict):
                         raise ProcessError("protocol_error")
                     try:
@@ -141,7 +154,10 @@ class OwnedProcess:
                     continue
                 if task is None:
                     return
-                data, done, outcome = task
+                if len(task) == 4:
+                    data, done, outcome, close_after = task
+                else:
+                    (data, done, outcome), close_after = task, False
                 try:
                     if self.api.write(self.stdin, data) != len(data):
                         raise ProcessError("partial_write")
@@ -149,11 +165,27 @@ class OwnedProcess:
                     outcome.append(error if isinstance(error, ProcessError) else ProcessError("pipe_write_failed"))
                 finally:
                     done.set()
+                    if close_after and self.stdin:
+                        self.api.close(self.stdin)
+                        self.stdin = None
+                        return
         finally:
             # The writer owns stdin after start; no Python stream locks are involved.
             if self.stdin:
                 self.api.close(self.stdin)
                 self.stdin = None
+
+    def write_text(self, text, *, close=False):
+        with self._write_lock:
+            if self._closed or not self.writer or not self.writer.is_alive():
+                raise ProcessError("pipe_write_failed")
+            data = text.encode("utf-8")
+            done, outcome = threading.Event(), []
+            self.writes.put_nowait((data, done, outcome, close))
+            if not done.wait(5):
+                raise ProcessError("pipe_write_timeout")
+            if outcome:
+                raise outcome[0]
 
     def read(self, timeout=.1):
         if self.failure and str(self.failure) != "process_eof":
@@ -163,6 +195,19 @@ class OwnedProcess:
         except queue.Empty:
             if self.failure:
                 raise self.failure
+            return None
+
+    def exit_code(self):
+        if not self.process:
+            return None
+        try:
+            for _ in range(10):
+                code = self.api.exit_code(self.process)
+                if code != 259:  # STILL_ACTIVE
+                    return code
+                time.sleep(.05)
+            return code
+        except (ProcessError, OSError, AttributeError):
             return None
 
     def write(self, message):

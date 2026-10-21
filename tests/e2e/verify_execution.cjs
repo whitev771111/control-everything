@@ -43,7 +43,7 @@ async function scenario(name, callback, width = 1440, setup) {
     try {
       if (url.origin !== origin) { report.blocked.push(request.url()); return route.abort(); }
       if (url.pathname === '/workspace') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'web/workspace/workspace.html')) });
-      if (['/execution.js', '/workspace.js', '/workspace.css'].includes(url.pathname)) return route.fulfill({ contentType: url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(path.join(root, 'web/workspace', url.pathname.slice(1))) });
+      if (['/execution.js', '/workspace.js', '/workspace.css', '/observation.js', '/task-center.js', '/news.js', '/quota.js', '/project-space.js', '/onboarding.js', '/agents.js'].includes(url.pathname)) return route.fulfill({ contentType: url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(path.join(root, 'web/workspace', url.pathname.slice(1))) });
       if (url.pathname === '/favicon.ico') return route.fulfill({ status: 204 });
       assert.equal(request.headers()['x-session-client'], 'panel');
       if (request.method() === 'POST') assert.equal(request.headers()['x-session-csrf'], 'fixture-csrf');
@@ -110,6 +110,7 @@ async function scenario(name, callback, width = 1440, setup) {
 }
 const go = (page, view) => page.locator(`[data-view="${view}"]`).click();
 async function prepare(page) { await go(page, 'tasks'); await page.locator(`[data-run-task="${taskId}"]`).click(); await page.waitForFunction(() => !document.getElementById('execution-submit').disabled); }
+async function submit(page) { await page.locator('#execution-confirm').check(); await page.locator('#execution-submit').click(); }
 const posts = result => report.requests.filter(item => item.case === result.name && item.method === 'POST' && item.path === `${base}/runs`);
 async function refresh(page) { await page.waitForFunction(() => !document.getElementById('execution-refresh').disabled); await page.locator('#execution-refresh').click(); await page.waitForFunction(() => !document.getElementById('execution-refresh').disabled); }
 async function shot(page, label, width) {
@@ -126,6 +127,15 @@ async function main() {
     check('real registered cwd and inherited MCP are disclosed', (await page.locator('#execution-context').innerText()).includes('真实规范目录') && (await page.locator('#execution-inheritance').innerText()).includes('MCP'));
     check('prepare title receives focus, no dispatch from preparation', await page.locator('#execution-prepare-title').evaluate(el => el === document.activeElement) && posts(result).length === 0);
     await page.locator('#execution-prompt').fill('固定 body 提示词');
+    check('confirmation starts unchecked', !await page.locator('#execution-confirm').isChecked());
+    await shot(page, 'confirmation', 1440);
+    await page.setViewportSize({ width: 360, height: 900 });
+    check('confirmation fits narrow viewport', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await shot(page, 'confirmation', 360);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.locator('#execution-submit').click();
+    check('unconfirmed click sends nothing', posts(result).length === 0);
+    await page.locator('#execution-confirm').check();
     let release; fixture.holdPost = new Promise(resolve => { release = resolve; });
     await page.locator('#execution-form').evaluate(form => { form.requestSubmit(); form.requestSubmit(); });
     await page.waitForFunction(() => document.getElementById('execution-prompt').disabled);
@@ -138,7 +148,7 @@ async function main() {
   });
   for (const mode of ['lost200', 'lost404', '503', 'conflict']) await scenario(`receipt recovery ${mode}`, async (page, fixture, check, result) => {
     fixture.postMode = mode; if (mode === '503') fixture.lookupMode = '503';
-    await prepare(page); await page.locator('#execution-prompt').fill('回执恢复原内容'); await page.locator('#execution-submit').click();
+    await prepare(page); await page.locator('#execution-prompt').fill('回执恢复原内容'); await submit(page);
     await page.waitForFunction(() => document.getElementById('execution-recovery-text').textContent !== '' && !document.getElementById('execution-recovery-text').textContent.includes('正在提交'));
     check('uncertain admission always looks up original request', report.requests.some(item => item.case === result.name && item.query.includes('request_id=')));
     if (mode === 'lost200' || mode === 'conflict') check('original run recovered without new POST', await page.locator('#execution-another').isVisible() && posts(result).length === 1);
@@ -155,22 +165,22 @@ async function main() {
     }
   });
   for (const combo of ['400:invalid_request', '404:task_not_found', '409:project_busy', '409:capacity_busy', '409:other_instance']) await scenario(`definitive rejection ${combo}`, async (page, fixture, check, result) => {
-    fixture.postMode = `reject:${combo}`; await prepare(page); await page.locator('#execution-prompt').fill('拒绝后仍保留'); await page.locator('#execution-submit').click();
+    fixture.postMode = `reject:${combo}`; await prepare(page); await page.locator('#execution-prompt').fill('拒绝后仍保留'); await submit(page);
     await page.waitForFunction(() => document.getElementById('execution-status').textContent.includes('未登记'));
     check('admission rejection retains editable draft and sends no lookup', await page.locator('#execution-prompt').inputValue() === '拒绝后仍保留' && await page.locator('#execution-prompt').isEnabled() && !report.requests.some(item => item.case === result.name && item.query.includes('request_id=')));
   });
   await scenario('context refresh failure then explicit success', async (page, fixture, check, result) => {
     await prepare(page); await page.locator('#execution-prompt').fill('上下文草稿'); fixture.postMode = 'context'; fixture.contextMode = 'fail';
-    await page.locator('#execution-submit').click(); await page.waitForFunction(() => document.getElementById('execution-status').textContent.includes('重新读取摘要失败'));
+    await submit(page); await page.waitForFunction(() => document.getElementById('execution-status').textContent.includes('重新读取摘要失败'));
     check('failed context refresh retains draft but blocks submit', await page.locator('#execution-submit').isDisabled() && await page.locator('#execution-prompt').inputValue() === '上下文草稿');
     fixture.contextMode = 'normal'; fixture.context.context_hash = 'fixture-hash-2'; fixture.postMode = 'success';
     await page.locator('#execution-context-refresh').click(); await page.waitForFunction(() => !document.getElementById('execution-submit').disabled);
     check('context refresh never automatically resubmits', posts(result).length === 1);
-    await page.locator('#execution-submit').click(); await page.locator('#execution-another').waitFor({ state: 'visible' });
+    await submit(page); await page.locator('#execution-another').waitFor({ state: 'visible' });
     check('new explicit submission has fresh hash/key', posts(result)[0].body.request_id !== posts(result)[1].body.request_id && posts(result)[1].body.context_hash === 'fixture-hash-2');
   });
   await scenario('reload unknown has no replay body', async (page, fixture, check, result) => {
-    fixture.postMode = 'lost404'; await prepare(page); await page.locator('#execution-submit').click(); await page.locator('#execution-retry').waitFor({ state: 'visible' });
+    fixture.postMode = 'lost404'; await prepare(page); await submit(page); await page.locator('#execution-retry').waitFor({ state: 'visible' });
     await page.reload(); await page.waitForFunction(() => document.getElementById('execution-recovery-text').textContent.includes('重载后'));
     check('reload only stores request/task metadata', await page.evaluate(() => Object.keys(JSON.parse(sessionStorage.getItem('workspace.execution.receipt'))).sort().join(',')) === 'request_id,task_id');
     check('reload has no automatic POST or original-body retry', posts(result).length === 1 && await page.locator('#execution-retry').isHidden());
@@ -211,7 +221,7 @@ async function main() {
     check('native unknown has independent new-run entry and no fake resume', await page.locator('#execution-unknown').isVisible() && !(await page.locator('#execution-unknown').innerText()).includes('继续执行'));
     await shot(page, 'unknown', width);
     await go(page, 'agents'); check('provider separates feature and readiness', (await page.locator('#providers-list').innerText()).includes('执行功能已接入') && (await page.locator('#providers-list').innerText()).includes('本次启动结果') && (await page.locator('#providers-list').innerText()).includes('派发 / 审批 / 取消 · 未接入'));
-    await go(page, 'usage'); check('daily accounting remains explicitly unconnected', (await page.locator('#usage-view').innerText()).includes('自动每日 Token / 费用'));
+    await go(page, 'usage'); check('execution never initiates a quota query', (await page.locator('#usage-view').innerText()).includes('尚未读取额度') && !report.requests.some(item => item.case === result.name && item.method === 'POST' && item.path.includes('quota')));
   }, width);
   await scenario('owner read-only and source failure', async (page, fixture, check) => {
     const run = makeRun(); fixture.runs = [run]; fixture.capability.available = false; fixture.capability.is_owner = false; fixture.capability.reason = 'other_instance';

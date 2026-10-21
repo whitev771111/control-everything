@@ -192,7 +192,7 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         updated = self.workspace.save_item({'id': item['id'], 'expected_revision': 1, 'changes': {'state': 'review'}}, update=True)['item']
         self.assertEqual(updated['session_key'], item['session_key'])
         self.assertEqual(updated['session_link_state'], 'verified')
-        self.assertEqual(updated, self.workspace.page_items()['items'][0])
+        self.assertEqual(updated, self.workspace.page_items(include_assignment=True)['items'][0])
         for read in (self.workspace.snapshot, self.workspace.page_items):
             with patch.object(self.profile.store, 'list_projects', wraps=self.profile.store.list_projects) as registry:
                 value = read()
@@ -294,7 +294,7 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         old = self.create()
         backup = profile_import.create_backup(self.profile)
         manifest = profile_import.validate_backup(backup)
-        self.assertEqual((manifest['version'], manifest['schema_version']), (2, 2))
+        self.assertEqual((manifest['version'], manifest['schema_version']), (9, 9))
         restored_dir = self.root / 'restored'
         profile_import.restore_backup(str(backup), str(restored_dir))
         restored = Profile.open(str(restored_dir))
@@ -303,7 +303,7 @@ class CodexDesktopWorkspaceTests(unittest.TestCase):
         # Re-sign a malformed synthetic backup to exercise semantic, rather than checksum, validation.
         database = backup / 'management.sqlite3'
         with closing(sqlite3.connect(database)) as connection:
-            connection.create_function('task_center_writer_version', 0, lambda: 2)
+            connection.create_function('task_center_writer_version', 0, lambda: 9)
             connection.execute("UPDATE project_sources SET relative_path='unexpected'")
             connection.commit()
         manifest['files']['management.sqlite3'] = {'size': database.stat().st_size,

@@ -2,9 +2,12 @@
 
 import argparse
 import copy
+import hashlib
+import hmac
 import json
 import math
 import os
+import secrets
 import sys
 import tempfile
 import threading
@@ -16,8 +19,9 @@ from control_everything.input_validation import ProfileError, absolute_path
 from control_everything.paths import default_profile_dir
 from control_everything.sessions import codex_index
 from control_everything.sessions import observation_settings as observations
+from control_everything.profiles import agents
 from control_everything.profiles import workbench_settings as workbench
-from control_everything.workspace.store import WorkspaceStore, WorkspaceError
+from control_everything.workspace.store import WorkspaceStore, WorkspaceError, now_utc
 from control_everything.profiles.integration_settings import (
     EMPTY_INTEGRATIONS, InvalidSettings, integration_summary, validate_integrations,
 )
@@ -65,13 +69,15 @@ def resolve_data_dir(data_dir=None, *, environ=None, platform=None, home=None):
 
 
 def validate_config(config):
-    if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] not in (1, 2, 3, 4):
+    if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] not in (1, 2, 3, 4, 5):
         raise ProfileError("invalid_config", "version")
     expected = {"version", "codex"} if config["version"] == 1 else {"version", "codex", "integrations"}
     if config["version"] >= 3:
         expected.add("observations")
-    if config["version"] == 4:
+    if config["version"] >= 4:
         expected.add("workbench")
+    if config["version"] == 5:
+        expected.add("agents")
     if set(config) != expected:
         raise ProfileError("invalid_config", "version")
     codex = config["codex"]
@@ -86,10 +92,14 @@ def validate_config(config):
         observations.validate(config["observations"])
         if config["version"] == 3 and config["observations"]["revision"] == 0:
             raise ProfileError("invalid_config", "observations.revision")
-    if config["version"] == 4:
+    if config["version"] >= 4:
         workbench.validate(config["workbench"])
         if config["workbench"]["revision"] == 0:
             raise ProfileError("invalid_config", "workbench.revision")
+    if config["version"] == 5:
+        agents.validate(config["agents"])
+        if config["agents"]["revision"] == 0:
+            raise ProfileError("invalid_config", "agents.revision")
     return config
 
 
@@ -231,7 +241,7 @@ class Profile:
             original = self.config()
             config = normalized_config(original)
             config["codex"] = body["codex"]
-            if config["version"] == 4 and config["codex"] != original["codex"]:
+            if config["version"] >= 4 and config["codex"] != original["codex"]:
                 config["workbench"]["revision"] = self._next_workbench_revision(config["workbench"])
             validate_config(config)
             if original["version"] == 1:
@@ -256,12 +266,95 @@ class Profile:
     def workbench_config(self):
         return workbench.from_config(self.config())
 
+    def agent_settings(self):
+        value = agents.from_config(self.config())
+        items = [{key: row[key] for key in ("id", "name", "kind", "command", "enabled", "created_at", "updated_at",
+                                            "project_ids", "adapter", "connection",
+                                            "permission", "network", "approval")}
+                 for row in value["items"]]
+        tokens = {row["id"]: {"prefix": row["token_prefix"], "has_token": row["token_hash"] is not None}
+                  for row in value["items"]}
+        return {"revision": value["revision"], "items": items, "tokens": tokens}
+
+    @contextmanager
+    def agent_settings_guard(self):
+        with self.config_lock, config_file_lock(self.data_dir):
+            yield self.agent_settings()
+
+    def rotate_agent_token(self, body):
+        if type(body) is not dict or set(body) != {"id"}:
+            raise ProfileError("invalid_config", "agents")
+        identity = str(body["id"])
+        with self.config_lock, config_file_lock(self.data_dir):
+            original = self.config()
+            current = agents.from_config(original)
+            row = next((item for item in current["items"] if item["id"] == identity), None)
+            if row is None:
+                raise ProfileError("agent_not_found", status=404)
+            if current["revision"] == agents.MAX_REVISION:
+                raise ProfileError("invalid_config", "agents.revision")
+            token = "ag_" + secrets.token_urlsafe(32)
+            replacement = {**row, "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                           "token_prefix": token[:11], "updated_at": now_utc()}
+            items = [replacement if item["id"] == identity else item for item in current["items"]]
+            proposed = agents.validate({"revision": max(1, current["revision"] + 1), "items": items})
+            config = normalized_config(original)
+            config.update(version=5, agents=proposed)
+            validate_config(config)
+            self._write_config(config)
+            return {"token": token, "prefix": replacement["token_prefix"], "agents": self.agent_settings()}
+
+    def agent_by_token(self, token):
+        if type(token) is not str or not 1 <= len(token) <= 256:
+            return None
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        current = agents.from_config(self.config())
+        return next((row for row in current["items"]
+                     if row["enabled"] and row["token_hash"] is not None
+                     and hmac.compare_digest(row["token_hash"], digest)), None)
+
+    def agent_heartbeat(self, token):
+        return self.agent_by_token(token)
+
+    def save_agents(self, body):
+        if (type(body) is not dict or set(body) != {"expected_revision", "items"}
+                or type(body["expected_revision"]) is not int
+                or not 0 <= body["expected_revision"] <= agents.MAX_REVISION
+                or type(body["items"]) is not list):
+            raise ProfileError("invalid_config", "agents")
+        with self.config_lock, config_file_lock(self.data_dir):
+            original = self.config()
+            current = agents.from_config(original)
+            if body["expected_revision"] != current["revision"]:
+                raise ProfileError("config_conflict", "agents", status=409)
+            proposed = agents.normalize_items(body["items"], current, now_utc())
+            if proposed["items"] == current["items"]:
+                return self.agent_settings()
+            if current["revision"] == agents.MAX_REVISION:
+                raise ProfileError("invalid_config", "agents.revision")
+            proposed["revision"] = max(1, current["revision"] + 1)
+            config = normalized_config(original)
+            if config["version"] < 3:
+                config["version"] = 3
+                config["observations"] = {"revision": 1, "registrations": []}
+            if config["version"] < 4:
+                config["version"] = 4
+                config["workbench"] = {**copy.deepcopy(workbench.EMPTY), "revision": 1}
+            config["version"] = 5
+            config["agents"] = proposed
+            validate_config(config)
+            if original["version"] < 5:
+                from control_everything.profiles.profile_import import create_backup
+                create_backup(self)
+            self._write_config(config)
+            return self.agent_settings()
+
     def write_workbench_locked(self, original, value, *, codex=None):
         """Caller owns selection_guard; publish exactly one profile update."""
         config = normalized_config(original)
         value = workbench.validate(value)
         value["revision"] = self._next_workbench_revision(workbench.from_config(original))
-        config.update(version=4, workbench=value)
+        config.update(version=max(4, config["version"]), workbench=value)
         config.setdefault("observations", copy.deepcopy(observations.EMPTY))
         if codex is not None:
             config["codex"] = codex
@@ -415,7 +508,7 @@ def main(argv=None):
             from control_everything.profiles.task_migration import migration_status
             state = migration_status(str(path))
             print(json.dumps({'restored': str(path), **state}, ensure_ascii=False))
-            if state['schema_version'] == 1:
+            if state['status'] == 'migration_required':
                 print(f'先显式迁移：python -m control_everything.profile migrate-tasks --data-dir "{path}"')
             else:
                 print(f'启动：python -m control_everything.gateway --data-dir "{path}" --port 14401')
@@ -430,7 +523,7 @@ def main(argv=None):
             if args.command == 'status':
                 from control_everything.profiles.task_migration import migration_status
                 state = migration_status(args.data_dir)
-                value = state if state['schema_version'] == 1 else Profile.open(args.data_dir).status()
+                value = state if state['status'] == 'migration_required' else Profile.open(args.data_dir).status()
             else:
                 profile = Profile.open(args.data_dir)
                 value = profile.import_settings(document) if document is not None else profile.status()

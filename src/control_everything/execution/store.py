@@ -2,7 +2,9 @@
 
 import json
 import os
+import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -66,33 +68,37 @@ class ExecutionStore:
         with self.workspace.connection() as connection:
             with self._schema_lock:
                 if not self._initialized:
-                    connection.executescript("""
-                        CREATE TABLE IF NOT EXISTS execution_runs (
-                            id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL,
-                            owner_id TEXT NOT NULL, task_id TEXT NOT NULL, task_title TEXT NOT NULL,
-                            project_id TEXT NOT NULL, project_name TEXT NOT NULL, cwd TEXT NOT NULL,
-                            root_identity TEXT NOT NULL, mode TEXT NOT NULL, prompt TEXT NOT NULL,
-                            state TEXT NOT NULL, reason TEXT, thread_id TEXT, turn_id TEXT, model TEXT,
-                            effective_policy_json TEXT, turn_send_started INTEGER NOT NULL DEFAULT 0,
-                            cancel_requested INTEGER NOT NULL DEFAULT 0, job_name TEXT,
-                            cleanup_state TEXT NOT NULL, token_json TEXT, token_observed_at TEXT,
-                            dropped_cursor INTEGER NOT NULL DEFAULT 0,
-                            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, ended_at TEXT
-                        );
-                        CREATE TABLE IF NOT EXISTS execution_events (
-                            seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, kind TEXT NOT NULL,
-                            payload_json TEXT NOT NULL, observed_at TEXT NOT NULL
-                        );
-                        CREATE INDEX IF NOT EXISTS execution_event_run ON execution_events(run_id,seq);
-                        CREATE TABLE IF NOT EXISTS execution_approvals (
-                            id TEXT PRIMARY KEY, run_id TEXT NOT NULL, owner_id TEXT NOT NULL,
-                            native_id_json TEXT NOT NULL, method TEXT NOT NULL, thread_id TEXT NOT NULL,
-                            turn_id TEXT NOT NULL, item_id TEXT NOT NULL, detail_json TEXT NOT NULL,
-                            detail_complete INTEGER NOT NULL, status TEXT NOT NULL, decision TEXT,
-                            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(run_id,native_id_json)
-                        );
-                    """)
-                    self._initialized = True
+                    if getattr(self.workspace, "profile", False):
+                        # Profile databases install execution tables through schema9 migration.
+                        self._initialized = True
+                    else:
+                        connection.executescript("""
+                            CREATE TABLE IF NOT EXISTS execution_runs (
+                                id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL,
+                                owner_id TEXT NOT NULL, task_id TEXT NOT NULL, task_title TEXT NOT NULL,
+                                project_id TEXT NOT NULL, project_name TEXT NOT NULL, cwd TEXT NOT NULL,
+                                root_identity TEXT NOT NULL, mode TEXT NOT NULL, prompt TEXT NOT NULL,
+                                state TEXT NOT NULL, reason TEXT, thread_id TEXT, turn_id TEXT, model TEXT,
+                                effective_policy_json TEXT, turn_send_started INTEGER NOT NULL DEFAULT 0,
+                                cancel_requested INTEGER NOT NULL DEFAULT 0, job_name TEXT,
+                                cleanup_state TEXT NOT NULL, token_json TEXT, token_observed_at TEXT,
+                                dropped_cursor INTEGER NOT NULL DEFAULT 0,
+                                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, ended_at TEXT
+                            );
+                            CREATE TABLE IF NOT EXISTS execution_events (
+                                seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, kind TEXT NOT NULL,
+                                payload_json TEXT NOT NULL, observed_at TEXT NOT NULL
+                            );
+                            CREATE INDEX IF NOT EXISTS execution_event_run ON execution_events(run_id,seq);
+                            CREATE TABLE IF NOT EXISTS execution_approvals (
+                                id TEXT PRIMARY KEY, run_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+                                native_id_json TEXT NOT NULL, method TEXT NOT NULL, thread_id TEXT NOT NULL,
+                                turn_id TEXT NOT NULL, item_id TEXT NOT NULL, detail_json TEXT NOT NULL,
+                                detail_complete INTEGER NOT NULL, status TEXT NOT NULL, decision TEXT,
+                                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(run_id,native_id_json)
+                            );
+                        """)
+                        self._initialized = True
             connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
             yield connection
 
@@ -119,6 +125,70 @@ class ExecutionStore:
         with self.connection() as connection:
             row = connection.execute("SELECT * FROM execution_runs WHERE request_id=?", (request_id,)).fetchone()
             return dict(row) if row else None
+
+    @contextmanager
+    def receipt_connection(self, *, deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise sqlite3.OperationalError("interrupted")
+        wait_slice = min(0.05, remaining)
+        connection = None
+        try:
+            connection = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True,
+                                          timeout=max(0.001, wait_slice))
+            connection.row_factory = sqlite3.Row
+            connection.execute(f"PRAGMA busy_timeout={max(1, int(wait_slice * 1000))}")
+            connection.execute("PRAGMA query_only=ON")
+            connection.set_progress_handler(
+                lambda: 1 if time.monotonic() >= deadline else 0, 1000)
+            self.workspace.validate_schema(connection)
+            connection.execute("BEGIN")
+            yield connection
+        finally:
+            if connection is not None:
+                try:
+                    connection.set_progress_handler(None, 0)
+                    if connection.in_transaction:
+                        connection.rollback()
+                finally:
+                    connection.close()
+
+    def find_request_in_transaction(self, connection, request_id):
+        if not connection.in_transaction:
+            raise WorkspaceError("transaction_required")
+        row = connection.execute("SELECT * FROM execution_runs WHERE request_id=?", (request_id,)).fetchone()
+        return dict(row) if row else None
+
+    def insert_dispatch_run(self, connection, *, request_id, request_hash, owner_id, context):
+        if not connection.in_transaction:
+            raise WorkspaceError("transaction_required")
+        if self.find_request_in_transaction(connection, request_id) is not None:
+            raise WorkspaceError("idempotency_conflict")
+        busy = connection.execute(
+            "SELECT cwd FROM execution_runs WHERE state IN (?,?,?,?) OR cleanup_state!='verified'",
+            ACTIVE_STATES).fetchall()
+        if any(overlapping_roots(row["cwd"], context["cwd"]) for row in busy):
+            raise WorkspaceError("project_busy")
+        if len(busy) >= 2:
+            raise WorkspaceError("capacity_busy")
+        now, run_id = timestamp(), str(uuid4())
+        policy = {"adapter": context.get("adapter", "codex"), "confirmation_version": 1}
+        if context.get("dsh_runtime") is not None:
+            policy["dsh_runtime"] = context["dsh_runtime"]
+        if context.get("policy") is not None:
+            policy["policy"] = context["policy"]
+        if context.get("agent_policy") is not None:
+            policy["agent_policy"] = context["agent_policy"]
+        if context.get("sandbox_preparation") is not None:
+            policy["sandbox_preparation"] = context["sandbox_preparation"]
+        connection.execute("""INSERT INTO execution_runs
+            (id,request_id,request_hash,owner_id,task_id,task_title,project_id,project_name,cwd,
+             root_identity,mode,prompt,effective_policy_json,state,cleanup_state,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'starting','pending',?,?)""",
+            (run_id, request_id, request_hash, owner_id, context["task_id"], context["task_title"],
+             context["project_id"], context["project_name"], context["cwd"], context["root_identity"],
+             context["mode"], context["prompt"], encode(policy), now, now))
+        return self._run(connection, run_id)
 
     def admit(self, body, request_hash, owner_id, prepare):
         # Replays precede all mutable context and availability checks.
@@ -154,6 +224,13 @@ class ExecutionStore:
             return {"runs": [public_run(row) for row in rows], "active": [public_run(row) for row in active],
                     "total": total, "limit": 50}
 
+    def projection_run_ids(self, offset=0, limit=200):
+        if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("invalid_projection_page")
+        with self.connection() as connection:
+            return [row["id"] for row in connection.execute(
+                "SELECT id FROM execution_runs ORDER BY created_at,id LIMIT ? OFFSET ?", (limit, offset))]
+
     def snapshot(self, run_id, after=0, *, can_act=True):
         with self.connection() as connection:
             run = self._run(connection, run_id)
@@ -172,6 +249,19 @@ class ExecutionStore:
                                 "observed_at": row["observed_at"]} for row in page],
                     "next_cursor": page[-1]["seq"] if page else after, "first_cursor": first or 0,
                     "gap": gap, "has_more": len(rows) > 200}
+
+    def projection_facts_in_transaction(self, connection, run_id):
+        if not connection.in_transaction:
+            raise WorkspaceError("transaction_required")
+        run = self._run(connection, run_id)
+        approvals = [dict(row) for row in connection.execute(
+            "SELECT id,status,method,detail_json,detail_complete,decision,created_at "
+            "FROM execution_approvals WHERE run_id=? ORDER BY created_at,id", (run_id,))]
+        events = [{"seq": row["seq"], "kind": row["kind"], "payload": json.loads(row["payload_json"]),
+                   "observed_at": row["observed_at"]} for row in connection.execute(
+            "SELECT seq,kind,payload_json,observed_at FROM execution_events WHERE run_id=? ORDER BY seq",
+            (run_id,))]
+        return {"run": run, "approvals": approvals, "events": events}
 
     def update_run(self, run_id, **fields):
         if not fields or set(fields) - RUN_UPDATES:

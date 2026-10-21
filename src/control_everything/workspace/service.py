@@ -15,6 +15,11 @@ from control_everything.sessions.source import canonical_uuid
 from control_everything.workspace.sources import CodexQuotaSource, NewsSource
 from control_everything.input_validation import ProfileError
 from control_everything.workspace.store import WorkspaceError, WorkspaceStore
+from control_everything.workspace import management
+from control_everything.workspace import project_dirs
+from control_everything.workspace import dispatch
+from control_everything.workspace import task_sessions
+from control_everything.workspace import task_messages
 from control_everything.workspace.validation import (
     finite_number, windows_path, inside_project, observation_owner, path_key, project_id_valid, validate_codex_project,
 )
@@ -25,6 +30,7 @@ PROVIDERS = ("codex", "claude", "grok", "dsh", "opencode")
 TASK_PROVIDERS = (*PROVIDERS, "hermes", "pi")
 TASK_STATES = ("todo", "doing", "blocked", "review", "done")
 TASK_FIELDS = {"title", "project_id", "provider_id", "state", "session_key"}
+ITEM_FIELDS = TASK_FIELDS | {"priority", "focus", "assigned_agent_id"}
 RECORD_FIELDS = {"id", "provider_id", "product", "day", "metric", "value", "currency", "window_label", "note"}
 PRODUCTS = {"codex": ("subscription",), "claude": ("subscription",),
             "grok": ("subscription", "cli", "api"), "dsh": ("local",), "opencode": ("local",)}
@@ -378,7 +384,7 @@ class WorkspaceService:
         return {"items": [{**row, "session_link_state": self.link_state(row, sessions, registry, desktop)} for row in rows],
                 "total": total, "offset": offset, "limit": limit}
 
-    def page_items(self, **params):
+    def page_items(self, include_assignment=False, **params):
         if self.profile is None:
             raise ValueError("profile_required")
         if (params.get("provider_id") is not None and params["provider_id"] not in TASK_PROVIDERS
@@ -386,7 +392,46 @@ class WorkspaceService:
                 or "project_id" in params and not project_id_valid(params["project_id"])):
             raise ProfileError("invalid_query")
         page = self.store.list_items(**params)
-        return self._item_page(page, self.sessions(), self._project_context())
+        return self._item_page(page, self.sessions(), self._project_context(), assignment=include_assignment)
+
+    def list_agent_tasks(self, agent_id, state=None, project_ids=None):
+        from control_everything.workspace import agent_runs
+        return agent_runs.list_tasks(self.store, agent_id, state, project_ids)
+
+    def get_agent_task(self, agent_id, task_id, project_ids=None):
+        from control_everything.workspace import agent_runs
+        return agent_runs.get_task(self.store, agent_id, task_id, project_ids)
+
+    def claim_agent_task(self, agent_id, task_id, expected_revision, project_ids=None):
+        from control_everything.workspace import agent_runs
+        return agent_runs.claim(self.store, agent_id, task_id, expected_revision, project_ids)
+
+    def claim_dispatch_in_transaction(self, connection, *, dispatch_id, task_id, agent_id,
+                                      execution_run_id, expected_revision):
+        from control_everything.workspace import agent_runs
+        return agent_runs.claim_dispatch_in_transaction(
+            self.store, connection, dispatch_id=dispatch_id, task_id=task_id, agent_id=agent_id,
+            execution_run_id=execution_run_id, expected_revision=expected_revision)
+
+    def project_execution_state(self, connection, **facts):
+        from control_everything.workspace import agent_runs
+        return agent_runs.project_execution_state(self.store, connection, **facts)
+
+    def progress_agent_task(self, agent_id, task_id, expected_revision, stage, percent=None, message=None,
+                            project_ids=None, wait_kind=None, request_id=None, agent_hint=None, run_id=None):
+        from control_everything.workspace import agent_runs
+        return agent_runs.progress(self.store, agent_id, task_id, expected_revision, stage, percent, message,
+                                   project_ids, wait_kind, request_id, agent_hint, run_id)
+
+    def submit_agent_review(self, agent_id, task_id, expected_revision, summary, evidence=None, project_ids=None,
+                            run_id=None):
+        from control_everything.workspace import agent_runs
+        return agent_runs.submit_review(self.store, agent_id, task_id, expected_revision, summary, evidence,
+                                        project_ids, run_id)
+
+    def cancel_agent_run(self, task_id, expected_revision, reason):
+        from control_everything.workspace import agent_runs
+        return agent_runs.cancel_run(self.store, task_id, expected_revision, reason)
 
     def _item_projection(self, row, sessions, context):
         visible = {project["id"] for project in context["visible"]}
@@ -395,8 +440,159 @@ class WorkspaceService:
                 "project_name": stored.get(row["project_id"], {}).get("name"),
                 "session_link_state": self.link_state(row, sessions, context["history"], context["desktop"])}
 
-    def _item_page(self, page, sessions, context):
-        return {**page, "items": [self._item_projection(row, sessions, context) for row in page["items"]]}
+    def _item_page(self, page, sessions, context, assignment=False):
+        states = {}
+        if assignment:
+            from control_everything.workspace import agent_runs
+            states = agent_runs.assignment_states(self.store, [row["id"] for row in page["items"]])
+        items = []
+        for row in page["items"]:
+            projected = self._item_projection(row, sessions, context)
+            if assignment:
+                info = states.get(row["id"]) or {}
+                projected["assignment_state"] = self._assignment_state(row, info)
+                projected["connection_state"] = self._connection_state(info)
+                projected["last_contact_at"] = info.get("heartbeat_at")
+            items.append(projected)
+        return {**page, "items": items}
+
+    @staticmethod
+    def _assignment_state(row, info):
+        info = info or {}
+        run_status = info.get("run_status")
+        last_event = info.get("last_event") or {}
+        waiting = (last_event.get("kind") == "progress"
+                   and (last_event.get("payload") or {}).get("stage") == "waiting_user")
+        if waiting:
+            return "waiting_user"
+        if row["state"] == "done":
+            return "done"
+        if row["state"] == "review":
+            return "waiting_review"
+        if row["state"] == "blocked":
+            return "blocked"
+        if run_status == "waiting_review":
+            return "waiting_review"
+        if run_status in ("claimed", "running"):
+            return "running"
+        if run_status in ("failed", "cancelled"):
+            return "failed"
+        return "assigned" if row.get("assigned_agent_id") else "unassigned"
+
+    @staticmethod
+    def _connection_state(info):
+        if not info or info.get("run_status") is None:
+            return "not_applicable"
+        from control_everything.workspace import agent_runs
+        return agent_runs.connection_state(info.get("heartbeat_at"), info.get("run_status"))
+
+    def agent_task_detail(self, task_id):
+        from control_everything.workspace import agent_runs
+        return agent_runs.task_detail(self.store, task_id)
+
+    def project_has_active_execution(self, project_id):
+        with self.store.connection() as connection:
+            connection.execute("BEGIN")
+            row = connection.execute(
+                "SELECT 1 FROM execution_runs WHERE project_id=? AND "
+                "(state IN ('starting','running','waiting_approval','cancel_requested') "
+                "OR cleanup_state <> 'verified') LIMIT 1",
+                (project_id,)).fetchone()
+        return row is not None
+
+    def project_directory(self, project_id, directory_id=None):
+        with self.store.connection() as connection:
+            connection.execute("BEGIN")
+            row = connection.execute(
+                "SELECT path FROM project_directories WHERE project_id=? "
+                + ("AND binding_id=? " if directory_id is not None else "")
+                + "ORDER BY is_primary DESC, binding_id LIMIT 1",
+                (project_id, directory_id) if directory_id is not None else (project_id,)).fetchone()
+        if row is None:
+            raise WorkspaceError("project_not_found")
+        return row["path"]
+
+    def inspect_project_directory(self, body):
+        return project_dirs.inspect(body)
+
+    def preview_project_directory(self, body):
+        return project_dirs.preview(body)
+
+    def register_project_directory(self, body):
+        return project_dirs.register(self.store, body)
+
+    def create_project_directory(self, body):
+        return project_dirs.create(self.store, body)
+
+    def pick_project_directory(self, body):
+        return project_dirs.pick(body)
+
+    def get_task_brief(self, task_id):
+        return dispatch.get_brief(self.profile, task_id)
+
+    def save_task_brief(self, task_id, body):
+        return dispatch.save_brief(self.profile, task_id, body)
+
+    def preview_task_dispatch(self, task_id, body):
+        return dispatch.preview_dispatch(self.profile, task_id, body)
+
+    def create_task_dispatch(self, task_id, body):
+        return dispatch.create_dispatch(self.profile, task_id, body)
+
+    def task_dispatches(self, task_id):
+        return dispatch.list_dispatches(self.store, task_id)
+
+    def task_dispatch(self, dispatch_id):
+        return dispatch.get_dispatch(self.store, dispatch_id)
+
+    def dispatch_execution_facts(self, dispatch_id, *, connection=None, agent_settings=None):
+        return dispatch.execution_facts(self.profile, self.store, dispatch_id,
+                                        connection=connection, agent_settings=agent_settings)
+
+    def execution_run_facts(self, **facts):
+        return dispatch.execution_run_facts(self.profile, self.store, **facts)
+
+    def execution_binding(self, connection, *, dispatch_id, execution_run_id, task_id):
+        return dispatch.execution_binding(connection, dispatch_id=dispatch_id,
+                                          execution_run_id=execution_run_id, task_id=task_id)
+
+    def mark_dispatch_sent(self, dispatch_id):
+        return dispatch.mark_sent(self.store, dispatch_id)
+
+    def cancel_task_dispatch(self, dispatch_id):
+        return dispatch.cancel_dispatch(self.store, dispatch_id)
+
+    def task_sessions(self, task_id):
+        return task_sessions.task_sessions(self.store, task_id)
+
+    def link_task_session(self, task_id, body):
+        if type(body) is dict and body.get("agent_id") is not None:
+            agent_id = body["agent_id"]
+            if not any(row["id"] == agent_id and row["enabled"] for row in self.profile.agent_settings()["items"]):
+                raise ProfileError("agent_not_found", "agent_id", status=404)
+        return task_sessions.link_session(self.store, task_id, body)
+
+    def unlink_task_session(self, session_id, body):
+        return task_sessions.unlink_session(self.store, session_id, body)
+
+    def list_task_sessions(self, project_id=None):
+        return task_sessions.list_sessions(self.store, project_id)
+
+    def task_messages(self, task_id):
+        return task_messages.list_messages(self.store, task_id)
+
+    def create_task_message(self, task_id, body):
+        if type(body) is dict and body.get("agent_id") is not None:
+            agent_id = body["agent_id"]
+            if not any(row["id"] == agent_id and row["enabled"] for row in self.profile.agent_settings()["items"]):
+                raise ProfileError("agent_not_found", "agent_id", status=404)
+        return task_messages.create_message(self.store, task_id, body)
+
+    def mark_message_sent(self, message_id):
+        return task_messages.mark_sent(self.store, message_id)
+
+    def cancel_task_message(self, message_id):
+        return task_messages.cancel_message(self.store, message_id)
 
     def save_item(self, body, *, update=False):
         from control_everything.workspace.task_schema import MAX_REVISION
@@ -417,18 +613,21 @@ class WorkspaceService:
             if type(revision) is not int or not 1 <= revision <= MAX_REVISION:
                 invalid("expected_revision")
             fields = body["changes"]
-            if not isinstance(fields, dict) or not fields or set(fields) - TASK_FIELDS:
+            if not isinstance(fields, dict) or not fields or set(fields) - ITEM_FIELDS:
                 invalid("changes")
             old = self.store.get_item(item_id)
             # A stale request is never validated against a newer row's grandfather limits.
             if old["revision"] != revision:
                 raise WorkspaceError("item_changed")
-            fields = {key: value for key, value in fields.items() if value != old[key]}
         else:
-            if "title" not in body or set(body) - TASK_FIELDS:
+            if "title" not in body or set(body) - ITEM_FIELDS:
                 invalid()
             fields = {"project_id": None, "provider_id": None, "state": "todo", "session_key": None, **body}
             old, item_id, revision = None, None, None
+        # Validate before equality checks: bool compares equal to integer flags.
+        management.validate_item_flags(fields)
+        if update:
+            fields = {key: value for key, value in fields.items() if value != old[key]}
         if "title" in fields:
             title = fields["title"]
             maximum = max(2000, len(old["title"])) if old else 2000
@@ -455,6 +654,11 @@ class WorkspaceService:
             project = next((row for row in registry if row["id"] == fields["project_id"]), None)
             if project is None or project["archived"]:
                 invalid("project_id")
+        if "assigned_agent_id" in fields and fields["assigned_agent_id"] is not None:
+            agent_id = fields["assigned_agent_id"]
+            if not isinstance(agent_id, str) or not any(
+                    row["id"] == agent_id and row["enabled"] for row in self.profile.agent_settings()["items"]):
+                invalid("assigned_agent_id")
         link_changed = old is None or any(name in fields for name in ("project_id", "provider_id", "session_key"))
         project = next((row for row in registry if row["id"] == merged["project_id"]), None)
         projection = None
@@ -499,7 +703,32 @@ class WorkspaceService:
         item = self.store.save_item(fields or {"title": old["title"]}, item_id=item_id,
                                     expected_revision=revision, session_cwd=session_cwd,
                                     codex_project=projection, codex_session_project_id=session_project_id)
-        return {"item": self._item_projection(item, sessions, context)}
+        projected = self._item_projection(item, sessions, context)
+        from control_everything.workspace import agent_runs
+        info = agent_runs.assignment_states(self.store, [item["id"]]).get(item["id"]) or {}
+        projected["assignment_state"] = self._assignment_state(item, info)
+        projected["connection_state"] = self._connection_state(info)
+        projected["last_contact_at"] = info.get("heartbeat_at")
+        return {"item": projected}
+
+    def page_decisions(self, **params):
+        return management.list_decisions(self.store, **params)
+
+    def save_decision(self, body, *, update=False):
+        # These are local annotations; selecting a project never dispatches a tool.
+        if not update:
+            management.validate_decision_body(body)
+            project = next((row for row in self.registered_projects()
+                            if row['id'] == body['project_id'] and not row['archived']), None)
+            if project is None:
+                raise ProfileError('invalid_decision', 'project_id')
+        return management.save_decision(self.store, body, update=update)
+
+    def page_reviews(self, **params):
+        return management.list_reviews(self.store, **params)
+
+    def save_review(self, body):
+        return management.save_review(self.store, body)
 
     def page_records(self, **params):
         rows, total = self.store.list_records(**params)

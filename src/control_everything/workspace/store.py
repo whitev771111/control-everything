@@ -16,7 +16,7 @@ from control_everything.workspace.validation import (
 from control_everything.workspace import task_schema as tasks
 from control_everything.workspace.task_schema import BASE_SCHEMA, MANAGEMENT_SCHEMA
 
-MANAGEMENT_TABLES = tasks.SCHEMA2_TABLES
+MANAGEMENT_TABLES = tasks.SCHEMA9_TABLES
 
 
 def now_utc():
@@ -35,7 +35,7 @@ class WorkspaceStore:
         self.profile = profile
         self.write_lock = threading.RLock()
 
-    def validate_schema(self, connection, version=2):
+    def validate_schema(self, connection, version=tasks.SCHEMA_VERSION):
         tasks.validate_schema(connection, version)
 
     def checked_management_connection(self, connection):
@@ -60,16 +60,16 @@ class WorkspaceStore:
                         try:
                             # A second process might have initialized while we waited.
                             if not connection.execute("SELECT name FROM sqlite_master").fetchone():
-                                tasks.install_schema2(connection, fresh=True)
+                                tasks.install_schema9(connection, fresh=True)
                             connection.commit()
                         except Exception:
                             connection.rollback()
                             raise
-                    elif version == 1:
-                        self.validate_schema(connection, 1)
+                    elif version in (1, 2, 3, 4, 5, 6, 7, 8):
+                        self.validate_schema(connection, version)
                         raise WorkspaceError("migration_required")
                     self.checked_management_connection(connection)
-                elif version == 2:
+                elif version >= 2:
                     # Refuse before a legacy ExecutionStore can create its tables.
                     raise WorkspaceError("schema_error")
                 elif not self._initialized:
@@ -411,11 +411,20 @@ class WorkspaceStore:
         if type(order) is not int or order < -(1 << 63):
             raise WorkspaceError('order_exhausted')
         state = fields['state']
+        priority = fields.get('priority')
+        focus = fields.get('focus', 0)
+        assigned_agent_id = fields.get('assigned_agent_id')
+        if (priority is not None and (type(priority) is not int or priority not in (0, 1, 2))
+                or type(focus) is not int or focus not in (0, 1)
+                or assigned_agent_id is not None and (type(assigned_agent_id) is not str
+                                                      or not 1 <= len(assigned_agent_id) <= 64)):
+            raise WorkspaceError('invalid_item')
         row = dict(id=str(uuid4()), origin=origin, origin_id=raw_id if raw_id is not None else str(uuid4()),
                    title=fields['title'], project_id=fields['project_id'], provider_id=fields['provider_id'],
                    state=state, session_key=fields['session_key'], source=source,
                    created_at=created_at, updated_at=updated_at, todo_position=todo_position,
-                   sort_index=order, resume_state=state if state != 'done' else 'todo', revision=1)
+                   sort_index=order, resume_state=state if state != 'done' else 'todo', revision=1,
+                   priority=priority, focus=focus, assigned_agent_id=assigned_agent_id)
         tasks.insert_item(connection, row)
         tasks.bump_list_revision(connection)
         return row
@@ -424,8 +433,14 @@ class WorkspaceStore:
     def _update_item(connection, old, changes, expected_revision=None):
         if expected_revision is not None and old['revision'] != expected_revision:
             raise WorkspaceError('item_changed')
-        allowed = {'title', 'project_id', 'provider_id', 'state', 'session_key'}
+        allowed = {'title', 'project_id', 'provider_id', 'state', 'session_key', 'priority', 'focus', 'assigned_agent_id'}
         if not isinstance(changes, dict) or not changes or set(changes) - allowed:
+            raise WorkspaceError('invalid_item')
+        if ('priority' in changes and changes['priority'] is not None
+                and (type(changes['priority']) is not int or changes['priority'] not in (0, 1, 2))
+                or 'focus' in changes and (type(changes['focus']) is not int or changes['focus'] not in (0, 1))
+                or 'assigned_agent_id' in changes and changes['assigned_agent_id'] is not None
+                and (type(changes['assigned_agent_id']) is not str or not 1 <= len(changes['assigned_agent_id']) <= 64)):
             raise WorkspaceError('invalid_item')
         changed = {key: value for key, value in changes.items() if value != old[key]}
         if not changed:
@@ -518,8 +533,23 @@ class WorkspaceStore:
             current = dict(row)
             if current['revision'] != expected_revision:
                 raise WorkspaceError('item_changed')
-            if not isinstance(fields, dict) or not fields or set(fields) - {'title', 'project_id', 'provider_id', 'state', 'session_key'}:
+            if ('assigned_agent_id' in fields
+                    and fields['assigned_agent_id'] != current['assigned_agent_id']
+                    and connection.execute(
+                        "SELECT 1 FROM agent_runs WHERE task_id=? AND status IN ('claimed','running','waiting_review') LIMIT 1",
+                        (item_id,)).fetchone() is not None):
+                raise ProfileError('agent_run_conflict', status=409)
+            if not isinstance(fields, dict) or not fields or set(fields) - {'title', 'project_id', 'provider_id', 'state', 'session_key', 'priority', 'focus', 'assigned_agent_id'}:
                 raise WorkspaceError('invalid_item')
+            protected = {'project_id', 'provider_id', 'state', 'session_key', 'assigned_agent_id'}
+            if any(key in protected and fields[key] != current[key] for key in fields):
+                managed = connection.execute(
+                    "SELECT 1 FROM agent_runs ar JOIN task_dispatches d ON d.id=ar.dispatch_id "
+                    "WHERE ar.task_id=? AND ar.status IN ('claimed','running','waiting_review') "
+                    "AND d.delivery_mode='auto' AND d.external_ref IS NOT NULL LIMIT 1",
+                    (item_id,)).fetchone()
+                if managed is not None:
+                    raise ProfileError('execution_managed_item', status=409)
             if codex_project is not None:
                 if codex_project.get('id') != fields.get('project_id', current['project_id']):
                     raise ProfileError('invalid_item', 'project_id')
@@ -528,10 +558,14 @@ class WorkspaceStore:
             return self._update_item(connection, current, fields, expected_revision)
 
     def list_items(self, *, offset=0, limit=50, scope='all', project_id=None, provider_id=None,
-                   state=None, list_revision=None):
+                   state=None, list_revision=None, focus=None, priority=None, sort='manual'):
         if (type(offset) is not int or type(limit) is not int or offset < 0 or not 1 <= limit <= 100
                 or list_revision is not None and (type(list_revision) is not int or not 1 <= list_revision <= tasks.MAX_REVISION)):
             raise WorkspaceError('invalid_item')
+        if (focus is not None and (type(focus) is not int or focus not in (0, 1))
+                or priority is not None and (type(priority) is not int or priority not in (0, 1, 2))
+                or sort not in ('manual', 'priority')):
+            raise ProfileError('invalid_query')
         with self.connection() as connection:
             connection.execute('BEGIN')
             revision = connection.execute('SELECT list_revision FROM task_center_meta WHERE id=1').fetchone()[0]
@@ -546,11 +580,13 @@ class WorkspaceStore:
                       'attention': "t.state IN ('blocked','review')"}.get(scope)
             if clause:
                 where.append(clause)
-            for key, value in (('project_id', project_id), ('provider_id', provider_id), ('state', state)):
+            for key, value in (('project_id', project_id), ('provider_id', provider_id), ('state', state),
+                               ('focus', focus), ('priority', priority)):
                 if value is not None:
                     where.append('t.' + key + '=?')
                     args.append(value)
             source = ' FROM task_items t LEFT JOIN projects p ON p.id=t.project_id' + (' WHERE ' + ' AND '.join(where) if where else '')
             total = connection.execute('SELECT COUNT(*)' + source, args).fetchone()[0]
-            rows = connection.execute('SELECT t.*' + source + ' ORDER BY t.sort_index,t.id LIMIT ? OFFSET ?', (*args, limit, offset)).fetchall()
+            ordering = 'COALESCE(t.priority,3),t.sort_index,t.id' if sort == 'priority' else 't.sort_index,t.id'
+            rows = connection.execute('SELECT t.*' + source + ' ORDER BY ' + ordering + ' LIMIT ? OFFSET ?', (*args, limit, offset)).fetchall()
             return {'items': [dict(row) for row in rows], 'total': total, 'offset': offset, 'limit': limit, 'list_revision': revision}

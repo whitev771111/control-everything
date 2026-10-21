@@ -166,6 +166,7 @@
       const projectRows = [['', '全局事项'], ...projects.filter(row => !row.archived).map(row => [row.id, row.name])];
       if (item?.project_id && !projectRows.some(([id]) => id === item.project_id)) projectRows.push([item.project_id, `保留原项目 · ${projectName(item.project_id)}`]);
       options(controls.project_id, projectRows, item ? (item.project_id ?? '') : contextProject);
+      controls.project_id.disabled = Boolean(contextProject);
       const providerRows = [['', '暂不分配'], ...Object.entries(providers)];
       if (item?.provider_id && !providers[item.provider_id]) providerRows.push([item.provider_id, `保留原工具 · ${item.provider_id}`]);
       options(controls.provider_id, providerRows, item?.provider_id ?? '');

@@ -285,6 +285,7 @@ class ExecutionTests(unittest.TestCase):
 
     def test_worker_start_failure_is_queryable_and_never_retried(self):
         self.service._worker_factory = Mock(side_effect=RuntimeError("private startup detail"))
+        self.service._custom_worker = self.service._worker_factory
         body = self.body()
         self.service.submit(body)
         run = self.service.snapshot(request_id=body["request_id"])["run"]

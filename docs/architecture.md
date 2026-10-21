@@ -59,4 +59,4 @@ HTTP 层可以装配各功能包，功能包不能反向依赖 HTTP。会话观�
 开发环境、检查命令和提交约定见[参与开发](../.github/CONTRIBUTING.md)；配置及数据恢复操作见[使用指南](usage.md)。
 
 
-项目发现、读取许可和加入工作台分别处理。Codex 沿用原许可字段；Claude Code/OpenCode 的许可与移出 ID 集合保存在 profile v4。已存项目默认保留，未保存的外部发现不自动进入导航。移出只写配置，不删除业务记录；首次加入只写管理库，合法悬空移出 ID 需要第二次配置请求重新加入。业务 schema2 与备份 manifest2 保持。
+项目发现、读取许可和加入工作台分别处理。Codex 沿用原许可字段；Claude Code/OpenCode 的许可与移出 ID 集合保存在 profile v4，v5 增加本机 Agent 注册身份与可选 project_ids 范围。已存项目默认保留，未保存的外部发现不自动进入导航。移出只写配置，不删除业务记录；首次加入只写管理库，合法悬空移出 ID 需要第二次配置请求重新加入。业务 schema8 与备份 manifest8 保持；agent_runs/task_events 记录领取、进度、等待人工/授权和审核证据；task_briefs/task_dispatches 记录版本化说明与人工确认的派发快照；task_sessions 只存外部会话元数据与 source_instance，不存正文；task_messages 记录人工补充/退回/等待人回答的手动交接状态；连接未知只提示，不释放运行或任务，不表示宿主执行或自动完成。

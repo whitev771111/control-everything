@@ -15,6 +15,7 @@ node_modules/
 !/docs/README.md
 !/docs/architecture.md
 !/docs/usage.md
+!/docs/workbench-contract.md
 !/docs/integrations.md
 !/docs/windows.md
 !/docs/examples/

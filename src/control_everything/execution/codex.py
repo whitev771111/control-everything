@@ -11,6 +11,7 @@ import time
 from uuid import uuid4
 
 from control_everything.execution.owned_process import OwnedProcess, ProcessError
+from control_everything.execution.runtime_readiness import classify_native_failure
 from control_everything.workspace.sources import native_codex
 from control_everything.workspace.store import WorkspaceError
 
@@ -61,7 +62,7 @@ def launch_arguments(disabled_mcp_ids=()):
     return args
 
 
-def check_config(response, disabled_mcp_ids=()):
+def check_config(response, disabled_mcp_ids=(), *, isolated_runtime=False, expected_windows_mode=None):
     config = response.get("config")
     if not isinstance(config, dict):
         raise ProcessError("effective_policy_mismatch")
@@ -72,6 +73,13 @@ def check_config(response, disabled_mcp_ids=()):
               "sandbox_overrides_match": isinstance(sandbox, dict) and all(
                   sandbox.get(key) == value and type(sandbox.get(key)) is type(value)
                   for key, value in WORKSPACE_CONFIG.items())}
+    if isolated_runtime:
+        checks["credential_store_file"] = config.get("cli_auth_credentials_store") == "file"
+        checks["mcp_empty"] = config.get("mcp_servers") in (None, {})
+    if expected_windows_mode is not None:
+        windows = config.get("windows")
+        checks["windows_sandbox_mode_match"] = (
+            isinstance(windows, dict) and windows.get("sandbox") == expected_windows_mode)
     if disabled_mcp_ids:
         servers = config.get("mcp_servers")
         checks["test_mcp_disabled"] = isinstance(servers, dict) and set(servers) == set(disabled_mcp_ids) and all(
@@ -79,6 +87,20 @@ def check_config(response, disabled_mcp_ids=()):
     if not all(checks.values()):
         raise ProcessError("effective_policy_mismatch")
     return checks
+
+
+def readonly_downgrade(response, cwd):
+    actual = response.get("sandbox")
+    if not isinstance(actual, dict) or actual.get("type") != "readOnly" \
+            or actual.get("networkAccess") is not False:
+        return False
+    try:
+        same_root = Path(response["cwd"]).resolve(strict=True) == Path(cwd).resolve(strict=True)
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
+    return bool(same_root and response.get("approvalPolicy") == "on-request"
+                and response.get("approvalsReviewer") == "user"
+                and response.get("activePermissionProfile") is None)
 
 
 def sandbox_policy(mode):
@@ -114,8 +136,10 @@ def check_thread(response, cwd, mode):
 
 
 class CodexRun:
-    def __init__(self, store, run, owner_id, validate_root, policy=None, process_factory=None, resolver=None):
+    def __init__(self, store, run, owner_id, validate_root, policy=None, process_factory=None, resolver=None,
+                 runtime=None):
         self.store, self.record, self.owner_id = store, dict(run), owner_id
+        self.runtime = runtime
         self.id, self.cwd = run["id"], run["cwd"]
         self.validate_root = validate_root
         self.mode = (policy or {}).get("mode", "workspace-write")
@@ -159,14 +183,28 @@ class CodexRun:
             executable = str(Path(self.resolver()).resolve(strict=True))
             job_name = f"Local\\mianban_exec.{self.owner_id}.{self.id}.{uuid4()}"
             self._update(job_name=job_name)
-            self.process = self.process_factory(executable, launch_arguments(self.disabled_mcp_ids), self.cwd, job_name)
+            arguments = launch_arguments(self.disabled_mcp_ids)
+            if self.runtime is not None:
+                arguments = [*arguments, "-c", 'cli_auth_credentials_store="file"',
+                             "-c", f'windows.sandbox="{self.runtime.windows_sandbox_mode}"']
+            if self.runtime is None:
+                self.process = self.process_factory(executable, arguments, self.cwd, job_name)
+            else:
+                self.process = self.process_factory(executable, arguments, self.cwd, job_name,
+                                                    env=dict(self.runtime.child_env))
             self.process.start()
             init = self._rpc("initialize", {"clientInfo": {"name": "mianban_execution", "version": "1.0"}})
             version = re.search(r"\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.]+)?", str(init.get("userAgent", "")))
             self.event("phase", phase="initialized", executable=executable,
                        server_version=version.group(0) if version else None)
             self.process.write({"method": "initialized"})
-            checks = check_config(self._rpc("config/read", {"cwd": self.cwd, "includeLayers": False}), self.disabled_mcp_ids)
+            checks = check_config(self._rpc("config/read", {"cwd": self.cwd, "includeLayers": False}),
+                                  self.disabled_mcp_ids, isolated_runtime=self.runtime is not None,
+                                  expected_windows_mode=(self.runtime.windows_sandbox_mode
+                                                         if self.runtime is not None else None))
+            if self.runtime is not None:
+                self._persist_runtime(checks)
+                self._authenticate()
             if self.cancelled:
                 self._finish("cancelled_before_send", "cancelled_before_send")
                 return
@@ -176,8 +214,24 @@ class CodexRun:
             if self.mode == "workspace-write":
                 params["config"] = {"sandbox_workspace_write": WORKSPACE_CONFIG}
             created = self._rpc("thread/start", params)
-            effective = check_thread(created, self.cwd, self.mode)
+            try:
+                effective = check_thread(created, self.cwd, self.mode)
+            except ProcessError as error:
+                if (self.runtime is not None and str(error) == "effective_policy_mismatch"
+                        and readonly_downgrade(created, self.cwd)):
+                    raise ProcessError("windows_sandbox_setup_required") from None
+                raise
             effective["config_checks"] = checks
+            if self.runtime is not None:
+                effective["runtime"] = self.runtime.public()
+            try:
+                prior = json.loads(self.record.get("effective_policy_json") or "{}")
+            except (TypeError, ValueError):
+                prior = {}
+            if isinstance(prior, dict):
+                for key in ("policy", "agent_policy", "adapter", "dsh_runtime", "confirmation_version"):
+                    if key in prior:
+                        effective[key] = prior[key]
             self.thread_id = self._identifier(created.get("thread", {}).get("id"))
             self._update(thread_id=self.thread_id, model=created["model"], effective_policy_json=encoded(effective))
             self._flush_early()
@@ -214,6 +268,14 @@ class CodexRun:
         except Exception as error:
             reason = str(error) if isinstance(error, ProcessError) else (
                 "storage_unavailable" if isinstance(error, WorkspaceError) else "execution_failed")
+            native = classify_native_failure(getattr(error, "native_hint", None) or reason)
+            if native is not None:
+                try:
+                    self.event("phase", phase="native_failure", native_phase=native["phase"],
+                               code=native["code"], status=native["status"], summary=native["summary"])
+                except WorkspaceError:
+                    pass
+                reason = native["status"]
             try:
                 self.event("error", reason=reason)
                 if not self.terminal:
@@ -252,7 +314,12 @@ class CodexRun:
                 self.handle_message(message)
         message = self.responses.pop(key)
         if "error" in message:
-            raise ProcessError("rpc_error")
+            error = ProcessError("rpc_error")
+            payload = message.get("error")
+            detail = payload.get("message") if isinstance(payload, dict) else None
+            if isinstance(detail, str) and len(detail) <= 4096:
+                error.native_hint = detail
+            raise error
         if not isinstance(message.get("result"), dict):
             raise ProcessError("protocol_error")
         return message["result"]
@@ -540,6 +607,30 @@ class CodexRun:
                 self.event("phase", phase="interrupt_requested")
             if self.cancelled and self.cancel_deadline is not None and time.monotonic() >= self.cancel_deadline and not self.terminal:
                 raise ProcessError("cancel_timeout")
+
+    def _persist_runtime(self, config_checks=None):
+        current = {}
+        if self.record.get("effective_policy_json"):
+            try:
+                current = json.loads(self.record["effective_policy_json"])
+            except (TypeError, ValueError):
+                current = {}
+        if not isinstance(current, dict):
+            current = {}
+        current["runtime"] = self.runtime.public()
+        if config_checks is not None:
+            current["config_checks"] = config_checks
+        self._update(effective_policy_json=encoded(current))
+
+    def _authenticate(self):
+        try:
+            response = self._rpc("account/read", {"refreshToken": False})
+        except ProcessError:
+            raise ProcessError("auth_check_failed") from None
+        account = response.get("account") if isinstance(response, dict) else None
+        if not account:
+            raise ProcessError("login_required")
+        self.event("phase", phase="authenticated")
 
     def _finish(self, state, reason=None):
         with self.lock:

@@ -11,6 +11,7 @@ WEB_ASSETS = (
     "progress/progress.html", "progress/progress.js", "progress/progress.css",
     "workspace/workspace.html", "workspace/workspace.js", "workspace/workspace.css",
     "workspace/onboarding.js",
+    "workspace/agents.js",
     "workspace/task-center.js", "workspace/project-space.js", "workspace/execution.js", "workspace/observation.js",
     "workspace/news.js", "workspace/quota.js",
 )

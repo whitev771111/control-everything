@@ -1,9 +1,171 @@
 // Project navigation uses the existing snapshot and a single task editor.
 'use strict';
+window.WorkspaceSessionList = (() => {
+  function create({ root, read, taskId = null, projectId = null, agents = [], postJson = null, isBusy = () => false, onBusy = () => {}, isCurrent = () => true }) {
+    let request = 0, writing = false, uncertain = false, actions = [];
+    const node = (tag, text, cls = '') => {
+      const value = document.createElement(tag); value.setAttribute('class', cls);
+      if (text !== undefined) value.textContent = text;
+      return value;
+    };
+    const date = value => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '未提供';
+    function render(items, message) {
+      actions = [];
+      root.replaceChildren(node('h3', '事项会话'));
+      root.append(node('p', '围绕事项与 Agent 的交流记录。当前仅提供会话信息，未同步聊天正文。', 'section-note'));
+      const refresh = node('button', '重新读取会话', 'button secondary'); refresh.type = 'button';
+      refresh.disabled = writing;
+      actions.push(refresh);
+      refresh.addEventListener('click', load); root.append(refresh);
+      const status = node('p', message, 'section-note'); status.setAttribute('role', 'status'); root.append(status);
+      for (const session of items) {
+        const row = node('article', undefined, 'context-row task-session-row');
+        const copy = node('div', undefined, 'session-copy');
+        copy.append(node('h4', session.title || '未命名会话'));
+        const agent = agents.find(value => value.id === session.agent_id);
+        copy.append(node('p', `${agent?.name || (session.agent_id ? 'Agent：' + session.agent_id : 'Agent 未登记')} · 来源：${session.source || '未知'}${session.source_instance ? ' · 实例：' + session.source_instance : ''}${session.legacy ? ' · 旧关联' : ''}`, 'section-note'));
+        copy.append(node('p', session.external_id || '来源标识未提供', 'context-path'));
+        copy.append(node('p', `最近交流：${date(session.last_seen_at)} · 活动状态未知`, 'section-note'));
+        if (!taskId && session.task_id) copy.append(node('p', `所属事项：${session.task_id}`, 'context-path'));
+        let url = null;
+        try { const parsed = new URL(session.url); if (['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password) url = parsed.href; } catch {}
+        row.append(copy);
+        if (url) {
+          const link = node('a', '打开原会话', 'button secondary'); link.setAttribute('href', url); link.setAttribute('target', '_blank'); link.setAttribute('rel', 'noopener noreferrer'); row.append(link);
+        } else row.append(node('span', '暂无可用打开入口', 'section-note'));
+        if (postJson && taskId && session.id && session.updated_at && !session.legacy) {
+          const unlink = node('button', '解除此事项关联', 'button secondary'); unlink.type = 'button'; unlink.disabled = writing || uncertain;
+          actions.push(unlink);
+          unlink.addEventListener('click', async () => {
+            if (writing || uncertain) return;
+            if (isBusy()) { status.textContent = '请先完成当前操作，再解除会话关联。'; return; }
+            if (!window.confirm(`确认解除“${session.title || session.external_id}”与当前事项的关联？外部聊天及其内容会保留。`)) return;
+            writing = true; onBusy(true); render(items, '正在解除关联…');
+            try {
+              const result = await postJson('/api/workspace/sessions/' + encodeURIComponent(session.id) + '/unlink', {
+                expected_task_id: taskId, expected_updated_at: session.updated_at });
+              if (!isCurrent()) return;
+              if (result?.id !== session.id || result.task_id !== null) throw new Error('response mismatch');
+              await load();
+            } catch (error) {
+              if (!isCurrent()) return;
+              uncertain = true;
+              render(items, error.reason === 'session_changed' ? '关联已被其他窗口更新，未解除。请重新读取会话后核对。' : '解除结果未确认，请重新读取会话；不会自动重试。');
+            } finally {
+              writing = false; onBusy(false);
+              if (isCurrent()) for (const action of actions) action.disabled = uncertain && action.textContent !== '重新读取会话';
+            }
+          });
+          row.append(unlink);
+        }
+        root.append(row);
+      }
+    }
+    async function load() {
+      const current = ++request;
+      render([], '正在读取会话…');
+      try {
+        const data = await read();
+        if (current !== request || !isCurrent()) return;
+        if (!Array.isArray(data?.items) || taskId && data.item?.id !== taskId) throw new Error('会话响应与事项不一致');
+        const items = data.items.filter(value => value.task_id && (!taskId || value.task_id === taskId) && (!projectId || value.project_id === projectId));
+        uncertain = false;
+        render(items, items.length ? `${items.length} 条关联会话` : '尚未关联会话。');
+        return true;
+      } catch {
+        if (current === request && isCurrent()) render([], '会话暂不可用，请重新读取。');
+        return false;
+      }
+    }
+    void load();
+    return { refresh: load, dispose() { request++; } };
+  }
+  function createEditor({ root, item, agents = [], postJson, refresh, isCurrent = () => true, isBusy = () => false, onBusy = () => {}, onDirty = () => {} }) {
+    let busy = false, uncertain = false;
+    const node = (tag, text) => { const value = document.createElement(tag); if (text !== undefined) value.textContent = text; return value; };
+    const box = node('details'), heading = node('summary', '关联已有 Agent 会话'); box.append(heading); root.append(box);
+    box.append(node('p', '登记你与 Agent 围绕本事项交流的会话。来源、来源实例和会话标识共同确定会话；实例留空使用默认来源。不会新建外部聊天或读取正文。'));
+    const form = node('form'), fields = node('fieldset'), controls = {};
+    for (const [key, label, limit, required] of [['source', '会话来源（如 codex、dsh）', 32, true], ['source_instance', '来源实例（可选）', 64, false], ['external_id', '外部会话标识', 256, true], ['title', '会话标题（可选）', 200, false], ['url', '会话网址（可选）', 2048, false]]) {
+      const input = node('input'); input.id = 'sl-' + key; input.maxLength = limit; input.required = required; input.type = 'text';
+      const field = node('label', label); field.setAttribute('class', 'field'); field.append(input); fields.append(field); controls[key] = input;
+    }
+    const agent = node('select'); agent.id = 'sl-agent';
+    const empty = node('option', '暂不指定 Agent'); empty.value = ''; agent.append(empty);
+    for (const value of agents.filter(value => value.enabled && (!value.project_ids?.length || value.project_ids.includes(item.project_id)))) {
+      const choice = node('option', value.name); choice.value = value.id; agent.append(choice);
+    }
+    const owner = node('label', '交流对象'); owner.setAttribute('class', 'field'); owner.append(agent); fields.append(owner);
+    const confirmed = node('input'); confirmed.id = 'sl-confirm'; confirmed.type = 'checkbox';
+    const consent = node('label', '我确认这段会话属于当前事项，并将所填信息保存到本机工作台'); consent.setAttribute('class', 'session-confirm'); consent.append(confirmed);
+    const submit = node('button', '确认关联会话'); submit.type = 'submit'; submit.setAttribute('class', 'button primary'); submit.disabled = true;
+    const discard = node('button', '放弃关联草稿'); discard.type = 'button'; discard.setAttribute('class', 'button secondary');
+    const status = node('p', '请填写来源和会话标识。'); status.id = 'sl-status'; status.setAttribute('role', 'status');
+    fields.append(consent, submit, discard); form.append(fields, status); box.append(form);
+    const sync = () => { fields.disabled = busy; submit.disabled = busy || uncertain || !confirmed.checked; };
+    const changed = () => { onDirty(true); confirmed.checked = false; sync(); };
+    for (const control of Object.values(controls)) control.addEventListener('input', changed);
+    agent.addEventListener('change', changed); confirmed.addEventListener('change', () => { onDirty(true); sync(); });
+    function clear() { for (const control of Object.values(controls)) control.value = ''; agent.value = ''; confirmed.checked = false; onDirty(false); sync(); }
+    discard.addEventListener('click', () => { if (busy || isBusy()) return; if (window.confirm('放弃尚未保存的会话关联信息？')) { clear(); status.textContent = uncertain ? '上次保存结果未知，请先重新核对。' : '关联草稿已放弃。'; } });
+    const check = node('button', '核对关联结果'); check.type = 'button'; check.setAttribute('class', 'button secondary'); box.append(check);
+    check.addEventListener('click', async () => {
+      if (busy || isBusy()) return;
+      busy = true; sync();
+      try { if (await refresh()) { uncertain = false; confirmed.checked = false; status.textContent = '已重新读取关联结果，请核对列表后再决定是否保存。'; } else status.textContent = '尚未核对成功，请稍后重试。'; }
+      finally { busy = false; if (isCurrent()) sync(); }
+    });
+    form.addEventListener('submit', async event => {
+      event.preventDefault(); if (busy || isBusy() || uncertain || !confirmed.checked) return;
+      const body = Object.fromEntries(Object.entries(controls).map(([key, value]) => [key, value.value.trim()]));
+      if (!body.source || !body.external_id) { status.textContent = '会话来源和外部会话标识不能为空。'; return; }
+      if (Object.entries(controls).some(([key, control]) => body[key].length > control.maxLength || body[key].includes('\0'))) { status.textContent = '会话字段过长或包含无效字符。'; return; }
+      if (body.url) {
+        try { const url = new URL(body.url); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('invalid'); }
+        catch { status.textContent = '请输入不含账号密码的 http 或 https 会话网址。'; return; }
+      }
+      if (agent.value) body.agent_id = agent.value;
+      busy = true; onBusy(true); sync();
+      try {
+        const result = await postJson('/api/workspace/tasks/' + encodeURIComponent(item.id) + '/sessions', body);
+        if (!isCurrent()) return;
+        if (result?.task_id !== item.id || result?.source !== body.source || result?.external_id !== body.external_id || result?.source_instance !== body.source_instance) throw new Error('response mismatch');
+        clear(); status.textContent = '会话关联已保存。';
+        if (!await refresh()) status.textContent = '关联已保存，但列表刷新失败，请核对关联结果。';
+      } catch (error) {
+        if (!isCurrent()) return;
+        uncertain = !(error.status >= 400 && error.status < 500);
+        status.textContent = error.reason === 'session_conflict' ? '会话已关联其他事项；草稿已保留，请核对来源实例和会话标识。' : uncertain ? '保存结果未知；草稿已保留，请先核对关联结果，不会自动重发。' : '关联未保存；草稿已保留，请检查填写内容。';
+      } finally { busy = false; onBusy(false); if (isCurrent()) sync(); }
+    });
+    return { isUncertain: () => uncertain };
+  }
+  return { create, createEditor };
+})();
 (() => {
   const tabs = { tasks: '全部事项', attention: '待处理', sessions: '会话' };
-  function create({ root, navigation, taskRoot, tasks, navigate, manage, manual, remove, readSessions, onSession }) {
-    let snapshot = null, selected = null, tab = 'tasks', view = 'overview';
+  function create({ root, navigation, taskRoot, tasks, navigate, manage, manual, remove, readSessions, readTaskSessions, onSession, fetchJson, postJson }) {
+    let snapshot = null, selected = null, tab = 'tasks', view = 'overview', managementRefresh = false;
+    const sandboxStates = new Map(), sandboxRequests = new Map(), sandboxButtons = new Map();
+    function sandboxEndpoint(item) {
+      return '/api/workspace/projects/' + encodeURIComponent(item.id) + '/sandbox-preparation?directory_id=main';
+    }
+    function refreshSandbox(item) {
+      const key = JSON.stringify(item.directories || []);
+      const previous = sandboxStates.get(item.id);
+      if (previous && previous.key === key && Date.now() - previous.sampledAt < 15000) return;
+      if (sandboxRequests.has(item.id)) return;
+      const token = { key };
+      sandboxRequests.set(item.id, token);
+      Promise.resolve().then(() => fetchJson(sandboxEndpoint(item)))
+        .catch(() => ({ status: 'unknown' }))
+        .then(value => {
+          if (sandboxRequests.get(item.id) !== token) return;
+          sandboxRequests.delete(item.id);
+          sandboxStates.set(item.id, { ...value, key, sampledAt: Date.now() });
+          updateSandboxButtons(item);
+        });
+    }
     let sessionScope = 'active', sessionKey = '', sessionPage = null, sessionRequest = 0, sessionReading = false, sessionError = '', sampleKey = '';
     const taskHome = taskRoot.parentElement;
     const node = (tag, cls, text) => {
@@ -20,6 +182,7 @@
     const attention = item => (item.task_counts?.blocked || 0) + (item.task_counts?.review || 0);
     const origin = item => item.id.startsWith('cl-') ? '来自 Claude Code · 人工管理' : item.id.startsWith('oc-') ? '来自 OpenCode · 人工管理' : item.id.startsWith('cx-') || item.source?.kind === 'codex' ? '来自 Codex' : '手工项目';
     function open(id, next = 'tasks') {
+      if (next === 'manage' && (selected !== id || tab !== next)) managementRefresh = true;
       selected = id; tab = next; navigate(`project/${encodeURIComponent(id)}/${next}`);
     }
     function renderNavigation() {
@@ -76,6 +239,7 @@
         const distributionLabel = states.filter(([key]) => item.task_counts?.[key]).map(([key, label]) => `${label} ${item.task_counts[key]}`).join(' · ');
         if (distributionLabel) meta.append(node('span', 'project-state-caption', distributionLabel));
         if (item.manual_recorded) meta.append(node('span', '', `人工 · ${item.state}${typeof item.percent === 'number' ? ` ${item.percent}%` : ''}`));
+        if (fetchJson && postJson) meta.append(sandboxButton(item));
         meta.append(button('进入项目 →', () => open(item.id), 'text-button'));
         if (remove) meta.append(button('移出工作台', () => remove(item), 'text-button'));
         card.append(meta); grid.append(card);
@@ -161,15 +325,67 @@
       const navigation = node('nav', 'project-tabs'); navigation.setAttribute('aria-label', '项目内容');
       for (const [key, label] of Object.entries(tabs)) {
         const value = button(label, () => open(item.id, key), 'project-tab');
-        if (key === tab) value.setAttribute('aria-current', 'page');
+        if (key === tab || tab === 'manage' && key === 'tasks' || tab === 'session-import' && key === 'sessions') value.setAttribute('aria-current', 'page');
         navigation.append(value);
       }
       root.append(navigation);
-      if (tab === 'tasks' || tab === 'attention') {
+      if (tab === 'tasks' || tab === 'attention' || tab === 'manage') {
         root.append(taskRoot); taskRoot.hidden = false;
-        tasks.setContext({ projectId: item.id, scope: tab === 'attention' ? 'attention' : 'all' });
+        const reading = tasks.setContext({ projectId: item.id, scope: tab === 'attention' ? 'attention' : 'all' });
+        if (managementRefresh) { managementRefresh = false; if (!reading) tasks.refresh?.(0); }
       } else if (tab === 'sessions') {
+        root.append(button('从工具导入会话', () => open(item.id, 'session-import')));
+        if (!readTaskSessions) { root.append(blank('尚未接入事项会话接口。')); return; }
+        const panel = node('section', 'agent-detail-section'); root.append(panel);
+        const id = item.id, version = sessionRequest;
+        window.WorkspaceSessionList.create({ root: panel, projectId: id,
+          read: () => readTaskSessions ? readTaskSessions(id) : Promise.reject(new Error('unavailable')),
+          isCurrent: () => view === 'project' && tab === 'sessions' && selected === id && sessionRequest === version && panel.parentElement === root });
+      } else if (tab === 'session-import') {
+        root.append(node('p', 'section-note', '以下是工具来源中的会话。关联事项前，不计入事项会话列表。'));
         renderSessions(item);
+      }
+    }
+    function updateSandboxButtons(item) {
+      const state = sandboxStates.get(item.id);
+      for (const control of sandboxButtons.get(item.id) || []) {
+        control.textContent = state?.status === 'ready' ? '沙箱已准备' : state?.status === 'required' ? '准备沙箱' : '检查沙箱';
+        control.disabled = !state || state.status === 'ready' || sandboxRequests.has(item.id);
+      }
+    }
+    function sandboxButton(item) {
+      const control = button('检查沙箱', () => prepareSandbox(item), 'text-button');
+      const controls = sandboxButtons.get(item.id) || new Set();
+      for (const previous of controls) if (previous.isConnected === false) controls.delete(previous);
+      controls.add(control); sandboxButtons.set(item.id, controls);
+      updateSandboxButtons(item);
+      refreshSandbox(item);
+      return control;
+    }
+    async function prepareSandbox(item) {
+      if (!fetchJson || !postJson || sandboxRequests.has(item.id)) return;
+      const token = { key: JSON.stringify(item.directories || []) };
+      sandboxRequests.set(item.id, token);
+      updateSandboxButtons(item);
+      try {
+        const status = await fetchJson(sandboxEndpoint(item));
+        if (!status?.confirmation_hash || !status.canonical_path) throw new Error('无法核对项目目录，请检查后重试。');
+        if (status.status === 'ready') {
+          sandboxStates.set(item.id, { ...status, key: JSON.stringify(item.directories || []), sampledAt: Date.now() });
+          return;
+        }
+        if (!window.confirm(`将为当前用户补充此目录的沙箱准备权限：${status.canonical_path}。不会修改文件内容。DSH 后续运行还会留下文件权限及低完整性标签，可能允许同用户的其他低权限进程写入项目；恢复能力有限。确认准备？`)) return;
+        const endpoint = '/api/workspace/projects/' + encodeURIComponent(item.id) + '/sandbox-preparation';
+        const value = await postJson(endpoint, { confirmed: true, path: status.canonical_path,
+          directory_id: status.directory_id, confirmation_hash: status.confirmation_hash });
+        sandboxStates.set(item.id, { ...value, key: JSON.stringify(item.directories || []), sampledAt: Date.now() });
+        window.alert('项目沙箱准备权限已核对。');
+      } catch (error) {
+        sandboxStates.set(item.id, { status: 'unknown', key: JSON.stringify(item.directories || []), sampledAt: Date.now() });
+        window.alert('准备失败：' + error.message);
+      } finally {
+        sandboxRequests.delete(item.id);
+        updateSandboxButtons(item);
       }
     }
     function render() {
@@ -195,13 +411,24 @@
       } else if (editorFocus && taskRoot.parentElement === root) editorFocus.focus({ preventScroll: true });
     }
     return {
-      open,
-      route(id, next) { if (selected !== id || !['active', 'archived'].includes(sessionScope)) { sessionScope = 'active'; sessionKey = ''; sessionRequest++; } selected = id; tab = Object.hasOwn(tabs, next) ? next : 'tasks'; },
+      open, sandboxButton,
+      route(id, next) {
+        if (next === 'manage' && (selected !== id || tab !== next)) managementRefresh = true;
+        if (selected !== id || !['active', 'archived'].includes(sessionScope)) { sessionScope = 'active'; sessionKey = ''; sessionRequest++; }
+        selected = id; tab = Object.hasOwn(tabs, next) || ['manage', 'session-import'].includes(next) ? next : 'tasks';
+      },
       routeSessions(scope) { if (sessionScope !== scope) { sessionKey = ''; sessionRequest++; } sessionScope = scope === 'unknown' ? 'unknown' : 'projectless'; },
       show(next) { if (view !== next) { sessionRequest++; sessionKey = ''; } view = next; root.hidden = !['overview', 'project', 'tasks', 'attention', 'global', 'codex-sessions'].includes(view); render(); },
       update(value) {
         const stamp = JSON.stringify([value.codex_desktop?.source_id, value.codex_desktop?.sampled_at, value.codex_desktop?.status]);
         const changed = sampleKey !== stamp; sampleKey = stamp;
+        for (const item of value.projects?.items || []) {
+          const key = JSON.stringify(item.directories || []);
+          if ((sandboxStates.has(item.id) && sandboxStates.get(item.id).key !== key)
+              || (sandboxRequests.has(item.id) && sandboxRequests.get(item.id).key !== key)) {
+            sandboxStates.delete(item.id); sandboxRequests.delete(item.id);
+          }
+        }
         snapshot = value;
         if (changed && sessionKey && readSessions && (view === 'codex-sessions' || (view === 'project' && tab === 'sessions'))) void loadSessions(0);
         else render();

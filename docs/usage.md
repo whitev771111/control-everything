@@ -8,6 +8,17 @@
 
 统一入口 `/workspace` 提供项目与事项管理、本机 Codex 项目和会话读取、官方订阅额度及固定来源 AI 新闻。左侧选择项目，右侧保留“全部事项、待处理、会话”；待处理筛选人工标为阻塞或待验收的事项。用量页展示来源读取结果。手工项目不要求 Git 或特定工作流，原有进度、历史和文档来源数据继续保留。
 
+### 双 Agent 最小执行流程（源码开发版）
+
+1. 登记真实项目目录，配置并启用本机 Codex 或 DSH Agent。Codex 使用工作台专用运行目录及 file 登录，需要先完成该目录的登录与 Windows 原生沙箱准备；DSH 使用已安装 CLI 的桌面账户。设置 `DSH_CLI` 可指定实际已安装的启动器。原生程序、登录或执行服务未就绪时不能仅凭 Agent 登记判定可执行；更新 Agent 配置后必要时重启服务。
+2. 新建待办，选择项目和 Agent，确认“创建后立即交给所选 Agent 执行”。自动执行需要明确项目目录；不选项目会提示，取消立即执行则仅保存全局待办。已有未启动事项可以打开详情，选择项目后点击“执行此待办”，不必重建。
+3. 工具需要授权时，待办详情展示具体命令或文件改动，可选择“仅允许这一次”“拒绝这次操作”“取消当前运行”。工作台自动刷新发现新的待处理审批时会打开相应事项；已有编辑草稿时不覆盖。此入口目前验证的是 Codex 原生工具审批，不代表 DSH 的全部异常工具审批已经接通。
+4. Agent 完成后进入待审核。人工可通过、拒绝或要求修改；填写理由并选择立即继续执行后，原 Agent 在同一项目开启新一轮，派发快照绑定最新审核理由，结果再次待审。Agent 自述不等于自动验收，不会自行把事项标为完成。
+
+同一目录有运行或待审批事项时，后续任务会提示占用；当前不提供自动排队，处理完前一项后可明确点击执行重试。Codex 与 DSH 工具保持启用，权限取自登记配置；不以关闭工具或默认完全访问实现最小流程。
+
+已知限制：Windows 原生 Codex 在受限文件写入尝试中仍可能弹出 `0xc0000142`，实际曾在明确的一次文件审批后重试写入成功，具体 DLL 初始化根因尚未修复。完整隔离矩阵、DSH 异常审批、其他 Windows 电脑兼容性及新版安装器未完成本轮验收；现有安装包不因此自动包含这些源码改动。
+
 以下为源码开发入口，使用 Windows 与 Python 3.12 及以上版本。先安装 editable 包，再使用原模块 CLI；仅安装 requirements 不会安装 `src` 下的程序。已有 `.venv` 时核对归属与版本，不覆盖：
 
 Python 包已统一为 `control_everything`，分发名为 `control-everything`。更新已有检出后重新运行 `python -m pip install -e .`，将自己的启动命令改为 `python -m control_everything.gateway`；旧包名命令不再作为源码入口。默认数据目录、`SESSION_PANEL_DATA_DIR` 和已有安装身份保留，源码改名不会迁移或清空数据；正在运行的旧源码实例需自行正常停止后用新命令启动。
@@ -37,6 +48,55 @@ python -m venv .venv
 
 “添加项目”提供“从已有项目选择”和“新建项目”两条入口。从已有项目选择时，选择 Codex、Claude Code 或 OpenCode，先确认项目来源，再点击、勾选或从本页候选拖入想管理的项目。发现候选不会自动加入，以后新发现的项目也需要选择。没有可识别项目、尚未确认来源或读取失败时，都可直接“新建项目”，填写名称与真实的主目录，无需读取工具来源；可添加最多七个附加目录。搬迁时编辑路径，项目 ID 和绑定 ID 保持。归档保留任务、人工记录及待办，随时可恢复。新增任务只能选择活动项目；已有归档或未登记项目的任务可以保留原项目继续编辑，兼容记录区也可按原 ID 恢复登记。任务列表提供分页，不以首批展示条数代表全集。
 
+项目目录 API（浏览器必须使用正常 CSRF）：
+
+```text
+POST /api/workspace/directories/pick         {title?, initial_path?} -> selected/cancelled
+POST /api/workspace/projects/inspect         {path} -> path/name/empty
+POST /api/workspace/projects/register        {name, path} -> project（只登记，不改目录）
+POST /api/workspace/projects/create-preview  {name, parent_path} -> path/exists/can_create
+POST /api/workspace/projects/create          {name, parent_path, confirmed: true}
+```
+
+`directories/pick` 在服务进程所在桌面打开本机文件夹选择框；用户取消返回 `{"status":"cancelled"}`，同一时间只允许一个选择框（`409 picker_busy`），无桌面/Tk 不可用时返回 `503 picker_unavailable`。浏览器 File 对象不提供真实本机路径，不能把它当目录路径提交。`create-preview` 不写磁盘；`create` 只创建一个子目录并登记项目，目标已存在返回 `409 directory_exists`，不覆盖文件。目录创建成功但项目登记失败时返回 `200 {"status":"partial","directory_created":true,"path":...}`，保留目录并明确提示重试登记；不会删除用户目录。
+
+事项说明与派发（M2）：
+
+```text
+GET  /api/workspace/tasks/<task_id>/brief
+POST /api/workspace/tasks/<task_id>/brief
+POST /api/workspace/tasks/<task_id>/dispatch-preview
+POST /api/workspace/tasks/<task_id>/dispatch
+GET  /api/workspace/tasks/<task_id>/dispatches
+GET  /api/workspace/dispatches/<dispatch_id>
+POST /api/workspace/dispatches/<dispatch_id>/sent
+POST /api/workspace/dispatches/<dispatch_id>/cancel
+```
+
+brief 包含 `request_text`、`acceptance_text`、`constraints_text`、`references`、`execution_directory_id`，用 `expected_revision` 做版本冲突检查。`dispatch-preview` 只生成快照和完整交接文本，不写外发；`dispatch` 必须 `confirmed=true`，可带 `preview_sha256` 校验预览后内容未变（不一致返回 `409 dispatch_preview_changed`），保存 brief 哈希/快照，初始状态 `previewed`。手动交接采用 `delivery_mode=manual`：人工交接后调用 `sent`，`sent` 不等于 `delivered`，未知不自动重发。后台执行采用 `delivery_mode=auto`：再读取 `GET /api/workspace/dispatches/<dispatch_id>/execution-context`，核对后向同一路径的 `/execute` 提交 `context_hash` 和 `confirmed=true`，快照保存不等于已经启动。派发记录可取消；同一 Agent 领取时绑定 dispatch_id，旧 run 的 run_id 隔离仍有效。
+
+事项会话元数据（M2-04）：
+
+```text
+GET  /api/workspace/tasks/<task_id>/sessions
+POST /api/workspace/tasks/<task_id>/sessions
+GET  /api/workspace/sessions?project_id=<project_id>
+POST /api/workspace/sessions/<session_id>/unlink
+```
+
+会话只保存 `source`、`source_instance`、`external_id`、可选标题/URL/Agent/最近来源时间，不保存聊天正文；`(source,source_instance,external_id)` 组成唯一键，同厂商不同实例可用 `source_instance` 区分，避免 Codex/DSH 同 ID 碰撞。一条事项可关联多段会话，一条会话最多关联一个事项；旧 `session_key` 以 `legacy_session_key` 和 legacy 会话项返回，不丢弃。跨事项复用同一外部会话返回 `409 session_conflict`；没有正文或打开能力时 UI 只能显示“元数据”。
+
+事项消息与等待人（M2-05）：
+
+```text
+GET  /api/workspace/tasks/<task_id>/messages
+POST /api/workspace/tasks/<task_id>/messages
+POST /api/workspace/messages/<message_id>/sent
+POST /api/workspace/messages/<message_id>/cancel
+```
+
+消息只支持人工交接（`delivery_mode=manual`），类型 `supplement`/`return`/`user_input`/`note`，初始 `previewed`，人工复制后 `sent`；`sent` 不等于 `delivered`。`client_token` 用于刷新/重试幂等，同 token 返回 existing，不重复写。等待人信息来自 Agent 的 `waiting_user` 进度事件（`tool_authorization`/`user_input`/`external_approval`/`unknown`），不回退为失败，也不因超过 120 秒释放占用；授权未接通时仍由原 Agent 处理，工作台不提供伪批准按钮。
+
 项目进度来源可选“未配置（人工管理）”、workflow-for-coding、普通文本或版本化 JSON。文本/JSON 使用选定目录内的相对路径；预设读取该目录的 `docs/current`，仅读有限直接子目录及 README/progress 文本。缺文件、空内容、出界或读取错误分别显示，不影响人工管理。JSON 示例：
 
 ```json
@@ -57,7 +117,7 @@ Claude Code 与 OpenCode 列出的是“识别到的项目目录”，不代表�
 
 v4 备份恢复保留项目、路径和移出意图，但停用三个工具的来源许可，需在新目录重新确认读取；原生登记沿用重新绑定规则。恢复不恢复进程或窗口许可，回退前应保全当前备份并在另一目录恢复升级前版本，不要手工删字段降版。
 
-新 profile 的远端 SSH、终端、工作台和启动器均为未配置；登记方式见[可选接入](integrations.md)。高级接入配置不会启用执行 owner。官方额度仅在点击查询后读取，公开资讯独立加载。当前不开放 Agent 执行、审批或模型费用试跑。
+新 profile 的远端 SSH、终端、工作台和启动器均为未配置；登记方式见[可选接入](integrations.md)。这些接入配置不会代替 Agent 执行配置。官方额度仅在点击查询后读取，公开资讯独立加载。源码开发版的 Agent 执行与审批条件见上面的最小执行流程；实际模型运行会使用对应账户额度。
 
 ## 每日 AI 资讯
 
@@ -90,16 +150,104 @@ $observerData = Join-Path (Get-Location) 'work/example-profile'
 
 以上为源码开发产物路径；安装用户需使用该 profile 原来所属的 `versions/<版本>-<闭包前16位>/native/observer/session-panel-observer.exe`，不要从 PATH 或另一版本选择同名程序。目录须已通过profile初始化；示例不会自动选择或接管其他服务。观察和导航不授予发送、审批、取消、启动Agent或读取正文的权限，真实工具版本/可见窗口覆盖需分别验收。
 
+## Agent 注册
+
+“来源与导入 → Agents”可以登记本机 coding agent。当前保存显示名、类型、命令/可执行文件路径、启用状态、项目范围和可选的 adapter/connection 字段；保存不会安装、启动、停止或向 Agent 发送任务。`Codex` 与 `DeepSeek Harness` 只是登记身份，后续 MCP/CLI 接入在此身份上扩展。
+
+```text
+GET  /api/workspace/agents
+POST /api/workspace/agents
+```
+
+`POST` 请求体为 `{"expected_revision": 0, "items": [...]}`；每个条目包含 `id`（新条目不传或为 `null`）、`name`、`kind`（`codex`/`dsh`/`custom`）、`command`（可空）、`enabled`，可选 `project_ids`、`adapter`（小写适配器 ID，如 `claude-code`）和 `connection`（动态连接字段，最多 20 个键、8 KiB；不接受 `token`/`secret`/`password`/`api_key` 等敏感键）。注册表使用 profile 配置 v5；已有 v1–v4 配置首次保存时先备份，再升级并保留原有 Codex、观察和项目选择设置。注册表按 revision 做并发校验，旧 revision 返回 `409 config_conflict`。命令和 connection 只作为本机登记值，保存时不会执行。
+
+```text
+POST /api/workspace/agents/token      {"id": "..."}，返回一次性 token 与 prefix
+POST /api/workspace/agents/heartbeat  Authorization: Bearer <token>，请求 {"id": "..."}
+```
+
+Token 只保存 SHA-256 哈希，界面只显示前缀；重新生成会使旧 token 失效。心跳只在本进程内记录，60 秒内有心跳显示“在线”，网关重启后需重新心跳。任何成功的 Agent API 请求也会刷新该 Agent 的在线时间；心跳接口只校验 Host/Origin 和 Bearer token，不使用浏览器的 CSRF 头。
+
+事项可通过 `assigned_agent_id` 分配给已启用 Agent；分配不会启动 Agent。每个 Agent 可带 `project_ids`：空数组表示所有项目（兼容旧登记），非空时只允许读取/领取这些项目；没有项目归属的事项需要全项目范围。`GET /api/workspace/agent-adapters` 返回 Codex、Claude Code、Pi、Grok、DeepSeek Harness、自定义 MCP/CLI、手动登记的字段 schema 和能力说明；它只是声明式预设，不安装或启动任何程序。Agent 使用同一 Bearer token 调用：
+
+```text
+GET  /api/agent/tasks
+GET  /api/agent/tasks/<task_id>
+POST /api/agent/tasks/<task_id>/claim
+POST /api/agent/tasks/<task_id>/progress
+POST /api/agent/tasks/<task_id>/submit-review
+GET  /api/agent/tasks/<task_id>/review
+```
+
+`claim` 需要 `expected_revision`，同一任务只允许一个 active run；`progress` 接受 `stage=analyzing|implementing|testing|blocked|waiting_user`、可选 `percent` 和 `message`；`waiting_user` 必须提供 `message`，可带 `wait_kind=tool_authorization|user_input|external_approval|unknown`、`request_id` 和 `agent_hint`，把任务显示为“等待你处理”。`progress` 和 `submit-review` 都必须带 claim 返回的 `run_id`，防止人工取消后旧执行写进新 run；旧 run 返回 409 `run_mismatch`。`submit-review` 接受 `summary` 和可选 `evidence`，只把任务推进到 `review`，不能直接完成。人在现有验收接口确认后才进入 `done`。Agent API 不读取浏览器 CSRF，只接受 Bearer token；跨 Agent/未分配任务返回 403/404，冲突返回 409。已处于 `waiting_review` 的 run 不允许重复提交审核材料；存在 active run 时也不能改派或解绑 Agent。
+
+浏览器读取事项时，每条事项带 `assigned_agent_id`、`assignment_state`（`unassigned`/`assigned`/`running`/`waiting_user`/`waiting_review`/`done`/`blocked`/`failed`）、`connection_state`（`online`/`unknown`/`not_applicable`）和 `last_contact_at`。`GET /api/workspace/agent-tasks/<task_id>` 返回 `{item,run,events,reviews,messages,review_material,connection_state,last_contact_at}`，其中 run 为最近一次运行，events 为最近 100 条按时间正序的事件；`review_material` 提供本次派发请求快照、Agent 自述、证据文件是否存在、关联会话、测试缺失状态和 `verification=unverified`，不会把自述当系统验证；浏览器不需要也不会使用 Agent token。
+
+`connection_state=unknown` 只表示没有新消息，不能据此判定失败、释放运行或把任务退回 `todo`。`claimed/running` 可以长时间保持占用；只有 Agent 明确提交失败，或人调用 `POST /api/workspace/agent-tasks/<task_id>/cancel`（需要 `expected_revision` 和 `reason`）才结束占用。人工取消会把 run 置为 `cancelled`、任务回到 `todo`，并保留 `human_cancelled` 事件；取消不等于终止外部工具，旧 run 之后的提交会被拒绝。
+
+## 重点、优先级、决策与验收接口
+
+页面概念、逐字段来源与下一阶段接入顺序见[工作台最小契约 v0.1](workbench-contract.md)。以下说明现有 HTTP 接口；契约中的新页面与展示计算仍需按待做事项实施。
+
+以下能力供本机前端接入，现有页面尚未提供决策和验收编辑界面。接口使用当前 profile 的 schema3 管理库，不向外部 Agent 发送任务、审批或执行指令。请求沿用 `X-Session-Client: panel`；写请求还须使用同源 `Origin`、`application/json` 和从 `/api/bootstrap` 获取的 `X-Session-CSRF`。不要将实际 token 写入公开文档或代码。
+
+事项的 `POST /api/workspace/items` 和 `/api/workspace/items/update` 增加两个可选字段：`priority` 为 `0`（高）、`1`（普通）、`2`（低）或 `null`（未设置），`focus` 为整数 `0` 或 `1`，不接受布尔值。重点是持续人工标记，没有日期，也不会在午夜自动清除。旧客户端不传新字段时保持原行为。更新仍使用 `id`、`expected_revision` 和 `changes`，例如：
+
+```json
+{
+  "id": "11111111-1111-4111-8111-111111111111",
+  "expected_revision": 1,
+  "changes": {"focus": 1, "priority": 0}
+}
+```
+
+`GET /api/workspace/items?focus=1&sort=priority` 返回重点事项，并按高、普通、低、未设置排列；同级保持原手工顺序。可组合原有项目、负责人、状态筛选，也可使用 `priority=0|1|2` 或 `focus=0|1`。默认 `sort=manual` 保留原顺序。后续分页继续携带第一页返回的 `list_revision`；事项变化时返回 `409 list_changed`，应重新读取第一页。
+
+| 能力 | 路径 | 请求与返回 |
+| --- | --- | --- |
+| 查询决策 | `GET /api/workspace/decisions` | 可选 `project_id`、`status=open|accepted|superseded`、`offset`、`limit`；返回 `items/total/offset/limit` |
+| 新建决策 | `POST /api/workspace/decisions` | 必填 `project_id/title/confirmed`，可选 `decision/rationale/alternatives/status/links`；返回 `decision` |
+| 更新决策 | `POST /api/workspace/decisions/update` | 必填 `id/expected_updated_at/changes/confirmed`；返回 `decision` |
+| 查询验收记录 | `GET /api/workspace/reviews` | 可选 `project_id/task_id/verdict/offset/limit`；返回 `items/total/offset/limit` |
+| 人工验收 | `POST /api/workspace/reviews` | 必填 `task_id/expected_revision/verdict/reason/confirmed`，可选 `evidence/reviewer/run_id`；返回 `review` 和更新后的 `item` |
+
+决策默认 `open`，正文 `decision`、理由 `rationale`、备选方案说明 `alternatives` 均为文本，`links` 为最多 20 条引用字符串。新建需要当前已选入工作台且未归档的项目。`confirmed` 必须是 JSON 布尔值 `true`，表达使用者明确提交。只有填写结论才能设为 `accepted`。草稿可修改正文及状态；已确认的正文不再覆盖，只能标为 `superseded`，另建替代决策；已取代记录不能重新打开。更新必须原样带回上次读取的 `updated_at` 作为 `expected_updated_at`；旧版本返回 `409 decision_changed`，不能静默重试覆盖。归档后的历史仍可查询。更新示例：
+
+```json
+{
+  "id": "22222222-2222-4222-8222-222222222222",
+  "expected_updated_at": "2026-01-01T00:00:00+00:00",
+  "changes": {"decision": "保留本机存储", "status": "accepted"},
+  "confirmed": true
+}
+```
+
+验收只接受当前为 `review` 的事项，且 `expected_revision` 必须匹配。`approved` 将事项设为 `done`，`changes_requested` 设为 `doing`，`rejected` 设为 `todo`。验收记录和事项状态在同一写事务内保存，失败时一起回滚；重复提交旧版本返回 `409 item_changed`。`reason` 必须有内容；`evidence` 为最多 20 条人工填写的证据或核验说明字符串。`reviewer` 只是人工标签，不代表认证身份；`run_id` 只是可选外部引用，不会核验或操控外部运行。工具输出、会话结束和进程退出均不会自动通过验收。示例：
+
+```json
+{
+  "task_id": "11111111-1111-4111-8111-111111111111",
+  "expected_revision": 2,
+  "verdict": "approved",
+  "reason": "已核对改动并在本机验证",
+  "evidence": ["异常提示符合预期", "恢复路径已手工验证"],
+  "reviewer": "我",
+  "confirmed": true
+}
+```
+
+验收记录只追加，不提供覆盖或删除接口。原有事项状态编辑保持兼容，普通状态编辑不会伪造验收记录。新接口单次写请求最大 256 KiB，分页每页 1–100 条；无效输入返回 `422`，不存在的事项或决策返回 `404`，状态或版本冲突返回 `409`。引用与证据仅按文本保存，不自动读取文件、访问链接或验证工具报告。
+
 ## 导入旧记录与恢复
 
-管理库使用schema2，配置仍独立兼容v1/v2/v3/v4；备份manifest1对应schema1，manifest2对应schema2。新空profile直接初始化schema2，已有schema1不会随启动自动升级：先正常停止自己使用该profile的实例，再显式执行离线迁移。命令不会终止其他程序；锁忙、未知表/版本、校验失败或超预算会拒绝并保留原库及已生成备份，不截断历史值。
+管理库使用schema8，配置仍独立兼容v1/v2/v3/v4/v5；备份manifest1对应schema1，manifest2对应schema2，manifest3对应schema3，manifest4对应schema4，manifest5对应schema5，manifest6对应schema6，manifest7对应schema7，manifest8对应schema8。新空profile直接初始化schema8，已有schema1/schema2/schema3/schema4/schema5/schema6/schema7不会随启动自动升级：先正常停止自己使用该profile的实例，再显式执行离线迁移。命令不会终止其他程序；锁忙、未知表/版本、校验失败或超预算会拒绝并保留原库及已生成备份，不截断历史值。
 
 ```powershell
 & '.venv/Scripts/python.exe' -m control_everything.profile status --data-dir 'C:/example/SessionPanel/main'
 & '.venv/Scripts/python.exe' -m control_everything.profile migrate-tasks --data-dir 'C:/example/SessionPanel/main'
 ```
 
-迁移将旧tasks/todos收为一个可写模型，保留来源及原ID（包括空待办ID）、重复标题、原顺序、时间和NULL；旧接口通过适配读写同一模型。数据库中的tasks/todos是只读兼容视图，不能再用旧程序或直接SQL写入。新列表的顺序单独保存，不伪造两种来源的历史先后。
+迁移将旧tasks/todos收为一个可写模型，保留来源及原ID（包括空待办ID）、重复标题、原顺序、时间和NULL；旧接口通过适配读写同一模型。数据库中的tasks/todos是只读兼容视图，不能再用旧程序或直接SQL写入。新列表的顺序单独保存，不伪造两种来源的历史先后。schema3在保留旧视图的同时增加事项优先级、今日标记、审核记录和项目决策日志；schema4增加 assigned_agent_id、agent_runs 和 task_events，用于 Agent 领取、进度与审核证据；schema5增加 task_briefs、task_dispatches 和 agent_runs.dispatch_id，用于版本化事项说明与人工确认派发快照；schema6增加 task_sessions，用于事项与外部会话元数据关联（不保存聊天正文）；schema7为 task_sessions 增加 source_instance，同厂商多实例用独立命名空间；schema8增加 task_messages，用于人工补充要求/退回意见/等待人回答的手动交接记录；旧记录未设置这些字段时行为不变。
 
 在空 profile 的“来源与导入”填写旧数据目录的绝对路径，例如 `C:/example/previous-panel`。固定读取 `progress-registry.json`，以及可选的 `progress-manual.json`、`progress-todos.json`、`workspace-state.sqlite3`。只导入全部合法项目、人工进度、待办、工作台任务和人工用量；保留原 ID、顺序、关联与已有时间。未登记项目的记录进入兼容区；没有原时间的导入快照显示“来源未提供时间”。
 
@@ -109,14 +257,14 @@ $observerData = Join-Path (Get-Location) 'work/example-profile'
 
 ```powershell
 & '.venv/Scripts/python.exe' -m control_everything.profile restore --backup 'C:/example/SessionPanel/main/backups/<备份目录>' --data-dir 'C:/example/SessionPanel/restored'
-# Only when restore reports schema1 / migration_required:
+# Only when restore reports schema1/schema2 / migration_required:
 & '.venv/Scripts/python.exe' -m control_everything.profile migrate-tasks --data-dir 'C:/example/SessionPanel/restored'
 & '.venv/Scripts/python.exe' -m control_everything.gateway --data-dir 'C:/example/SessionPanel/restored' --port 14401
 ```
 
 恢复会校验 manifest、文件大小/哈希、schema 与 SQLite 完整性。停止自己的旧实例后另行启动恢复目录；不在线切换，不删除原 profile 或导入后的新记录。真实个人数据是否符合导入合同需实际校验，隔离 fixture 验证不能替代个人迁移结果。
 
-恢复旧备份会先保留其schema1结构，再由上述命令显式迁移。需要退回旧程序时，先停新版实例并运行 `python -m control_everything.profile preserve-tasks --data-dir <绝对profile目录>`，验证包含升级后全部新增/变更的schema2私密备份，再把升级前旧备份恢复到另一个空目录。原schema2目录和保全件必须保留；保全不是把新语义自动反写旧库，单独回退代码不代表数据已无损降级。
+恢复旧备份会先保留其原schema结构，再由上述命令显式迁移。需要退回旧程序时，先停新版实例并运行 `python -m control_everything.profile preserve-tasks --data-dir <绝对profile目录>`，验证包含升级后全部新增/变更的schema8私密备份，再把升级前旧备份恢复到另一个空目录。原schema8目录和保全件必须保留；保全不是把新语义自动反写旧库，单独回退代码不代表数据已无损降级。
 
 新记录保存在所选 profile，源码旁旧 JSON/SQLite 与既有服务保留原位。任务负责人表示人工分配，不向 Agent 发送命令。资讯含来源与采样时间，不是推送流。
 

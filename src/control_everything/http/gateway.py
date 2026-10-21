@@ -7,6 +7,7 @@ import re
 import secrets
 import socket
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,23 +22,45 @@ from urllib.parse import parse_qs, urlsplit
 from control_everything.sessions.source import HOST, PORT, canonical_uuid
 from control_everything.sessions.codex_index import list_threads as list_codex_threads
 from control_everything.sessions.observer_client import ObserverClient
-from control_everything.http import observation_routes, onboarding_routes
+from control_everything.http import observation_routes, onboarding_routes, sandbox_routes
 from control_everything.workspace.progress import MANUAL, REGISTRY, TODOS, add_todo, board, set_progress, toggle_todo, load_todos
 from control_everything.integrations.launchers import LauncherCatalog, catalog, start
 from control_everything.integrations.desk import headlines, pulse
 from control_everything.workspace.service import WorkspaceService
+from control_everything.execution.service import dispatch_execution_context
+from control_everything.workspace import project_dirs
 from control_everything.workspace.news_source import NewsSource
 from control_everything.workspace.store import WorkspaceError
 from control_everything.profiles.profile import Profile, ProfileError, strict_json
+from control_everything.profiles import agent_adapters
 
 APP = "remote-claude-session-panel"
 WEB = web_root()
 SESSION_ROUTE = re.compile(r"/api/sessions/([^/]+)(?:/(messages|focus))?\Z")
 EXECUTION_RUN_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)\Z")
 EXECUTION_ACTION_ROUTE = re.compile(r"/api/workspace/execution/runs/([^/]+)/(cancel|approvals/([^/]+))\Z")
+AGENT_TASK_ROUTE = re.compile(r"/api/agent/tasks/([^/]+)(?:/(claim|progress|submit-review|review))?\Z")
+AGENT_BROWSER_TASK_ROUTE = re.compile(r"/api/workspace/agent-tasks/([^/]+)\Z")
+AGENT_BROWSER_CANCEL_ROUTE = re.compile(r"/api/workspace/agent-tasks/([^/]+)/cancel\Z")
+TASK_BRIEF_ROUTE = re.compile(r"/api/workspace/tasks/([^/]+)/brief\Z")
+TASK_DISPATCH_ROUTE = re.compile(r"/api/workspace/tasks/([^/]+)/dispatch(-preview)?\Z")
+TASK_DISPATCHES_ROUTE = re.compile(r"/api/workspace/tasks/([^/]+)/dispatches\Z")
+DISPATCH_ROUTE = re.compile(r"/api/workspace/dispatches/([^/]+)(?:/(sent|execute|cancel))?\Z")
+DISPATCH_EXECUTION_CONTEXT_ROUTE = re.compile(r"/api/workspace/dispatches/([^/]+)/execution-context\Z")
+TASK_SESSIONS_ROUTE = re.compile(r"/api/workspace/tasks/([^/]+)/sessions\Z")
+PROJECT_SANDBOX_ROUTE = re.compile(r"/api/workspace/projects/([^/]+)/sandbox-preparation\Z")
+TASK_SESSION_ROUTE = re.compile(r"/api/workspace/sessions/([^/]+)(?:/unlink)?\Z")
+SESSIONS_ROUTE = re.compile(r"/api/workspace/sessions\Z")
+TASK_MESSAGES_ROUTE = re.compile(r"/api/workspace/tasks/([^/]+)/messages\Z")
+MESSAGE_ROUTE = re.compile(r"/api/workspace/messages/([^/]+)(?:/(sent|cancel))?\Z")
 PROFILE_POST = {"/api/profile/settings", "/api/profile/import", "/api/profile/observations", "/api/workspace/projects/save",
                 "/api/workspace/projects/restore", "/api/workspace/progress",
-                "/api/workspace/items", "/api/workspace/items/update"}
+                "/api/workspace/items", "/api/workspace/items/update",
+                "/api/workspace/decisions", "/api/workspace/decisions/update", "/api/workspace/reviews",
+                "/api/workspace/agents", "/api/workspace/agents/token",
+                "/api/workspace/directories/pick", "/api/workspace/projects/inspect",
+                "/api/workspace/projects/register", "/api/workspace/projects/create-preview",
+                "/api/workspace/projects/create"}
 PROFILE_POST.update(onboarding_routes.POST_ROUTES)
 PROFILE_CAPABILITIES = {"profile": True, "project_management": True, "execution": False,
                         "personal_launchers": False, "remote_sessions": False, "terminal": False, "workbench": False,
@@ -211,6 +234,8 @@ class PanelHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path)
+        if path.path.startswith("/api/agent/"):
+            return self.agent_get(path)
         if not self.allowed(api=path.path.startswith("/api/")):
             return
         if path.path == "/health" and not path.query:
@@ -232,6 +257,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             "/workspace": ("workspace/workspace.html", "text/html; charset=utf-8"),
             "/workspace.js": ("workspace/workspace.js", "text/javascript; charset=utf-8"),
             "/onboarding.js": ("workspace/onboarding.js", "text/javascript; charset=utf-8"),
+            "/agents.js": ("workspace/agents.js", "text/javascript; charset=utf-8"),
             "/project-space.js": ("workspace/project-space.js", "text/javascript; charset=utf-8"),
             "/task-center.js": ("workspace/task-center.js", "text/javascript; charset=utf-8"),
             "/execution.js": ("workspace/execution.js", "text/javascript; charset=utf-8"),
@@ -311,9 +337,22 @@ class PanelHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self._post_body_pending = True
+        path = urlsplit(self.path)
+        if path.path.startswith('/api/agent/'):
+            return self.agent_post(path)
+        if path.path == '/api/workspace/agents/heartbeat':
+            return self.agent_heartbeat(path)
         if not self.allowed(api=True, focus=True):
             return
-        path = urlsplit(self.path)
+        if AGENT_BROWSER_CANCEL_ROUTE.fullmatch(path.path):
+            return self.agent_cancel(path)
+        if (TASK_BRIEF_ROUTE.fullmatch(path.path) or TASK_DISPATCH_ROUTE.fullmatch(path.path)
+                or DISPATCH_ROUTE.fullmatch(path.path)):
+            return self.dispatch_post(path)
+        if TASK_SESSIONS_ROUTE.fullmatch(path.path) or TASK_SESSION_ROUTE.fullmatch(path.path):
+            return self.sessions_post(path)
+        if TASK_MESSAGES_ROUTE.fullmatch(path.path) or MESSAGE_ROUTE.fullmatch(path.path):
+            return self.messages_post(path)
         if path.path == '/api/workspace/news/refresh':
             if self.server.workspace is None:
                 return self.reject(503, 'workspace_unavailable')
@@ -548,17 +587,310 @@ class PanelHandler(BaseHTTPRequestHandler):
             extra = {key: value for key, value in (("field", error.field), ("message", error.message)) if value is not None}
         else:
             reason = str(error)
-            status = (404 if reason == "item_not_found" else
+            status = (404 if reason in {"item_not_found", "task_not_found"} else
                       409 if reason in {"store_busy", "item_changed", "list_changed", "order_exhausted", "revision_exhausted",
                                         "session_not_in_sample", "session_project_mismatch"} else
                       422 if reason in {"invalid_item", "text_budget"} else 500)
-            reason = reason if reason in {"store_busy", "storage_error", "schema_error", "item_not_found", "item_changed",
-                "list_changed", "order_exhausted", "revision_exhausted", "session_not_in_sample", "session_project_mismatch",
-                "invalid_item", "text_budget"} else "storage_error"
+            reason = reason if reason in {"store_busy", "storage_error", "schema_error", "item_not_found", "task_not_found",
+                "item_changed", "list_changed", "order_exhausted", "revision_exhausted", "session_not_in_sample",
+                "session_project_mismatch", "invalid_item", "text_budget"} else "storage_error"
             extra = {}
         self._discard_rejected_post_body()
         self.reply(status, {"status": "unknown", "reason": reason, "source": self.server.__dict__.get("source"),
                             "observed_at": datetime.now(timezone.utc).isoformat(), **extra})
+
+    def _agent_seen(self, identity):
+        seen = getattr(self.server, "agent_seen", None)
+        if seen is not None:
+            seen(identity)
+            return
+        presence = getattr(self.server, "agent_presence", None)
+        if presence is None:
+            presence = {}
+            self.server.agent_presence = presence
+        presence[identity] = time.time()
+
+    def _agent_last_seen(self, identity):
+        last = getattr(self.server, "agent_last_seen", None)
+        if last is not None:
+            return last(identity)
+        return getattr(self.server, "agent_presence", {}).get(identity)
+
+    def agent_heartbeat(self, path):
+        if path.query:
+            return self.reject(400, "invalid_request")
+        if self.headers.get_all("Host", []) != [self.server.expected_host]:
+            return self.reject(403, "host_rejected")
+        origins = self.headers.get_all("Origin", [])
+        if origins and origins != [self.server.origin]:
+            return self.reject(403, "origin_rejected")
+        profile = self.profile()
+        if profile is None:
+            return self.reject(404, "route_not_found")
+        authorization = self.headers.get("Authorization", "")
+        if not isinstance(authorization, str) or not authorization.startswith("Bearer "):
+            return self.reject(401, "agent_unauthorized")
+        token = authorization[7:]
+        try:
+            body = self.read_json_body(max_bytes=1024, strict=True)
+        except BodyTooLarge:
+            return self.reject(413, "body_too_large")
+        except (ValueError, TypeError, UnicodeError, OSError):
+            return self.reject(400, "invalid_request")
+        if set(body) != {"id"} or type(body["id"]) is not str:
+            return self.reject(400, "invalid_request")
+        agent = profile.agent_heartbeat(token)
+        if agent is None or agent["id"] != body["id"]:
+            return self.reject(401, "agent_unauthorized")
+        self._agent_seen(agent["id"])
+        return self.reply(200, {"status": "ok", "agent_id": agent["id"],
+                                "last_seen_at": datetime.now(timezone.utc).isoformat()})
+
+    def authenticated_agent(self):
+        if self.headers.get_all("Host", []) != [self.server.expected_host]:
+            self.reject(403, "host_rejected")
+            return None
+        origins = self.headers.get_all("Origin", [])
+        if origins and origins != [self.server.origin]:
+            self.reject(403, "origin_rejected")
+            return None
+        profile = self.profile()
+        if profile is None:
+            self.reject(404, "route_not_found")
+            return None
+        authorization = self.headers.get("Authorization", "")
+        if not isinstance(authorization, str) or not authorization.startswith("Bearer "):
+            self.reject(401, "agent_unauthorized")
+            return None
+        agent = profile.agent_by_token(authorization[7:])
+        if agent is None:
+            self.reject(401, "agent_unauthorized")
+            return None
+        self._agent_seen(agent["id"])
+        return agent
+
+    def agent_error(self, error):
+        reason = str(error)
+        status = (404 if reason in {"task_not_found", "run_not_found"} else
+                  403 if reason in {"not_assigned", "project_forbidden"} else
+                  409 if reason in {"run_conflict", "run_mismatch", "item_changed", "review_not_ready",
+                                    "review_already_submitted"} else 422)
+        self.reject(status, reason if reason in {
+            "task_not_found", "run_not_found", "run_mismatch", "not_assigned", "project_forbidden", "run_conflict",
+            "item_changed", "review_not_ready", "review_already_submitted", "invalid_agent_request"} else "invalid_agent_request")
+
+    def agent_get(self, path):
+        agent = self.authenticated_agent()
+        if agent is None:
+            return
+        try:
+            if path.path == "/api/agent/tasks":
+                values = parse_qs(path.query, keep_blank_values=True, strict_parsing=True)
+                if set(values) - {"state"} or any(len(value) != 1 for value in values.values()):
+                    raise ValueError("invalid_query")
+                state = values.get("state", [None])[0]
+                return self.reply(200, self.server.workspace.list_agent_tasks(
+                    agent["id"], state, agent.get("project_ids")))
+            match = AGENT_TASK_ROUTE.fullmatch(path.path)
+            if not match or path.query:
+                raise ValueError("invalid_query")
+            task_id = canonical_uuid(match[1])
+            if match[2] in (None, "review"):
+                value = self.server.workspace.get_agent_task(agent["id"], task_id, agent.get("project_ids"))
+                return self.reply(200, value if match[2] is None else
+                                  {"item": value["item"], "run": value["run"], "reviews": value["reviews"],
+                                   "connection_state": value["connection_state"],
+                                   "last_contact_at": value["last_contact_at"]})
+            return self.reject(404, "route_not_found")
+        except WorkspaceError as error:
+            self.agent_error(error)
+        except (ValueError, TypeError):
+            self.reject(400, "invalid_request")
+
+    def agent_post(self, path):
+        agent = self.authenticated_agent()
+        if agent is None:
+            return
+        if path.query:
+            return self.reject(400, "invalid_request")
+        match = AGENT_TASK_ROUTE.fullmatch(path.path)
+        if not match or match[2] not in ("claim", "progress", "submit-review"):
+            return self.reject(404, "route_not_found")
+        try:
+            body = self.read_json_body(max_bytes=16384, strict=True)
+            task_id = canonical_uuid(match[1])
+            if match[2] == "claim":
+                if set(body) != {"expected_revision"}:
+                    raise ValueError("invalid_request")
+                value = self.server.workspace.claim_agent_task(
+                    agent["id"], task_id, body["expected_revision"], agent.get("project_ids"))
+            elif match[2] == "progress":
+                if (not {"expected_revision", "run_id", "stage"} <= set(body)
+                        or set(body) - {"expected_revision", "run_id", "stage", "percent", "message",
+                                        "wait_kind", "request_id", "agent_hint"}):
+                    raise ValueError("invalid_request")
+                value = self.server.workspace.progress_agent_task(
+                    agent["id"], task_id, body["expected_revision"], body["stage"],
+                    body.get("percent"), body.get("message"), agent.get("project_ids"),
+                    body.get("wait_kind"), body.get("request_id"), body.get("agent_hint"), body["run_id"])
+            else:
+                if (not {"expected_revision", "run_id", "summary"} <= set(body)
+                        or set(body) - {"expected_revision", "run_id", "summary", "evidence"}):
+                    raise ValueError("invalid_request")
+                value = self.server.workspace.submit_agent_review(
+                    agent["id"], task_id, body["expected_revision"], body["summary"], body.get("evidence"),
+                    agent.get("project_ids"), body["run_id"])
+            return self.reply(200, value)
+        except WorkspaceError as error:
+            self.agent_error(error)
+        except BodyTooLarge:
+            self.reject(413, "body_too_large")
+        except (ValueError, TypeError, UnicodeError):
+            self.reject(400, "invalid_request")
+
+    def messages_post(self, path):
+        if path.query:
+            return self.reject(400, "invalid_request")
+        if self.profile() is None:
+            return self.reject(404, "route_not_found")
+        try:
+            body = self.read_json_body(max_bytes=20480, strict=True)
+            task_match = TASK_MESSAGES_ROUTE.fullmatch(path.path)
+            message_match = MESSAGE_ROUTE.fullmatch(path.path)
+            if task_match:
+                value = self.server.workspace.create_task_message(canonical_uuid(task_match[1]), body)
+            elif message_match and message_match[2] == "sent":
+                if body:
+                    raise ValueError("invalid_request")
+                value = {"status": "sent", "message": self.server.workspace.mark_message_sent(
+                    canonical_uuid(message_match[1]))}
+            elif message_match and message_match[2] == "cancel":
+                if body:
+                    raise ValueError("invalid_request")
+                value = {"status": "cancelled", "message": self.server.workspace.cancel_task_message(
+                    canonical_uuid(message_match[1]))}
+            else:
+                return self.reject(404, "route_not_found")
+            return self.reply(200, value)
+        except BodyTooLarge:
+            self.reject(413, "body_too_large")
+        except (ProfileError, WorkspaceError) as error:
+            self.profile_error(error)
+        except (ValueError, TypeError, UnicodeError):
+            self.reject(400, "invalid_request")
+
+    def sessions_post(self, path):
+        if path.query:
+            return self.reject(400, "invalid_request")
+        if self.profile() is None:
+            return self.reject(404, "route_not_found")
+        try:
+            body = self.read_json_body(max_bytes=16384, strict=True)
+            task_match = TASK_SESSIONS_ROUTE.fullmatch(path.path)
+            session_match = TASK_SESSION_ROUTE.fullmatch(path.path)
+            if task_match:
+                value = self.server.workspace.link_task_session(canonical_uuid(task_match[1]), body)
+            elif session_match and path.path.endswith("/unlink"):
+                value = self.server.workspace.unlink_task_session(canonical_uuid(session_match[1]), body)
+            else:
+                return self.reject(404, "route_not_found")
+            return self.reply(200, value)
+        except BodyTooLarge:
+            self.reject(413, "body_too_large")
+        except (ProfileError, WorkspaceError) as error:
+            self.profile_error(error)
+        except (ValueError, TypeError, UnicodeError):
+            self.reject(400, "invalid_request")
+
+    def dispatch_post(self, path):
+        if path.query:
+            return self.reject(400, "invalid_request")
+        if self.profile() is None:
+            return self.reject(404, "route_not_found")
+        try:
+            body = self.read_json_body(max_bytes=65536, strict=True)
+            brief = TASK_BRIEF_ROUTE.fullmatch(path.path)
+            task_dispatch = TASK_DISPATCH_ROUTE.fullmatch(path.path)
+            dispatch_action = DISPATCH_ROUTE.fullmatch(path.path)
+            if brief:
+                task_id = canonical_uuid(brief[1])
+                value = self.server.workspace.save_task_brief(task_id, body)
+            elif task_dispatch:
+                task_id = canonical_uuid(task_dispatch[1])
+                value = (self.server.workspace.preview_task_dispatch(task_id, body) if task_dispatch[2]
+                         else self.server.workspace.create_task_dispatch(task_id, body))
+            elif dispatch_action and dispatch_action[2] in ("sent", "cancel"):
+                dispatch_id = canonical_uuid(dispatch_action[1])
+                if body:
+                    raise ValueError("invalid_request")
+                value = (self.server.workspace.mark_dispatch_sent(dispatch_id) if dispatch_action[2] == "sent"
+                         else self.server.workspace.cancel_task_dispatch(dispatch_id))
+            elif dispatch_action and dispatch_action[2] == "execute":
+                dispatch_id = canonical_uuid(dispatch_action[1])
+                execution = getattr(self.server, "execution", None)
+                if execution is None:
+                    raise ProfileError("execution_unavailable", status=503)
+                value = execution.submit_dispatch(dispatch_id, body)
+                return self.reply(200 if value.get("replayed") else 202, value)
+            else:
+                return self.reject(404, "route_not_found")
+            return self.reply(200, value)
+        except BodyTooLarge:
+            self.reject(413, "body_too_large")
+        except (ProfileError, WorkspaceError) as error:
+            self.profile_error(error)
+        except (ValueError, TypeError, UnicodeError):
+            self.reject(400, "invalid_request")
+
+    def sandbox_preparation_post(self, path):
+        if path.query:
+            self.reject(400, "invalid_request")
+            return True
+        profile = self.profile()
+        if profile is None:
+            self.reject(404, "route_not_found")
+            return True
+        try:
+            body = self.read_json_body(max_bytes=4096, strict=True)
+            match = PROJECT_SANDBOX_ROUTE.fullmatch(path.path)
+            value = sandbox_routes.post(self.server.workspace, profile, match[1], body)
+            self.reply(200, value)
+        except BodyTooLarge:
+            self.reject(413, "body_too_large")
+        except ValueError as error:
+            reason = str(error)
+            self.reject(409 if reason in {"unsupported_directory", "unsupported_filesystem",
+                                          "owner_mismatch", "acl_grant_unverified",
+                                          "reparse_path", "reparse_ancestor", "preparation_stale",
+                                          "acl_restore_failed", "acl_changed", "directory_changed",
+                                          "project_busy"} else 400,
+                        reason)
+        except OSError as error:
+            self.reject(409 if str(error) == "sandbox_busy" else 503,
+                        "project_busy" if str(error) == "sandbox_busy" else "acl_unavailable")
+        except (ProfileError, WorkspaceError) as error:
+            self.profile_error(error)
+        return True
+
+    def agent_cancel(self, path):
+        if path.query:
+            return self.reject(400, "invalid_request")
+        if self.profile() is None:
+            return self.reject(404, "route_not_found")
+        match = AGENT_BROWSER_CANCEL_ROUTE.fullmatch(path.path)
+        try:
+            body = self.read_json_body(max_bytes=4096, strict=True)
+            if set(body) != {"expected_revision", "reason"}:
+                raise ValueError("invalid_request")
+            task_id = canonical_uuid(match[1])
+            value = self.server.workspace.cancel_agent_run(task_id, body["expected_revision"], body["reason"])
+            return self.reply(200, value)
+        except WorkspaceError as error:
+            self.agent_error(error)
+        except BodyTooLarge:
+            self.reject(413, "body_too_large")
+        except (ValueError, TypeError, UnicodeError):
+            self.reject(400, "invalid_request")
 
     def profile_get(self, path):
         profile, workspace = self.profile(), self.server.workspace
@@ -604,7 +936,13 @@ class PanelHandler(BaseHTTPRequestHandler):
                 raise ProfileError("invalid_query") from None
         elif route == "/api/workspace/items":
             try:
-                params = page_params(path.query, extra=("project_id", "scope", "provider_id", "state", "list_revision"))
+                params = page_params(path.query, extra=("project_id", "scope", "provider_id", "state", "list_revision",
+                                                       "focus", "priority", "sort"))
+                for key, allowed in (("focus", ("0", "1")), ("priority", ("0", "1", "2"))):
+                    if key in params:
+                        if params[key] not in allowed:
+                            raise ValueError("invalid_query")
+                        params[key] = int(params[key])
                 if "list_revision" in params:
                     if not re.fullmatch(r"[0-9]{1,16}", params["list_revision"]):
                         raise ValueError("invalid_query")
@@ -613,9 +951,83 @@ class PanelHandler(BaseHTTPRequestHandler):
                         raise ValueError("invalid_query")
                 if params.get("scope", "all") not in ("all", "active", "archived", "orphan", "global", "attention"):
                     raise ValueError("invalid_query")
-                self.reply(200, workspace.page_items(**params))
+                self.reply(200, workspace.page_items(include_assignment=True, **params))
             except ValueError:
                 raise ProfileError("invalid_query") from None
+        elif route in ("/api/workspace/decisions", "/api/workspace/reviews"):
+            try:
+                if route.endswith("/decisions"):
+                    params = page_params(path.query, extra=("project_id", "status"))
+                    value = workspace.page_decisions(**params)
+                else:
+                    params = page_params(path.query, extra=("project_id", "task_id", "verdict"))
+                    value = workspace.page_reviews(**params)
+                self.reply(200, value)
+            except ProfileError:
+                raise
+            except ValueError:
+                raise ProfileError("invalid_query") from None
+        elif TASK_SESSIONS_ROUTE.fullmatch(route):
+            if path.query:
+                raise ValueError("invalid_query")
+            match = TASK_SESSIONS_ROUTE.fullmatch(route)
+            self.reply(200, workspace.task_sessions(canonical_uuid(match[1])))
+        elif TASK_MESSAGES_ROUTE.fullmatch(route):
+            if path.query:
+                raise ValueError("invalid_query")
+            match = TASK_MESSAGES_ROUTE.fullmatch(route)
+            self.reply(200, workspace.task_messages(canonical_uuid(match[1])))
+        elif SESSIONS_ROUTE.fullmatch(route):
+            values = parse_qs(path.query, keep_blank_values=True, strict_parsing=True)
+            if set(values) - {"project_id"} or any(len(value) != 1 for value in values.values()):
+                raise ValueError("invalid_query")
+            project_id = values.get("project_id", [None])[0]
+            if project_id is not None and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", project_id):
+                raise ValueError("invalid_query")
+            self.reply(200, workspace.list_task_sessions(project_id))
+        elif PROJECT_SANDBOX_ROUTE.fullmatch(route):
+            match = PROJECT_SANDBOX_ROUTE.fullmatch(route)
+            self.reply(200, sandbox_routes.get(workspace, workspace.profile, match[1], path.query))
+        elif TASK_BRIEF_ROUTE.fullmatch(route):
+            if path.query:
+                raise ValueError("invalid_query")
+            match = TASK_BRIEF_ROUTE.fullmatch(route)
+            self.reply(200, workspace.get_task_brief(canonical_uuid(match[1])))
+        elif TASK_DISPATCHES_ROUTE.fullmatch(route):
+            if path.query:
+                raise ValueError("invalid_query")
+            match = TASK_DISPATCHES_ROUTE.fullmatch(route)
+            self.reply(200, workspace.task_dispatches(canonical_uuid(match[1])))
+        elif DISPATCH_EXECUTION_CONTEXT_ROUTE.fullmatch(route):
+            if path.query:
+                raise ValueError("invalid_query")
+            match = DISPATCH_EXECUTION_CONTEXT_ROUTE.fullmatch(route)
+            self.reply(200, dispatch_execution_context(workspace, canonical_uuid(match[1])))
+        elif DISPATCH_ROUTE.fullmatch(route) and DISPATCH_ROUTE.fullmatch(route)[2] is None:
+            if path.query:
+                raise ValueError("invalid_query")
+            match = DISPATCH_ROUTE.fullmatch(route)
+            self.reply(200, workspace.task_dispatch(canonical_uuid(match[1])))
+        elif route == "/api/workspace/agent-adapters":
+            if path.query:
+                raise ValueError("invalid_query")
+            self.reply(200, agent_adapters.catalog())
+        elif AGENT_BROWSER_TASK_ROUTE.fullmatch(route):
+            if path.query:
+                raise ValueError("invalid_query")
+            match = AGENT_BROWSER_TASK_ROUTE.fullmatch(route)
+            self.reply(200, workspace.agent_task_detail(canonical_uuid(match[1])))
+        elif route == "/api/workspace/agents":
+            if path.query:
+                raise ValueError("invalid_query")
+            value = profile.agent_settings()
+            now = time.time()
+            for item in value["items"]:
+                last = self._agent_last_seen(item["id"])
+                item["online"] = bool(last is not None and now - last <= 60)
+                item["last_seen_at"] = (datetime.fromtimestamp(last, timezone.utc).isoformat()
+                                        if last is not None else None)
+            self.reply(200, value)
         elif route == "/api/workspace/tasks":
             params = page_params(path.query, extra=("project_id", "scope"))
             if params.get("scope", "all") not in ("all", "active", "archived", "orphan"):
@@ -655,18 +1067,29 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.reject(503, "capability_unavailable")
             return True
         legacy = route in ("/api/progress/set", "/api/todos", "/api/todos/toggle")
+        if PROJECT_SANDBOX_ROUTE.fullmatch(route):
+            return self.sandbox_preparation_post(path)
         if route not in PROFILE_POST and not legacy:
             return False
         if path.query:
             self.reject(400, "invalid_request")
             return True
         try:
-            body = self.read_json_body(max_bytes=262144 if route in ("/api/workspace/items", "/api/workspace/items/update") else
-                65536 if route == "/api/profile/observations" else 16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
+            body = self.read_json_body(max_bytes=262144 if route in ("/api/workspace/items", "/api/workspace/items/update",
+                "/api/workspace/decisions", "/api/workspace/decisions/update", "/api/workspace/reviews") else
+                65536 if route == "/api/profile/observations" or route == "/api/workspace/agents" else 16384 if route in PROFILE_POST else 4096, strict=route in PROFILE_POST)
             if route in onboarding_routes.POST_ROUTES:
                 value = onboarding_routes.handle_post(self, route, body)
             elif route in ("/api/workspace/items", "/api/workspace/items/update"):
                 value = self.server.workspace.save_item(body, update=route.endswith("/update"))
+            elif route == "/api/workspace/agents":
+                value = profile.save_agents(body)
+            elif route == "/api/workspace/agents/token":
+                value = profile.rotate_agent_token(body)
+            elif route in ("/api/workspace/decisions", "/api/workspace/decisions/update"):
+                value = self.server.workspace.save_decision(body, update=route.endswith("/update"))
+            elif route == "/api/workspace/reviews":
+                value = self.server.workspace.save_review(body)
             elif route == "/api/profile/settings":
                 value = profile.settings(body)
                 self.server.workspace.selection.invalidate()
@@ -680,6 +1103,16 @@ class PanelHandler(BaseHTTPRequestHandler):
                 value = import_legacy(profile, body["source_dir"])
             elif route in ("/api/workspace/projects/save", "/api/workspace/projects/restore"):
                 value = {"status": "ok", "project": profile.store.save_project(body, restore=route.endswith("/restore"))}
+            elif route == "/api/workspace/projects/inspect":
+                value = self.server.workspace.inspect_project_directory(body)
+            elif route == "/api/workspace/projects/create-preview":
+                value = self.server.workspace.preview_project_directory(body)
+            elif route == "/api/workspace/projects/register":
+                value = self.server.workspace.register_project_directory(body)
+            elif route == "/api/workspace/projects/create":
+                value = self.server.workspace.create_project_directory(body)
+            elif route == "/api/workspace/directories/pick":
+                value = self.server.workspace.pick_project_directory(body)
             elif route in ("/api/workspace/progress", "/api/progress/set"):
                 value = profile.store.save_manual(body)
                 if legacy:
@@ -689,6 +1122,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.reply(200, value)
         except BodyTooLarge:
             self.reject(413, "body_too_large")
+        except project_dirs.DirectoryError as error:
+            self.reply(error.status, {"status": "error", "reason": error.reason,
+                                      "source": self.server.__dict__.get("source"),
+                                      "observed_at": datetime.now(timezone.utc).isoformat()})
         except (ProfileError, WorkspaceError) as error:
             self.profile_error(error)
         except (ValueError, TypeError, UnicodeError, OSError, RecursionError):
@@ -697,6 +1134,19 @@ class PanelHandler(BaseHTTPRequestHandler):
 
 
 class PanelServer(ThreadingHTTPServer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.agent_presence = {}
+        self.agent_presence_lock = threading.Lock()
+
+    def agent_seen(self, identity):
+        with self.agent_presence_lock:
+            self.agent_presence[identity] = time.time()
+
+    def agent_last_seen(self, identity):
+        with self.agent_presence_lock:
+            return self.agent_presence.get(identity)
+
     def start_observer(self):
         observer = self.__dict__.get("observer")
         if observer is not None:
@@ -776,6 +1226,19 @@ def build_profile_server(data_dir=None, port=8766, *, quota_source=None, news_so
     observer = ObserverClient(profile.data_dir, scope_supplier=workspace.observation_scope,
                               config_supplier=profile.observation_config, config_guard=profile.observation_guard)
     workspace.observer = observer
+    agents = profile.agent_settings().get("items", [])
+    codex_enabled = any(row.get("enabled") and row.get("adapter") == "codex" for row in agents)
+    dsh_enabled = any(row.get("enabled") and row.get("adapter") == "dsh" for row in agents)
+    if dsh_enabled:
+        try:
+            from control_everything.execution.dsh import native_dsh
+            native_dsh()
+        except Exception:
+            dsh_enabled = False
+    execution = None
+    if dsh_enabled or codex_enabled:
+        from control_everything.execution.service import ExecutionService
+        execution = ExecutionService(workspace, codex_required=False, require_sandbox_acl=False)
     integrations = profile.integrations()
     enabled = {name: value is not None and value["enabled"] for name, value in integrations.items()}
     service, launchers = None, None
@@ -791,8 +1254,8 @@ def build_profile_server(data_dir=None, port=8766, *, quota_source=None, news_so
         launchers = LauncherCatalog(integrations["launchers"])
     capabilities = {**PROFILE_CAPABILITIES, "remote_sessions": enabled["remote"],
                     "terminal": enabled["terminal"], "workbench": enabled["workbench"],
-                    "personal_launchers": enabled["launchers"]}
-    return make_server(service, (HOST, port), workspace=workspace, profile=profile,
+                    "personal_launchers": enabled["launchers"], "execution": execution is not None}
+    return make_server(service, (HOST, port), workspace=workspace, profile=profile, execution=execution,
                        launchers=launchers, capabilities=capabilities, startup_integrations=integrations, observer=observer)
 
 

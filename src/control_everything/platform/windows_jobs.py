@@ -7,6 +7,7 @@ import sys
 
 CREATE_SUSPENDED = 0x00000004
 CREATE_NO_WINDOW = 0x08000000
+CREATE_UNICODE_ENVIRONMENT = 0x00000400
 EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 STARTF_USESTDHANDLES = 0x00000100
 HANDLE_FLAG_INHERIT = 1
@@ -65,6 +66,20 @@ class JobAccounting(c.Structure):
         (key, w.DWORD) for key in ("page_faults", "total", "active", "terminated")]
 
 
+def environment_block(environment):
+    if type(environment) is not dict:
+        raise ProcessError("invalid_environment")
+    keys = {}
+    for key, value in environment.items():
+        if (not isinstance(key, str) or not key or "=" in key or "\0" in key
+                or not isinstance(value, str) or "\0" in value):
+            raise ProcessError("invalid_environment")
+        keys[key.casefold()] = (key, value)
+    block = "".join(f"{key}={value}\0" for key, value in
+                    (keys[name] for name in sorted(keys)))
+    return c.create_unicode_buffer(block + "\0")
+
+
 class WindowsAPI:
     """Small typed Win32 boundary; tests replace this boundary, never spawn."""
 
@@ -90,6 +105,7 @@ class WindowsAPI:
             "AssignProcessToJobObject": ([w.HANDLE, w.HANDLE], w.BOOL),
             "ResumeThread": ([w.HANDLE], w.DWORD),
             "TerminateProcess": ([w.HANDLE, w.UINT], w.BOOL),
+            "GetExitCodeProcess": ([w.HANDLE, c.POINTER(w.DWORD)], w.BOOL),
             "WaitForSingleObject": ([w.HANDLE, w.DWORD], w.DWORD),
             "PeekNamedPipe": ([w.HANDLE, w.LPVOID, w.DWORD, w.LPVOID, c.POINTER(w.DWORD), w.LPVOID], w.BOOL),
             "ReadFile": ([w.HANDLE, w.LPVOID, w.DWORD, c.POINTER(w.DWORD), w.LPVOID], w.BOOL),
@@ -158,7 +174,7 @@ class WindowsAPI:
                 self.close(handle)
             raise
 
-    def spawn(self, exe, argv, cwd, child_handles):
+    def spawn(self, exe, argv, cwd, child_handles, *, env=None, command_line=None):
         size = c.c_size_t()
         self.kernel.InitializeProcThreadAttributeList(None, 1, 0, c.byref(size))
         storage = c.create_string_buffer(size.value)
@@ -172,10 +188,19 @@ class WindowsAPI:
             startup.startup.flags = STARTF_USESTDHANDLES
             startup.startup.stdin, startup.startup.stdout, startup.startup.stderr = child_handles
             startup.attributes = c.cast(storage, w.LPVOID)
-            command = c.create_unicode_buffer(subprocess.list2cmdline([str(exe), *argv]))
+            if command_line is None:
+                command = c.create_unicode_buffer(subprocess.list2cmdline([str(exe), *argv]))
+            elif isinstance(command_line, str) and command_line and "\0" not in command_line:
+                command = c.create_unicode_buffer(command_line)
+            else:
+                raise ProcessError("invalid_command_line")
+            environment = environment_block(env) if env is not None else None
             flags = CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT
+            if environment is not None:
+                flags |= CREATE_UNICODE_ENVIRONMENT
             self.checked(self.kernel.CreateProcessW(str(exe), command, None, None, True, flags,
-                                                    None, str(cwd), c.byref(startup), c.byref(process)))
+                                                    environment, str(cwd), c.byref(startup),
+                                                    c.byref(process)))
             return process.process, process.thread, process.pid
         finally:
             self.kernel.DeleteProcThreadAttributeList(storage)
@@ -190,6 +215,11 @@ class WindowsAPI:
     def terminate_process(self, process):
         self.kernel.TerminateProcess(process, 1)
         self.kernel.WaitForSingleObject(process, 2000)
+
+    def exit_code(self, process):
+        code = w.DWORD()
+        self.checked(self.kernel.GetExitCodeProcess(process, c.byref(code)))
+        return code.value
 
     def terminate_job(self, job):
         self.checked(self.kernel.TerminateJobObject(job, 1))

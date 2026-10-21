@@ -124,7 +124,7 @@ function showView(view) {
     try { app.projectSpace?.route(decodeURIComponent(id), tab); } catch { view = 'overview'; }
   }
   if (!viewCopy[view]) view = 'overview';
-  if (app.profileMode && view === 'runs') view = 'overview';
+  if (app.profileMode && app.capabilities.execution !== true && view === 'runs') view = 'overview';
   app.view = view;
   const [label, title, description, eyebrow] = viewCopy[view];
   $('breadcrumb').textContent = label; $('page-title').textContent = title;
@@ -142,7 +142,7 @@ function showView(view) {
   tasks.hidden = app.profileMode && view === 'projects';
   projects.parentElement.insertBefore(view === 'tasks' ? tasks : projects, view === 'tasks' ? projects : tasks);
   for (const id of ['agents', 'usage', 'news', 'runs']) $(`${id}-view`).hidden = view !== id;
-  if (!app.profileMode) window.WorkspaceExecution?.onView(view);
+  if (!app.profileMode || app.capabilities.execution === true) window.WorkspaceExecution?.onView(view);
   window.WorkspaceNews?.onView(view);
   $('all-tasks').hidden = view !== 'overview';
   if (app.snapshot) { if (!app.projectSpace || view === 'projects') renderProjects(); if (!app.profileMode) renderTasks(); }
@@ -420,14 +420,14 @@ async function bootstrap() {
   try { const value = await api('/api/bootstrap'); app.csrf = typeof value.csrf_token === 'string' ? value.csrf_token : ''; app.capabilities = value.capabilities || {}; app.profileMode = app.capabilities.profile === true; }
   catch { message('workspace-status', '保存凭据不可用，仍可尝试读取信息。', true); }
   window.WorkspaceNews?.startWorkspace({ fetchJson: api, postJson: post });
-  if (app.profileMode) { setupProfile(); setupTaskCenter(); try { await loadProfile(); } catch (error) { message('workspace-status', error.message, true); } }
-  else { window.WorkspaceExecution?.init({ api, post, showView, getSnapshot: () => app.snapshot });
+  if (app.profileMode) { setupProfile(); setupTaskCenter(); window.WorkspaceAgents?.init({ fetchJson: api, postJson: post, sandboxButton: item => app.projectSpace?.sandboxButton(item) }); try { await loadProfile(); } catch (error) { message('workspace-status', error.message, true); } }
+  if (!app.profileMode || app.capabilities.execution === true) { window.WorkspaceExecution?.init({ api, post, showView, getSnapshot: () => app.snapshot });
     if (!window.WorkspaceExecution) message('execution-status', '执行页面资源尚未就绪；请在新版服务启动后刷新。现有任务仍可使用。', true); }
   if (app.profileMode) window.WorkspaceObservation?.start({ fetchJson: api, postJson: post });
   if (app.profileMode) window.WorkspaceObservation?.onSaved?.(loadBase);
-  await Promise.allSettled([loadBase(), loadUsage()]);
+  await Promise.allSettled([loadBase(), loadUsage(), app.profileMode ? window.WorkspaceAgents?.load() : Promise.resolve()]);
   if (app.profileMode) setupAutomaticRefresh();
-  if (!app.profileMode) window.WorkspaceExecution?.onView(app.view);
+  if (!app.profileMode || app.capabilities.execution === true) window.WorkspaceExecution?.onView(app.view);
 }
 function action(label, callback) {
   const button = el('button', 'text-button', label); button.type = 'button'; button.disabled = !app.csrf;
@@ -469,7 +469,7 @@ async function loadTodos() {
 }
 function setupProfile() {
   $('new-project').hidden = false; document.querySelector('[data-view="settings"]').hidden = false;
-  document.querySelector('[data-view="runs"]').hidden = true;
+  document.querySelector('[data-view="runs"]').hidden = app.capabilities.execution !== true;
   document.querySelector('.sidebar-links').replaceChildren(el('p', 'nav-label', '项目进度'));
   $('provider-sessions-link').hidden = !(app.capabilities.remote_sessions || app.capabilities.workbench);
   for (const [after, id] of [['tasks-list', 'tasks-pager'], ['todos-list', 'todos-pager']]) { const root = el('div', 'pager'); root.id = id; $(after).after(root); }
@@ -493,7 +493,7 @@ function setupProfile() {
   $('open-registration-settings').addEventListener('click', event => {
     event.preventDefault(); showView('settings'); $('registration-settings').open = true;
   });
-  if (app.view === 'runs') showView('overview'); else showView(app.view);
+  showView(app.view);
 }
 function setupTaskCenter() {
   document.querySelector('[data-view="projects"]').hidden = false;
@@ -507,7 +507,7 @@ function setupTaskCenter() {
     canWrite: () => Boolean(app.csrf), onSaved: loadBase, onProject: id => app.projectSpace?.open(id) });
   app.projectSpace = window.WorkspaceProjectSpace?.create({
     root: $('project-space'), navigation: $('project-navigation'), taskRoot: $('task-center-root'), tasks: app.taskCenter,
-    navigate: showView,
+    navigate: showView, fetchJson: api, postJson: post,
     manage: project => { if (project) openProject(project); else app.onboarding?.open(); },
     manual: () => openProject(),
     remove: async project => {
@@ -516,6 +516,7 @@ function setupTaskCenter() {
       catch (error) { message('workspace-status', `${error.message}。项目与草稿仍保留。`, true); }
     },
     readSessions: params => api(`/api/workspace/codex/sessions?${new URLSearchParams(params)}`),
+    readTaskSessions: projectId => api(`/api/workspace/sessions?${new URLSearchParams({ project_id: projectId })}`),
     onSession: (session, projectId) => {
       if (!app.taskCenter.openSession(session, projectId)) return;
       if (projectId) app.projectSpace.open(projectId, 'tasks'); else showView('tasks');

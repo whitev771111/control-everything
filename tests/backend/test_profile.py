@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from control_everything.profiles.profile import Profile, ProfileError, resolve_data_dir
 from control_everything.workspace.store import WorkspaceError, BASE_SCHEMA
+from control_everything.workspace.task_schema import SCHEMA_VERSION
 
 
 class ProfileTests(unittest.TestCase):
@@ -32,8 +33,9 @@ class ProfileTests(unittest.TestCase):
             self.assertTrue(profile.public()["can_import"])
             self.assertEqual(profile.codex_threads()["status"], "not_configured")
             with closing(sqlite3.connect(profile.store.path)) as connection:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
-                self.assertIsNone(connection.execute("SELECT name FROM sqlite_master WHERE name LIKE 'execution%'").fetchone())
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+                tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'execution%'")}
+                self.assertEqual(tables, {'execution_runs', 'execution_events', 'execution_approvals'})
             configured = {"codex": {"enabled": False, "db_path": str(Path(directory) / "explicit.sqlite")}}
             profile.settings(configured)
             reopened = Profile.open(directory)
@@ -67,7 +69,7 @@ class ProfileTests(unittest.TestCase):
                 else:
                     profile = Profile.open(directory)
                     with closing(sqlite3.connect(profile.store.path)) as connection:
-                        connection.execute({"future": "PRAGMA user_version=3", "extra": "CREATE TABLE extra(x)", "column": "ALTER TABLE projects ADD COLUMN extra TEXT"}[mode])
+                        connection.execute({"future": f"PRAGMA user_version={SCHEMA_VERSION + 1}", "extra": "CREATE TABLE extra(x)", "column": "ALTER TABLE projects ADD COLUMN extra TEXT"}[mode])
                         connection.commit()
                 with self.assertRaises(ProfileError):
                     Profile.open(directory)

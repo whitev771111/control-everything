@@ -12,6 +12,95 @@
     let overview = null, provider = 'codex', page = null, requestId = 0, busy = false, dirty = false, sampleNeedsRefresh = false;
     const drafts = new Map(), selected = new Set(), savedExcluded = new Map();
     const feedback = (text, failed = false) => { $('onboarding-feedback').textContent = text; $('onboarding-feedback').classList.toggle('error', failed); };
+    let mode = 'existing', verified = null, folderSaved = false;
+    const folderInput = () => ({ name: $('onboarding-directory-name').value.trim(), path: $('onboarding-directory-path').value.trim() });
+    const folderKey = () => JSON.stringify([mode, folderInput()]);
+    const directoryErrors = { directory_exists: '目标已存在，请添加已有文件夹或更换名称。', directory_not_found: '文件夹不存在，请重新选择。',
+      invalid_directory: '请输入本机已有文件夹的绝对路径。', invalid_directory_name: '名称不能包含路径分隔符、特殊字符或末尾点号。',
+      directory_unreadable: '无法读取该目录，请检查权限。', directory_create_failed: '文件夹创建失败，请检查权限及目标路径。',
+      directory_conflict: '该目录已属于一个项目，请打开已有项目。', picker_busy: '文件夹选择窗口已打开，请先完成或取消选择。',
+      picker_unavailable: '文件夹选择器不可用，可直接填写本机绝对路径。' };
+    const folderError = error => directoryErrors[error.reason] || error.message;
+    function syncFolder() {
+      $('onboarding-directory-fields').disabled = busy;
+      $('onboarding-directory-save').disabled = busy || folderSaved || !verified || verified.key !== folderKey() || !$('onboarding-directory-confirm').checked;
+    }
+    function invalidateFolder() {
+      verified = null; folderSaved = false; $('onboarding-directory-confirm').checked = false;
+      $('onboarding-directory-result').textContent = ''; syncFolder();
+    }
+    async function chooseMode(next) {
+      if (busy) return;
+      if (dirty && next !== mode && !window.confirm('尚有未保存的输入，确认切换添加方式？')) return;
+      requestId++; mode = next; invalidateFolder();
+      $('onboarding-tool-import').hidden = mode !== 'import';
+      $('onboarding-directory-form').hidden = mode === 'import';
+      for (const [identity, value] of [['onboarding-existing', 'existing'], ['onboarding-new', 'new'], ['onboarding-import', 'import']]) $(identity).setAttribute('aria-pressed', String(mode === value));
+      if (mode === 'import') {
+        feedback('正在读取可选项目来源…');
+        const current = requestId;
+        try {
+          await reloadOverview();
+          if (mode !== 'import' || current !== requestId || !dialog.open) return;
+          renderSource(); if (await reloadCandidates()) feedback('只加入你选择的项目；不会复制代码或聊天正文。');
+        } catch (error) { if (mode === 'import') feedback(`${error.message}。仍可添加本机文件夹。`, true); }
+      } else {
+        $('onboarding-directory-title').textContent = mode === 'new' ? '新建项目与文件夹' : '添加已有项目文件夹';
+        $('onboarding-directory-label').textContent = mode === 'new' ? '父文件夹路径' : '已有文件夹路径';
+        $('onboarding-directory-preview').textContent = mode === 'new' ? '预览新文件夹路径' : '核对目录';
+        $('onboarding-directory-save').textContent = mode === 'new' ? '确认创建文件夹并添加项目' : '确认添加项目';
+        feedback(mode === 'new' ? '选择父目录并填写名称，预览完整路径后再确认创建。' : '选择或填写已有目录。添加项目不会改动目录中的文件。');
+      }
+    }
+    async function pickDirectory() {
+      if (busy) return;
+      busy = true; syncFolder(); feedback('请在本机窗口选择文件夹；也可取消后手工填写路径。');
+      try {
+        const result = await postJson('/api/workspace/directories/pick', { title: mode === 'new' ? '选择新项目的父文件夹' : '选择已有项目文件夹' });
+        if (result.status === 'cancelled') { feedback('已取消选择，原输入保留。'); return; }
+        if (result.status !== 'selected' || typeof result.path !== 'string') throw new Error('未收到有效的文件夹路径。');
+        $('onboarding-directory-path').value = result.path; dirty = true; invalidateFolder(); feedback('已选择文件夹，请核对目录。');
+      } catch (error) { feedback(folderError(error), true); }
+      finally { busy = false; syncFolder(); }
+    }
+    async function previewDirectory() {
+      if (busy) return;
+      invalidateFolder();
+      const input = folderInput();
+      if (!input.path || mode === 'new' && !input.name) { feedback('请填写目录和项目名称。', true); return; }
+      busy = true; syncFolder();
+      try {
+        const result = await postJson(`/api/workspace/projects/${mode === 'new' ? 'create-preview' : 'inspect'}`, mode === 'new' ? { name: input.name, parent_path: input.path } : { path: input.path });
+        if (typeof result.path !== 'string' || !['ok', 'preview'].includes(result.status)) throw new Error('未收到有效的目录核对结果。');
+        if (mode === 'new' && result.can_create !== true) { feedback('目标已存在，请更换名称或添加已有文件夹。', true); return; }
+        if (!input.name && result.name) $('onboarding-directory-name').value = result.name;
+        if (!folderInput().name) { feedback('请填写项目名称。', true); return; }
+        verified = { key: folderKey(), path: result.path };
+        $('onboarding-directory-result').textContent = `${mode === 'new' ? '将创建并添加' : '将添加已有目录'}：${result.path}`;
+        feedback('请核对完整路径并勾选确认。');
+      } catch (error) { feedback(folderError(error), true); }
+      finally { busy = false; syncFolder(); }
+    }
+    async function saveDirectory(event) {
+      event.preventDefault();
+      if (busy || folderSaved || !verified || verified.key !== folderKey() || !$('onboarding-directory-confirm').checked) return;
+      const input = folderInput(); busy = true; syncFolder(); feedback('正在保存，请勿重复提交…');
+      try {
+        const result = await postJson(`/api/workspace/projects/${mode === 'new' ? 'create' : 'register'}`, mode === 'new' ? { name: input.name, parent_path: input.path, confirmed: true } : { name: input.name, path: input.path });
+        if (result.status === 'partial' && result.directory_created === true && typeof result.path === 'string') {
+          mode = 'existing'; $('onboarding-directory-path').value = result.path; verified = null;
+          busy = false; dirty = false; await chooseMode('existing'); dirty = true;
+          feedback(`文件夹已创建，但项目登记未成功。目录保留在 ${result.path}；请核对后按已有文件夹添加。`, true); return;
+        }
+        if (!['created', 'registered'].includes(result.status) || !result.project?.id) throw new Error('未收到有效的项目保存凭据。');
+        folderSaved = true; dirty = false; verified = null;
+        try { await onChanged(); dialog.close(); }
+        catch { feedback('项目已保存，但列表刷新失败。请关闭此窗口并刷新工作台，无需再次创建。', true); }
+      } catch (error) {
+        verified = null; $('onboarding-directory-confirm').checked = false;
+        feedback(`${folderError(error)} 保存结果未确认，请先核对目录和工作台记录，再决定是否重新添加。`, true);
+      } finally { busy = false; syncFolder(); }
+    }
     const activeTool = () => overview?.tools.find(tool => tool.provider === provider);
     async function reloadOverview() {
       overview = await fetchJson('/api/workspace/onboarding');
@@ -199,14 +288,21 @@
       finally { busy = false; $('onboarding-source-fields').disabled = false; renderCandidates(); }
     }
     function close() { if (busy) return; requestId++; dialog.close(); }
-    async function open() {
+    async function open({ mode: nextMode = 'existing' } = {}) {
       if (!dialog.open) dialog.showModal();
-      feedback('正在查找来源位置…');
-      try {
-        await reloadOverview(); renderSource();
-        if (await reloadCandidates()) feedback('只加入你选择的项目；不会复制代码或聊天正文。');
-      } catch (error) { feedback(`${error.message}。仍可直接新建项目。`, true); }
+      return chooseMode(['existing', 'new', 'import'].includes(nextMode) ? nextMode : 'existing');
     }
+    $('onboarding-existing').addEventListener('click', () => chooseMode('existing'));
+    $('onboarding-new').addEventListener('click', () => chooseMode('new'));
+    $('onboarding-import').addEventListener('click', () => chooseMode('import'));
+    $('onboarding-directory-pick').addEventListener('click', pickDirectory);
+    $('onboarding-directory-preview').addEventListener('click', previewDirectory);
+    $('onboarding-directory-confirm').addEventListener('change', syncFolder);
+    $('onboarding-directory-form').addEventListener('input', event => {
+      if (event.target === $('onboarding-directory-confirm')) return;
+      dirty = true; invalidateFolder();
+    });
+    $('onboarding-directory-form').addEventListener('submit', saveDirectory);
     $('onboarding-tabs').replaceChildren(...Object.keys(names).map(key => {
       const tab = button(names[key], () => {
         if (busy) return; rememberDraft(); provider = key; dirty = drafts.has(provider); page = null; sampleNeedsRefresh = false; selected.clear(); requestId++;
@@ -238,7 +334,7 @@
     });
     dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); else requestId++; });
     return { open, join, rejoin, joinSelected,
-      async refresh() { if (dialog.open && !busy && !dirty) { await reloadOverview(); await reloadCandidates(); } },
+      async refresh() { if (dialog.open && mode === 'import' && !busy && !dirty) { await reloadOverview(); await reloadCandidates(); } },
       async remove(project) {
         await reloadOverview();
         const value = await postJson('/api/workspace/project-selection', { action: 'remove', project_id: project.id, selection_token: overview.selection_token });

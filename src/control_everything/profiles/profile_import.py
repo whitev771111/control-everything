@@ -17,7 +17,7 @@ from control_everything.sessions import observation_settings
 from control_everything.workspace import task_schema
 from control_everything.sessions.source import canonical_uuid
 from control_everything.workspace.service import WorkspaceService, TASK_STATES, PROVIDERS
-from control_everything.workspace.store import (BASE_SCHEMA, MANAGEMENT_TABLES, WorkspaceError, WorkspaceStore,
+from control_everything.workspace.store import (BASE_SCHEMA, WorkspaceError, WorkspaceStore,
                               now_utc)
 from control_everything.workspace.validation import (finite_number, project_id_valid, validate_project,
     validate_codex_project, validate_stored_imported_project)
@@ -268,7 +268,7 @@ def create_backup(profile):
         try:
             version = connection.execute('PRAGMA user_version').fetchone()[0]
             task_schema.validate_schema(connection, version)
-            tables = task_schema.SCHEMA1_TABLES if version == 1 else MANAGEMENT_TABLES
+            tables = task_schema.tables_for(version)
             counts = {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}
         finally:
             connection.close()
@@ -398,11 +398,11 @@ def validate_backup(directory):
             invalid("manifest", "budget_exceeded")
         manifest = strict_json(manifest_path.read_text(encoding="utf-8"))
         if (not isinstance(manifest, dict) or set(manifest) != {"version", "schema_version", "created_at", "origin_data_dir", "files", "counts"}
-                or type(manifest["version"]) is not int or manifest["version"] not in (1, 2)
+                or type(manifest["version"]) is not int or manifest["version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9)
                 or type(manifest["schema_version"]) is not int or manifest["schema_version"] != manifest['version']
                 or not isinstance(manifest["files"], dict) or set(manifest["files"]) != BACKUP_FILES
                 or not isinstance(manifest["counts"], dict) or set(manifest["counts"]) != set(
-                    task_schema.SCHEMA1_TABLES if manifest['version'] == 1 else MANAGEMENT_TABLES)
+                    task_schema.tables_for(manifest['schema_version']))
                 or not absolute_path(manifest["origin_data_dir"])):
             invalid("manifest")
         timestamp(manifest["created_at"], "manifest.created_at")
@@ -425,7 +425,7 @@ def validate_backup(directory):
             task_schema.validate_schema(connection, manifest['schema_version'])
             if connection.execute('PRAGMA foreign_key_check').fetchone():
                 invalid('management.sqlite3')
-            if manifest['schema_version'] == 2:
+            if manifest['schema_version'] >= 2:
                 for title, in connection.execute('SELECT title FROM task_items'):
                     task_schema.check_text(title)
             for identity, name, archived, kind, directory_id, relative in connection.execute(

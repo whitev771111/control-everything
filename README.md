@@ -22,6 +22,8 @@ https://github.com/user-attachments/assets/be96cc58-6bd8-4221-b0aa-77c0f9e31804
 
 例如：登记项目 → 添加任务 → 更新人工进度 → 查看工具或会话状态 → 返回工具继续开发。
 
+源码开发版现提供 Codex / DSH 最小执行闭环：选择项目与 Agent → 明确执行 → 处理具体工具审批 → 人工审核 → 填写驳回理由后继续修改。使用条件及尚未解决的 Windows 原生写入问题见[最小执行流程](docs/usage.md#双-agent-最小执行流程源码开发版)；下面已有安装包尚未随本次源码更新重新发布。
+
 ## 快速开始
 
 **Windows x64 开发预览版 0.1.0a1**：[下载安装包](https://github.com/zxl123456123/control-everything/releases/download/v0.1.0a1/session-panel-0.1.0a1-windows-x64.exe) · [版本说明与校验值](https://github.com/zxl123456123/control-everything/releases/tag/v0.1.0a1)。安装包自带运行环境，无需另装 Python、Node.js 或 Rust。

@@ -150,7 +150,7 @@ class TaskStoreTests(unittest.TestCase):
         self.create()
         with self.assertRaisesRegex(WorkspaceError, 'schema_error'):
             with WorkspaceStore(self.store.path).connection():
-                self.fail('legacy must refuse schema2 before DDL')
+                self.fail('legacy must refuse schema3 before DDL')
         connection = sqlite3.connect(self.store.path)
         try:
             connection.execute('DROP TRIGGER guard_projects_update')
@@ -164,7 +164,7 @@ class TaskStoreTests(unittest.TestCase):
     def test_all_known_tables_require_per_connection_writer_marker(self):
         connection = sqlite3.connect(self.store.path)
         try:
-            for table in schema.SCHEMA2_TABLES:
+            for table in schema.SCHEMA9_TABLES:
                 columns = [row[1] for row in connection.execute(f'PRAGMA table_info({table})')]
                 for action in ('INSERT', 'UPDATE', 'DELETE'):
                     statement = (f'INSERT INTO {table} DEFAULT VALUES' if action == 'INSERT' else

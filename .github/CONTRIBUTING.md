@@ -52,6 +52,8 @@
 
 额度 DOM 展示在 `web/workspace/quota.js`，观察动作处理在 `http/observation_routes.py`；主脚本、网关只委派相应职责。前端仍使用普通 Window 模块，依赖注入、DOM 合同、脚本顺序及独立代码审查共同约束；Python 导入检查不覆盖 JavaScript 或 SQL 的业务含义。
 
+沙箱准备请求由 `http/sandbox_routes.py` 处理，权限原语归 `platform/windows_acl.py`，准备状态和恢复证据归 `execution/sandbox_preparations.py`。准备确认绑定目录 ID、对象身份、当前权限摘要和代次；执行、准备与恢复共用跨进程目录租约，目录租约先于配置状态锁。仅为项目根补充当前用户所缺的准备权限，不向子项传播用户授权；恢复仅在对象及当前权限与记录完全匹配时恢复该根 DACL，不撤销 DSH 后续持久沙箱标签。缓存和恢复证据留在本机 profile，不进入提交。
+
 开发环境先按下文安装 editable 包，再显式安装固定工具，从根执行：
 
 ```powershell

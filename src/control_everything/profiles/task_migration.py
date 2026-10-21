@@ -1,4 +1,4 @@
-"""Explicit offline schema1 task migration and schema2 preservation."""
+"""Explicit offline schema1/schema2 task migration and schema3 preservation."""
 
 import hashlib
 import json
@@ -104,11 +104,42 @@ def migrate_tasks(data_dir):
             try:
                 reader.execute('BEGIN')
                 version = reader.execute('PRAGMA user_version').fetchone()[0]
-                if version == 2:
+                if version == 9:
+                    tasks.validate_schema(reader, 9)
+                    integrity(reader)
+                    return {'status': 'already_current', 'schema_version': 9}
+                if version not in (1, 2, 3, 4, 5, 6, 7, 8):
+                    raise WorkspaceError('schema_error')
+                if version == 1:
+                    source_facts = check_source(reader)
+                elif version == 2:
                     tasks.validate_schema(reader, 2)
                     integrity(reader)
-                    return {'status': 'already_current', 'schema_version': 2}
-                check_source(reader)
+                    source_facts = tasks.table_facts(reader, 2)
+                elif version == 3:
+                    tasks.validate_schema(reader, 3)
+                    integrity(reader)
+                    source_facts = tasks.table_facts(reader, 3)
+                elif version == 4:
+                    tasks.validate_schema(reader, 4)
+                    integrity(reader)
+                    source_facts = tasks.table_facts(reader, 4)
+                elif version == 5:
+                    tasks.validate_schema(reader, 5)
+                    integrity(reader)
+                    source_facts = tasks.table_facts(reader, 5)
+                elif version == 6:
+                    tasks.validate_schema(reader, 6)
+                    integrity(reader)
+                    source_facts = tasks.table_facts(reader, 6)
+                elif version == 7:
+                    tasks.validate_schema(reader, 7)
+                    integrity(reader)
+                    source_facts = tasks.table_facts(reader, 7)
+                else:
+                    tasks.validate_schema(reader, 8)
+                    integrity(reader)
+                    source_facts = tasks.table_facts(reader, 8)
             finally:
                 reader.close()
             config_hash = config_digest(profile)
@@ -118,28 +149,175 @@ def migrate_tasks(data_dir):
                 raise WorkspaceError('migration_source_changed')
             reader = raw_connection(backup / 'management.sqlite3', readonly=True)
             try:
-                source_facts = check_source(reader)
+                if version == 1:
+                    if check_source(reader) != source_facts:
+                        raise WorkspaceError('migration_source_changed')
+                elif version == 2:
+                    tasks.validate_schema(reader, 2)
+                    integrity(reader)
+                    if tasks.table_facts(reader, 2) != source_facts:
+                        raise WorkspaceError('migration_source_changed')
+                elif version == 3:
+                    tasks.validate_schema(reader, 3)
+                    integrity(reader)
+                    if tasks.table_facts(reader, 3) != source_facts:
+                        raise WorkspaceError('migration_source_changed')
+                elif version == 4:
+                    tasks.validate_schema(reader, 4)
+                    integrity(reader)
+                    if tasks.table_facts(reader, 4) != source_facts:
+                        raise WorkspaceError('migration_source_changed')
+                elif version == 5:
+                    tasks.validate_schema(reader, 5)
+                    integrity(reader)
+                    if tasks.table_facts(reader, 5) != source_facts:
+                        raise WorkspaceError('migration_source_changed')
+                elif version == 6:
+                    tasks.validate_schema(reader, 6)
+                    integrity(reader)
+                    if tasks.table_facts(reader, 6) != source_facts:
+                        raise WorkspaceError('migration_source_changed')
+                elif version == 7:
+                    tasks.validate_schema(reader, 7)
+                    integrity(reader)
+                    if tasks.table_facts(reader, 7) != source_facts:
+                        raise WorkspaceError('migration_source_changed')
+                else:
+                    tasks.validate_schema(reader, 8)
+                    integrity(reader)
+                    if tasks.table_facts(reader, 8) != source_facts:
+                        raise WorkspaceError('migration_source_changed')
             finally:
                 reader.close()
-            receipt = dict(source_schema=1, source_facts=source_facts,
-                           backup=str(backup.relative_to(profile.data_dir)), backup_sha256=digest(backup / 'manifest.json'),
-                           config_sha256=config_hash, migrated_at=now_utc())
+            receipt = None
+            if version == 1:
+                receipt = dict(source_schema=1, source_facts=source_facts,
+                               backup=str(backup.relative_to(profile.data_dir)), backup_sha256=digest(backup / 'manifest.json'),
+                               config_sha256=config_hash, migrated_at=now_utc())
             phase = 'exclusive'
             connection = raw_connection(profile.store.path)
             connection.execute('BEGIN EXCLUSIVE')
-            if check_source(connection) != source_facts or config_digest(profile) != config_hash:
+            if config_digest(profile) != config_hash:
                 raise WorkspaceError('migration_source_changed')
-            phase = 'copy'
-            tasks.install_schema2(connection)
-            copy_items(connection)
-            if tasks.table_facts(connection, 1) != source_facts:
-                raise WorkspaceError('migration_verification_failed')
-            # Only the two known source tables are replaced; unknown objects were rejected.
-            for table in ('tasks', 'todos'):
-                connection.execute(f'DROP TABLE {table}')
-            tasks.finish_schema2(connection, receipt)
+            if version == 1:
+                if check_source(connection) != source_facts:
+                    raise WorkspaceError('migration_source_changed')
+                phase = 'copy'
+                tasks.create_schema2_tables(connection, fresh=False)
+                tasks.add_schema3(connection)
+                tasks.add_schema4(connection)
+                tasks.add_schema5(connection)
+                tasks.add_schema6(connection)
+                tasks.add_schema7(connection)
+                tasks.add_schema8(connection)
+                tasks.add_schema9(connection)
+                copy_items(connection)
+                if tasks.table_facts(connection, 1) != source_facts:
+                    raise WorkspaceError('migration_verification_failed')
+                # Only the two known source tables are replaced; unknown objects were rejected.
+                for table in ('tasks', 'todos'):
+                    connection.execute(f'DROP TABLE {table}')
+                tasks.finish_schema9(connection, receipt)
+            elif version == 2:
+                tasks.validate_schema(connection, 2)
+                if tasks.table_facts(connection, 2) != source_facts:
+                    raise WorkspaceError('migration_source_changed')
+                phase = 'copy'
+                tasks.add_schema3(connection)
+                tasks.add_schema4(connection)
+                tasks.add_schema5(connection)
+                tasks.add_schema6(connection)
+                tasks.add_schema7(connection)
+                tasks.add_schema8(connection)
+                tasks.add_schema9(connection)
+                tasks.finish_schema9(connection, None)
+                after = tasks.table_facts(connection, 9)
+                for table in tasks.SCHEMA2_TABLES:
+                    if after[table]['count'] != source_facts[table]['count']:
+                        raise WorkspaceError('migration_verification_failed')
+            elif version == 3:
+                tasks.validate_schema(connection, 3)
+                if tasks.table_facts(connection, 3) != source_facts:
+                    raise WorkspaceError('migration_source_changed')
+                phase = 'copy'
+                tasks.add_schema4(connection)
+                tasks.add_schema5(connection)
+                tasks.add_schema6(connection)
+                tasks.add_schema7(connection)
+                tasks.add_schema8(connection)
+                tasks.add_schema9(connection)
+                tasks.finish_schema9(connection, None)
+                after = tasks.table_facts(connection, 9)
+                for table in tasks.SCHEMA3_TABLES:
+                    if after[table]['count'] != source_facts[table]['count']:
+                        raise WorkspaceError('migration_verification_failed')
+            elif version == 4:
+                tasks.validate_schema(connection, 4)
+                if tasks.table_facts(connection, 4) != source_facts:
+                    raise WorkspaceError('migration_source_changed')
+                phase = 'copy'
+                tasks.add_schema5(connection)
+                tasks.add_schema6(connection)
+                tasks.add_schema7(connection)
+                tasks.add_schema8(connection)
+                tasks.add_schema9(connection)
+                tasks.finish_schema9(connection, None)
+                after = tasks.table_facts(connection, 9)
+                for table in tasks.SCHEMA4_TABLES:
+                    if after[table]['count'] != source_facts[table]['count']:
+                        raise WorkspaceError('migration_verification_failed')
+            elif version == 5:
+                tasks.validate_schema(connection, 5)
+                if tasks.table_facts(connection, 5) != source_facts:
+                    raise WorkspaceError('migration_source_changed')
+                phase = 'copy'
+                tasks.add_schema6(connection)
+                tasks.add_schema7(connection)
+                tasks.add_schema8(connection)
+                tasks.add_schema9(connection)
+                tasks.finish_schema9(connection, None)
+                after = tasks.table_facts(connection, 9)
+                for table in tasks.SCHEMA5_TABLES:
+                    if after[table]['count'] != source_facts[table]['count']:
+                        raise WorkspaceError('migration_verification_failed')
+            elif version == 6:
+                tasks.validate_schema(connection, 6)
+                if tasks.table_facts(connection, 6) != source_facts:
+                    raise WorkspaceError('migration_source_changed')
+                phase = 'copy'
+                tasks.add_schema7(connection)
+                tasks.add_schema8(connection)
+                tasks.add_schema9(connection)
+                tasks.finish_schema9(connection, None)
+                after = tasks.table_facts(connection, 9)
+                for table in tasks.SCHEMA6_TABLES:
+                    if after[table]['count'] != source_facts[table]['count']:
+                        raise WorkspaceError('migration_verification_failed')
+            elif version == 7:
+                tasks.validate_schema(connection, 7)
+                if tasks.table_facts(connection, 7) != source_facts:
+                    raise WorkspaceError('migration_source_changed')
+                phase = 'copy'
+                tasks.add_schema8(connection)
+                tasks.add_schema9(connection)
+                tasks.finish_schema9(connection, None)
+                after = tasks.table_facts(connection, 9)
+                for table in tasks.SCHEMA7_TABLES:
+                    if after[table]['count'] != source_facts[table]['count']:
+                        raise WorkspaceError('migration_verification_failed')
+            else:
+                tasks.validate_schema(connection, 8)
+                if tasks.table_facts(connection, 8) != source_facts:
+                    raise WorkspaceError('migration_source_changed')
+                phase = 'copy'
+                tasks.add_schema9(connection)
+                tasks.finish_schema9(connection, None)
+                after = tasks.table_facts(connection, 9)
+                for table in tasks.SCHEMA8_TABLES:
+                    if after[table]['count'] != source_facts[table]['count']:
+                        raise WorkspaceError('migration_verification_failed')
             phase = 'validate'
-            tasks.validate_schema(connection, 2)
+            tasks.validate_schema(connection, 9)
             integrity(connection)
             phase = 'commit'
             connection.execute('COMMIT')
@@ -147,11 +325,12 @@ def migrate_tasks(data_dir):
             connection.close()
             connection = None
             connection = raw_connection(profile.store.path, readonly=True)
-            tasks.validate_schema(connection, 2)
-            actual = json.loads(connection.execute('SELECT migration_json FROM task_center_meta').fetchone()[0])
-            if actual != receipt:
-                raise WorkspaceError('migration_outcome_unknown')
-            return {'status': 'ok', 'schema_version': 2, 'backup': str(backup), 'receipt': receipt}
+            tasks.validate_schema(connection, 9)
+            if receipt is not None:
+                actual = json.loads(connection.execute('SELECT migration_json FROM task_center_meta').fetchone()[0])
+                if actual != receipt:
+                    raise WorkspaceError('migration_outcome_unknown')
+            return {'status': 'ok', 'schema_version': 9, 'backup': str(backup), 'receipt': receipt}
         except Exception as error:
             if phase == 'commit' and connection is not None and not connection.in_transaction:
                 committed = True
@@ -168,28 +347,35 @@ def migrate_tasks(data_dir):
 def preserve_tasks(data_dir):
     from control_everything.profiles.profile_import import create_backup, digest
     profile = existing_profile(data_dir)
-    backup, connection = None, None
+    backup, connection, version = None, None, None
     with profile.config_lock, config_file_lock(profile.data_dir), profile.store.write_lock:
         try:
-            with profile.store.connection():
-                pass
+            reader = raw_connection(profile.store.path, readonly=True)
+            try:
+                version = reader.execute('PRAGMA user_version').fetchone()[0]
+                tasks.validate_schema(reader, version)
+                integrity(reader)
+            finally:
+                reader.close()
+            if version not in (2, 3, 4, 5, 6, 7, 8, 9):
+                raise WorkspaceError('schema_error')
             config_hash = config_digest(profile)
             backup = create_backup(profile)
             if strict_json((backup / 'profile.json').read_text(encoding='utf-8')) != profile.config():
                 raise WorkspaceError('migration_source_changed')
             reader = raw_connection(backup / 'management.sqlite3', readonly=True)
             try:
-                facts = tasks.table_facts(reader, 2)
+                facts = tasks.table_facts(reader, version)
             finally:
                 reader.close()
             connection = raw_connection(profile.store.path)
             connection.execute('BEGIN EXCLUSIVE')
-            tasks.validate_schema(connection, 2)
-            if tasks.table_facts(connection, 2) != facts or config_digest(profile) != config_hash:
+            tasks.validate_schema(connection, version)
+            if tasks.table_facts(connection, version) != facts or config_digest(profile) != config_hash:
                 raise WorkspaceError('migration_source_changed')
             row = connection.execute('SELECT migration_json FROM task_center_meta').fetchone()[0]
             connection.execute('ROLLBACK')  # Read-only preservation checkpoint, no downgrade DDL.
-            return {'status': 'preserved', 'schema_version': 2, 'backup': str(backup),
+            return {'status': 'preserved', 'schema_version': version, 'backup': str(backup),
                     'backup_sha256': digest(backup / 'manifest.json'), 'facts': facts,
                     'original_migration': json.loads(row) if row is not None else None}
         except Exception as error:
@@ -207,8 +393,8 @@ def migration_status(data_dir):
     try:
         version = connection.execute('PRAGMA user_version').fetchone()[0]
         tasks.validate_schema(connection, version)
-        return {'status': 'migration_required' if version == 1 else 'current', 'schema_version': version,
-                'next_command': 'migrate-tasks' if version == 1 else None}
+        return {'status': 'migration_required' if version in (1, 2, 3, 4, 5, 6, 7, 8) else 'current', 'schema_version': version,
+                'next_command': 'migrate-tasks' if version in (1, 2, 3, 4, 5, 6, 7, 8) else None}
     except (sqlite3.Error, WorkspaceError) as error:
         raise _failure(error, 'status', None) from error
     finally:

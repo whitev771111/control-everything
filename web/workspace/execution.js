@@ -24,6 +24,7 @@ window.WorkspaceExecution = (() => {
   const locked = () => attempt && ['sending', 'unknown', 'not_recorded'].includes(attempt.state);
   const canAct = () => capability?.available === true && capability?.is_owner === true;
   const reasonText = value => reasonNames[value] || (value ? `原因：${value}` : '尚无更多说明');
+  function resetConfirmation() { $('execution-confirm').checked = false; }
   function remember() {
     try {
       if (attempt) sessionStorage.setItem(storageKey, JSON.stringify({ request_id: attempt.request_id, task_id: attempt.task_id }));
@@ -49,6 +50,7 @@ window.WorkspaceExecution = (() => {
   function updateForm() {
     const held = Boolean(locked() || attempt?.state === 'admitted');
     $('execution-prompt').disabled = held;
+    $('execution-confirm').disabled = held || !contextReady || !canAct();
     $('execution-submit').disabled = !contextReady || held || !canAct();
     $('execution-context-refresh').disabled = held;
     $('execution-recovery').hidden = !attempt;
@@ -71,6 +73,7 @@ window.WorkspaceExecution = (() => {
       (error.status === 409 && ['context_changed', 'project_busy', 'capacity_busy', 'other_instance'].includes(error.reason));
   }
   async function prepare(taskId) {
+    resetConfirmation();
     const version = ++contextVersion;
     contextTask = taskId; contextReady = false; context = null;
     $('execution-form').hidden = false;
@@ -118,6 +121,7 @@ window.WorkspaceExecution = (() => {
     try { acceptReceipt(await deps.post(`${base}/runs`, attempt.body)); }
     catch (error) {
       if (definitive(error) || error.reason === 'csrf_unavailable') {
+        resetConfirmation();
         attempt = null; remember(); updateForm();
         if (error.status === 409 && error.reason === 'context_changed') {
           await prepare(contextTask);
@@ -132,6 +136,9 @@ window.WorkspaceExecution = (() => {
     if (locked()) return lookupAttempt();
     if (attempt?.state === 'admitted') return selectRun(attempt.run_id, true);
     if (!contextReady || !canAct()) return;
+    if (!$('execution-confirm').checked) {
+      note('execution-status', '请先核对本次任务、启动目录和权限，并勾选执行确认。', true); return;
+    }
     const prompt = $('execution-prompt').value;
     if (!prompt.trim() || [...prompt].length > 4000 || new TextEncoder().encode(prompt).length > 16384) {
       note('execution-status', '请输入非空提示词，最多 4,000 字符且不超过 16 KiB。', true); return;
@@ -197,7 +204,7 @@ window.WorkspaceExecution = (() => {
       return `${indent}${detailLabels[key] || key}：${nested ? '\n' : ''}${textDetail(item, nested ? depth + 1 : depth)}`;
     }).join('\n') || '未提供';
   }
-  function renderApproval(approval) {
+  function renderApproval(approval, controls = { canAct, inFlight: actionsInFlight, decide, cancel: cancelRun }) {
     const card = node('article', 'execution-approval'); card.dataset.approvalId = approval.id;
     card.append(node('h3', '', approval.kind === 'file_change' ? '文件变更审批' : '命令执行审批'), node('p', 'section-note', approvalNames[approval.status] || '审批状态未知'));
     if (!approval.detail_complete) card.append(node('p', 'execution-warning', '详情不完整，不能允许这次操作。可拒绝或取消当前运行。'));
@@ -207,8 +214,8 @@ window.WorkspaceExecution = (() => {
       for (const [label, decision] of [['仅允许这一次', 'accept'], ['拒绝这次操作', 'decline'], ['取消当前运行', 'cancel']]) {
         const button = node('button', decision === 'accept' ? 'button primary' : 'button secondary', label);
         button.type = 'button'; button.dataset.decision = decision;
-        button.disabled = !canAct() || actionsInFlight.has(approval.id) || (decision === 'accept' && (!approval.can_accept || !approval.detail_complete));
-        button.addEventListener('click', () => decision === 'cancel' ? cancelRun() : decide(approval.id, decision)); actions.append(button);
+        button.disabled = !controls.canAct() || controls.inFlight.has(approval.id) || (decision === 'accept' && (!approval.can_accept || !approval.detail_complete));
+        button.addEventListener('click', () => decision === 'cancel' ? controls.cancel() : controls.decide(approval.id, decision)); actions.append(button);
       }
       card.append(actions);
     }
@@ -295,6 +302,7 @@ window.WorkspaceExecution = (() => {
     clearTimeout(timer); polling = true; $('execution-refresh').disabled = true;
     try {
       listing = await deps.api(base); capability = listing.capability; renderCapability(); renderIndex();
+      if (!canAct()) resetConfirmation();
       if (view === 'runs' && !document.hidden) await loadRun();
     } catch (error) { note('execution-status', `运行信息暂未更新：${error.message}。已显示的事实保留。`, true); }
     finally {
@@ -313,6 +321,7 @@ window.WorkspaceExecution = (() => {
     if (deps) return;
     deps = options;
     $('execution-form').addEventListener('submit', submitDraft);
+    $('execution-prompt').addEventListener('input', resetConfirmation);
     $('execution-context-refresh').addEventListener('click', () => { if (!locked() && !attempt && contextTask) prepare(contextTask); });
     $('execution-refresh').addEventListener('click', refresh);
     $('execution-lookup').addEventListener('click', lookupAttempt);
@@ -329,5 +338,68 @@ window.WorkspaceExecution = (() => {
     } catch { /* Invalid local receipt metadata never causes a submission. */ }
     updateForm(); if (attempt) lookupAttempt();
   }
-  return { init, openTask, onView, refresh };
+  function createTaskApprovals({ root, taskId, dispatchId, fetchJson, postJson, isCurrent,
+    onSettled = () => {}, schedule = setTimeout, unschedule = clearTimeout }) {
+    const status = node('p', 'section-note', '正在核对工具审批…'), cards = node('div');
+    root.append(node('h3', '', '工具审批'), status, cards);
+    root.setAttribute('aria-live', 'polite');
+    let timer, stopped = false, reading = false, currentRun = null, owner = false, signature = '', lastState = null;
+    const inFlight = new Set();
+    const current = () => !stopped && isCurrent();
+    const mayAct = () => owner && currentRun && activeStates.has(currentRun.state) && !currentRun.cancel_requested && current();
+    function paint(approvals) {
+      const next = JSON.stringify([approvals, mayAct(), [...inFlight]]);
+      if (next === signature) return;
+      signature = next;
+      cards.replaceChildren(...approvals.map(approval => renderApproval(approval, {
+        canAct: mayAct, inFlight, decide: (id, decision) => answer(id, decision), cancel: () => answer(null, 'cancel')
+      })));
+    }
+    async function answer(approvalId, decision) {
+      if (!mayAct() || inFlight.size) return;
+      const key = approvalId || 'cancel'; inFlight.add(key);
+      for (const button of cards.querySelectorAll('button')) button.disabled = true;
+      status.textContent = '正在登记这一次答复…';
+      try {
+        const route = `${base}/runs/${encodeURIComponent(currentRun.id)}`;
+        await postJson(approvalId ? `${route}/approvals/${encodeURIComponent(approvalId)}` : route + '/cancel', approvalId ? { decision } : {});
+        if (current()) status.textContent = '答复已登记，正在等待实际执行结果。';
+      } catch (error) {
+        if (current()) status.textContent = `答复尚未确认：${error.message}。请核对最新审批状态，不会自动重发。`;
+      } finally { inFlight.delete(key); signature = ''; if (current()) void poll(); }
+    }
+    async function poll() {
+      if (!current() || reading) return;
+      unschedule(timer); reading = true;
+      try {
+        const [receipt, listing] = await Promise.all([
+          fetchJson(`${base}?request_id=${encodeURIComponent(dispatchId)}`), fetchJson(base)
+        ]);
+        if (!current()) return;
+        if (receipt.run?.task_id !== taskId || receipt.run?.request_id !== dispatchId) throw new Error('事项与执行记录不一致，不能审批。');
+        const value = await fetchJson(`${base}/runs/${encodeURIComponent(receipt.run.id)}?after=0`);
+        if (!current()) return;
+        if (value.run?.id !== receipt.run.id || value.run?.task_id !== taskId || value.run?.request_id !== dispatchId) throw new Error('审批记录与当前事项不一致。');
+        currentRun = value.run;
+        owner = listing.capability?.available === true && listing.capability?.is_owner === true;
+        const approvals = value.approvals || [], pending = approvals.filter(row => row.status === 'pending');
+        status.textContent = pending.length ? `有 ${pending.length} 项工具操作等待你决定；请先核对下面的具体内容。${owner ? '' : '当前实例只读，不能答复。'}`
+          : currentRun.state === 'waiting_approval' ? '原生工具正在等待审批，详情尚未收到，请稍候或刷新。'
+          : activeStates.has(currentRun.state) ? '当前没有待答复的工具审批，Agent 正在执行。' : '本次运行已结束，工具审批不能再次答复。';
+        paint(approvals);
+        const settled = lastState !== null && lastState !== currentRun.state && !activeStates.has(currentRun.state);
+        lastState = currentRun.state;
+        if (settled) await onSettled();
+      } catch (error) {
+        owner = false; signature = '';
+        if (current()) { status.textContent = `工具审批暂不可用：${error.message}`; for (const button of cards.querySelectorAll('button')) button.disabled = true; }
+      } finally {
+        reading = false;
+        if (current() && (!currentRun || activeStates.has(currentRun.state))) timer = schedule(poll, 2000);
+      }
+    }
+    void poll();
+    return { refresh: poll, dispose() { stopped = true; unschedule(timer); } };
+  }
+  return { init, openTask, onView, refresh, createTaskApprovals };
 })();

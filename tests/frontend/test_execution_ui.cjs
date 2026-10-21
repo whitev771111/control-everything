@@ -55,9 +55,19 @@ function uiHarness(options = {}) {
     return list;
   };
   ui.init({ api, post: async (url, body) => { records.push({ method: 'POST', url, body }); return options.post(url, body); }, getSnapshot: () => ({ tasks: { items: [task] } }), showView: view => ui.onView(view) });
-  return { ui, nodes, get, records, task, ctx, list, storage, open: async () => { await ui.openTask(task.id); await settle(); }, submit: () => get('execution-form').fire('submit') };
+  return { ui, nodes, get, records, task, ctx, list, storage, open: async () => { await ui.openTask(task.id); await settle(); }, submit: () => { get('execution-confirm').checked = true; return get('execution-form').fire('submit'); } };
 }
 async function main() {
+  for (const enabled of [true, false, undefined, 'true']) {
+    const nodes = new Map(), calls = [];
+    const get = id => { if (!nodes.has(id)) { const el = new Element(); el.parentElement = { insertBefore() {} }; nodes.set(id, el); } return nodes.get(id); };
+    const sandbox = { document: { getElementById: get, querySelectorAll: () => [] }, window: { WorkspaceExecution: { onView: view => calls.push(view) } }, history: { replaceState() {} } };
+    vm.createContext(sandbox);
+    vm.runInContext(source.slice(0, source.indexOf('\nfunction renderStats')) + '\napp.profileMode=true;this.app=app;this.showView=showView;', sandbox);
+    sandbox.app.capabilities.execution = enabled;
+    sandbox.showView('runs');
+    check(`profile execution route requires boolean capability (${String(enabled)})`, sandbox.app.view === (enabled === true ? 'runs' : 'overview') && (enabled === true ? calls[0] === 'runs' : calls.length === 0));
+  }
   const api = apiHarness();
   for (const [status, reason] of [[400, 'invalid_request'], [404, 'task_not_found'], [409, 'context_changed'], [409, 'project_busy'], [409, 'capacity_busy'], [409, 'other_instance'], [409, 'idempotency_conflict'], [404, 'request_not_found'], [503, 'storage_unavailable']]) {
     api.fetch = async () => ({ status, ok: false, json: async () => ({ reason }) });
@@ -79,6 +89,17 @@ async function main() {
     await h.open(); h.get('execution-prompt').value = '保留草稿'; await h.submit();
     check(`definitive ${status}/${reason} unlocks draft without lookup`, !h.get('execution-prompt').disabled && !h.records.some(item => item.url.includes('?request_id=')) && h.get('execution-prompt').value === '保留草稿');
   }
+  const confirmation = uiHarness({ post: async (url, body) => ({ run: { id: randomUUID(), request_id: body.request_id } }) });
+  await confirmation.open(); await confirmation.get('execution-form').fire('submit');
+  check('preparation and unconfirmed submit never dispatch', !confirmation.get('execution-confirm').checked && !confirmation.records.some(item => item.method === 'POST'));
+  confirmation.get('execution-confirm').checked = true;
+  await confirmation.get('execution-prompt').fire('input');
+  check('editing prompt invalidates confirmation', confirmation.get('execution-confirm').checked === false);
+  confirmation.get('execution-confirm').checked = true;
+  await confirmation.get('execution-context-refresh').fire(); await settle();
+  check('refreshing context invalidates confirmation', confirmation.get('execution-confirm').checked === false);
+  await confirmation.submit(); await settle();
+  check('confirmed request is admitted once and confirmation locked', confirmation.records.filter(item => item.method === 'POST').length === 1 && confirmation.get('execution-confirm').disabled);
   let release;
   const pending = new Promise(resolve => { release = resolve; });
   const double = uiHarness({ post: async (url, body) => { await pending; return { run: { id: randomUUID(), request_id: body.request_id } }; } });

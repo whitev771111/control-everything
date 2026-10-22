@@ -38,7 +38,10 @@
     }
     function renderOverview() {
       const header = node('div', 'section-heading');
-      header.append(node('h2', '', '我的项目'), button('添加项目', () => manage(null), 'button primary'));
+      const heading = node('div', 'project-collection-heading');
+      heading.append(node('h2', '', '我的项目'));
+      if (snapshot?.projects.status === 'available') heading.append(node('span', 'project-count', String(snapshot.projects.items.filter(item => !item.archived).length)));
+      header.append(heading, button('添加项目', () => manage(null), 'button primary'));
       root.append(header);
       if (!snapshot) { root.append(blank('正在读取项目…')); return; }
       if (snapshot.projects.status !== 'available') { root.append(blank('项目读取失败，请刷新重试。')); return; }
@@ -57,7 +60,8 @@
         heading.append(title);
         if (attention(item)) heading.append(node('span', 'attention-count', `${attention(item)} 待处理`));
         card.append(heading);
-        if (item.note) card.append(node('p', 'project-note', item.note));
+        card.append(node('span', 'project-origin', origin(item)));
+        card.append(node('p', 'project-note', item.note || '在这里整理事项，查看关联的开发会话。'));
         const distribution = node('svg', 'project-distribution'); distribution.setAttribute('aria-label', '任务状态分布');
         distribution.setAttribute('viewBox', '0 0 100 6'); distribution.setAttribute('preserveAspectRatio', 'none');
         let position = 0;
@@ -68,20 +72,20 @@
           const segment = node('rect', `distribution-${state}`); segment.setAttribute('x', String(position)); segment.setAttribute('width', String(width)); segment.setAttribute('height', '6');
           segment.setAttribute('aria-label', `${label} ${count}`); distribution.append(segment); position += width;
         }
-        card.append(distribution);
+        if (item.task_counts?.total) card.append(distribution);
         const meta = node('div', 'project-card-meta');
-        meta.append(node('span', 'badge', origin(item)));
-        meta.append(node('span', '', `${item.task_counts?.total || 0} 项任务`));
+        meta.append(node('span', 'project-task-count', `${item.task_counts?.total || 0} 项任务`));
         const states = [['doing', '进行中'], ['review', '待验收'], ['blocked', '阻塞'], ['done', '完成'], ['todo', '待办']];
         const distributionLabel = states.filter(([key]) => item.task_counts?.[key]).map(([key, label]) => `${label} ${item.task_counts[key]}`).join(' · ');
         if (distributionLabel) meta.append(node('span', 'project-state-caption', distributionLabel));
         if (item.manual_recorded) meta.append(node('span', '', `人工 · ${item.state}${typeof item.percent === 'number' ? ` ${item.percent}%` : ''}`));
-        meta.append(button('进入项目 →', () => open(item.id), 'text-button'));
-        if (remove) meta.append(button('移出工作台', () => remove(item), 'text-button'));
-        card.append(meta); grid.append(card);
+        const actions = node('div', 'project-card-actions');
+        actions.append(button('进入项目 →', () => open(item.id), 'text-button'));
+        if (remove) actions.append(button('移出工作台', () => remove(item), 'text-button project-remove'));
+        card.append(meta, actions); grid.append(card);
       }
       root.append(grid);
-      const actions = node('div', 'form-actions');
+      const actions = node('div', 'form-actions project-collection-actions');
       actions.append(button('未归类事项', () => navigate('global')), button('管理与归档', () => navigate('projects')));
       actions.append(button('未归类会话', () => navigate('codex-sessions/projectless')), button('待核对会话', () => navigate('codex-sessions/unknown')));
       root.append(actions);
@@ -148,16 +152,20 @@
     function renderProject() {
       const item = project();
       if (!item) { root.append(blank(snapshot ? '项目已不存在，请从左侧重新选择。' : '正在读取项目…')); return; }
-      const header = node('div', 'section-heading');
-      header.append(node('h2', '', item.name));
-      header.append(node('span', 'badge', origin(item)));
+      const header = node('div', 'section-heading'), identity = node('div', 'project-identity'), actions = node('div', 'project-heading-actions');
+      identity.append(node('h2', '', item.name), node('span', 'project-origin', origin(item)));
       if (item.read_only || item.source?.kind === 'codex') {
-        header.append(node('span', 'badge', 'Codex · 只读'), button('来源设置', () => navigate('settings')));
-      } else header.append(button('项目设置', () => manage(item)));
-      if (remove) header.append(button('移出工作台', () => remove(item)));
+        identity.append(node('span', 'badge', 'Codex · 只读'));
+        actions.append(button('来源设置', () => navigate('settings')));
+      } else actions.append(button('项目设置', () => manage(item)));
+      if (remove) {
+        const action = button('移出工作台', () => remove(item), 'text-button project-remove');
+        action.title = '保留事项与历史，之后可重新加入';
+        actions.append(action);
+      }
+      header.append(identity, actions);
       header.setAttribute('class', 'section-heading project-heading');
       root.append(header);
-      if (remove) root.append(node('p', 'section-note', '移出保留事项与历史，之后可重新加入。'));
       const navigation = node('nav', 'project-tabs'); navigation.setAttribute('aria-label', '项目内容');
       for (const [key, label] of Object.entries(tabs)) {
         const value = button(label, () => open(item.id, key), 'project-tab');
@@ -210,11 +218,13 @@
   }
   function prepareChrome() {
     document.documentElement.dataset.theme = 'dark';
+    const toggle = document.getElementById('mobile-menu-toggle'), content = document.getElementById('workspace-navigation');
+    const setMenu = open => { toggle.setAttribute('aria-expanded', String(open)); content.dataset.open = String(open); };
+    toggle.addEventListener('click', () => setMenu(toggle.getAttribute('aria-expanded') !== 'true'));
+    content.addEventListener('click', event => { if (event.target.closest('button[data-view], .project-nav-button, a')) setMenu(false); });
     const nav = document.createElement('nav'); nav.className = 'navigation utilities-navigation'; nav.setAttribute('aria-label', '工具与设置');
     for (const name of ['agents', 'usage', 'news', 'settings']) nav.append(document.querySelector(`[data-view="${name}"]`));
     document.getElementById('project-navigation').after(nav);
-    document.querySelector('[data-view="projects"]').textContent = '项目管理';
-    document.querySelector('[data-view="settings"]').textContent = '设置与导入';
     const groups = new Map();
     for (const element of document.querySelectorAll('.form-hint, #project-identity, #profile-path')) {
       const parent = element.parentElement;

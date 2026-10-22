@@ -497,7 +497,6 @@ function setupProfile() {
 }
 function setupTaskCenter() {
   document.querySelector('[data-view="projects"]').hidden = false;
-  const navigation = document.querySelector('[data-view="tasks"]'); navigation.textContent = '全部事项';
   $('legacy-tasks').hidden = true;
   $('todos-list').closest('section').hidden = true;
   $('projects-section').querySelector('a[href="/progress"]').hidden = true;

@@ -486,6 +486,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             else:
                 value = workspace.save_task(body, update=path == "/api/workspace/tasks/update")
             return self.reply(200, value)
+        except ProfileError as error:
+            return self.profile_error(error)
         except WorkspaceError as error:
             reason = str(error)
             if self.profile() is not None and reason in {"store_busy", "storage_error"}:

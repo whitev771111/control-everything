@@ -132,6 +132,7 @@ class WorkspaceStore:
                     old = self._origin_item(connection, 'task', task_id)
                     # The legacy service includes its raw id in the validated body.
                     changes = {key: fields[key] for key in ('title', 'project_id', 'provider_id', 'state', 'session_key')}
+                    self._check_public_item_update(connection, old, changes)
                     self._update_item(connection, old, changes)
                 return dict(connection.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
         now = datetime.now(timezone.utc).isoformat()
@@ -325,7 +326,9 @@ class WorkspaceStore:
                 if not isinstance(body, dict) or set(body) != {"id"} or not isinstance(body["id"], str):
                     raise ValueError("invalid_request")
                 old = self._origin_item(connection, 'todo', body['id'])
-                self._update_item(connection, old, {'state': old['resume_state'] if old['state'] == 'done' else 'done'})
+                changes = {'state': old['resume_state'] if old['state'] == 'done' else 'done'}
+                self._check_public_item_update(connection, old, changes)
+                self._update_item(connection, old, changes)
             else:
                 if not isinstance(body, dict) or set(body) != {"text", "project_id"}:
                     raise ValueError("invalid_request")
@@ -428,6 +431,19 @@ class WorkspaceStore:
         tasks.insert_item(connection, row)
         tasks.bump_list_revision(connection)
         return row
+
+    @staticmethod
+    def _check_public_item_update(connection, current, fields):
+        # Internal execution projection and human review use their own guarded transactions.
+        protected = {'project_id', 'provider_id', 'state', 'session_key', 'assigned_agent_id'}
+        if any(key in protected and fields[key] != current[key] for key in fields):
+            managed = connection.execute(
+                "SELECT 1 FROM agent_runs ar JOIN task_dispatches d ON d.id=ar.dispatch_id "
+                "WHERE ar.task_id=? AND ar.status IN ('claimed','running','waiting_review') "
+                "AND d.delivery_mode='auto' AND d.external_ref IS NOT NULL LIMIT 1",
+                (current['id'],)).fetchone()
+            if managed is not None:
+                raise ProfileError('execution_managed_item', status=409)
 
     @staticmethod
     def _update_item(connection, old, changes, expected_revision=None):
@@ -541,15 +557,7 @@ class WorkspaceStore:
                 raise ProfileError('agent_run_conflict', status=409)
             if not isinstance(fields, dict) or not fields or set(fields) - {'title', 'project_id', 'provider_id', 'state', 'session_key', 'priority', 'focus', 'assigned_agent_id'}:
                 raise WorkspaceError('invalid_item')
-            protected = {'project_id', 'provider_id', 'state', 'session_key', 'assigned_agent_id'}
-            if any(key in protected and fields[key] != current[key] for key in fields):
-                managed = connection.execute(
-                    "SELECT 1 FROM agent_runs ar JOIN task_dispatches d ON d.id=ar.dispatch_id "
-                    "WHERE ar.task_id=? AND ar.status IN ('claimed','running','waiting_review') "
-                    "AND d.delivery_mode='auto' AND d.external_ref IS NOT NULL LIMIT 1",
-                    (item_id,)).fetchone()
-                if managed is not None:
-                    raise ProfileError('execution_managed_item', status=409)
+            self._check_public_item_update(connection, current, fields)
             if codex_project is not None:
                 if codex_project.get('id') != fields.get('project_id', current['project_id']):
                     raise ProfileError('invalid_item', 'project_id')

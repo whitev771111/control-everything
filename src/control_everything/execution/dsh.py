@@ -171,6 +171,9 @@ class DshRun:
                 return
             self._require_root()
             executable = str(self.resolver())
+            if self.cancelled:
+                self._finish("cancelled_before_send", "cancelled_before_send")
+                return
             command = os.environ.get("COMSPEC")
             if not command:
                 system_root = os.environ.get("SYSTEMROOT")
@@ -197,8 +200,12 @@ class DshRun:
                                                 command_line=command_line,
                                                 line_prefixes=("[llm-deepseek-account] ",))
             self.process.start()
-            self._update(turn_send_started=True)
-            self.process.write_text(self.record["prompt"], close=True)
+            with self.lock:
+                if self.cancelled:
+                    self._finish("cancelled_before_send", "cancelled_before_send")
+                    return
+                self._update(turn_send_started=True)
+                self.process.write_text(self.record["prompt"], close=True)
             self.event("phase", phase="started", adapter="dsh")
             while True:
                 try:
@@ -209,6 +216,8 @@ class DshRun:
                     raise
                 if message is not None:
                     self._handle(message)
+                elif self.cancelled:
+                    break
             if self.terminal:
                 return
             if self.cancelled:
@@ -242,7 +251,8 @@ class DshRun:
             self.finalize()
 
     def interrupt(self):
-        self.cancelled = True
+        with self.lock:
+            self.cancelled = True
         try:
             if self.process is not None:
                 self.process.close(grace=0)

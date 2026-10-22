@@ -208,12 +208,98 @@ class DshProtocolTests(unittest.TestCase):
         worker.run()
         self.assertEqual(self.data(worker)['run']['state'], 'interrupted')
 
+    def test_cancelled_quiet_process_finishes_without_waiting_for_eof(self):
+        for cleanup, expected in ((True, 'verified'), (False, 'unverified')):
+            with self.subTest(cleanup=cleanup):
+                worker, process = self.worker([
+                    {'type': 'session', 'sessionId': 'cancelled-session'},
+                    {'type': 'text', 'text': 'already received'},
+                    {'type': 'file_change', 'changes': [{'path': 'fixture.txt'}]}], cleanup=cleanup)
+                process.on_read = worker.interrupt
+                original_read = process.read
+                empty_reads = []
+                def quiet_read(timeout=.1):
+                    try:
+                        return original_read(timeout)
+                    except ProcessError as error:
+                        if str(error) != 'process_eof':
+                            raise
+                        if empty_reads:
+                            raise ProcessError('fixture_poll_limit')
+                        empty_reads.append(timeout)
+                        return None
+                process.read = Mock(side_effect=quiet_read)
+                worker.run()
+                data = self.data(worker)
+                self.assertEqual((data['run']['state'], data['run']['reason'],
+                                  data['run']['cleanup_state']), ('interrupted', 'cancelled', expected))
+                self.assertTrue(worker.finished.is_set())
+                self.assertEqual(process.read.call_count, 4,
+                                 'Cancellation must stop once buffered messages have drained')
+                self.assertEqual(data['run']['thread_id'], 'cancelled-session')
+                self.assertTrue(any(event['kind'] == 'file_change' for event in data['events']))
+                self.assertTrue(any(event['kind'] == 'agent_message'
+                                    and event['payload'].get('text') == 'already received'
+                                    for event in data['events']))
+                self.assertFalse(any(event['kind'] == 'error' for event in data['events']))
+
+    def test_idle_read_without_cancellation_waits_for_later_final(self):
+        worker, process = self.worker()
+        process.read = Mock(side_effect=[None, *process.messages, ProcessError('process_eof')])
+        worker.run()
+        self.assertEqual(self.data(worker)['run']['state'], 'completed')
+        self.assertEqual(process.read.call_count, 5)
+
+    def test_interrupt_after_completion_keeps_terminal_result(self):
+        worker, _ = self.worker()
+        worker.run()
+        before = self.data(worker)['run']
+        worker.interrupt()
+        after = self.data(worker)['run']
+        self.assertEqual(before['state'], 'completed')
+        self.assertEqual(after, before)
+
+    def test_cancellation_does_not_promote_buffered_final_to_success(self):
+        worker, process = self.worker()
+        process.on_read = worker.interrupt
+        worker.run()
+        data = self.data(worker)
+        self.assertTrue(worker.final_seen)
+        self.assertEqual(worker.terminal_status, 'completed')
+        self.assertEqual(data['run']['state'], 'interrupted')
+        self.assertFalse(any(event['kind'] == 'agent_message' and event['payload'].get('final')
+                             for event in data['events']))
+
     def test_pre_send_cancellation_writes_no_prompt(self):
         worker, process = self.worker()
         worker.interrupt()
         worker.run()
         self.assertFalse(process.written)
         self.assertEqual(self.data(worker)['run']['state'], 'cancelled_before_send')
+
+    def test_cancellation_during_resolve_does_not_launch_or_send(self):
+        worker, process = self.worker()
+        def resolve():
+            worker.interrupt()
+            return 'C:/example/fixture/dsh.cmd'
+        worker.resolver = resolve
+        worker.run()
+        self.assertFalse(process.written)
+        self.assertFalse(self.launch)
+        self.assertEqual((self.data(worker)['run']['state'], self.data(worker)['run']['cleanup_state']),
+                         ('cancelled_before_send', 'verified'))
+
+    def test_cancellation_during_process_start_does_not_send(self):
+        worker, process = self.worker()
+        def start():
+            worker.interrupt()
+            return process
+        process.start = start
+        worker.run()
+        self.assertFalse(process.written)
+        self.assertFalse(self.store.get_run(worker.id)['turn_send_started'])
+        self.assertEqual((self.data(worker)['run']['state'], self.data(worker)['run']['cleanup_state']),
+                         ('cancelled_before_send', 'verified'))
 
     def actual_launcher(self, directory, *, account_diagnostic=False):
         prototype, _ = protocol.CodexExecutionTests.worker(self)

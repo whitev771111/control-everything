@@ -9,6 +9,7 @@ from setuptools.command.build_py import build_py
 WEB_ASSETS = (
     "sessions/index.html", "sessions/app.js", "sessions/style.css",
     "progress/progress.html", "progress/progress.js", "progress/progress.css",
+    "product/index.html", "product/product.css", "product/product.js",
     "workspace/workspace.html", "workspace/workspace.js", "workspace/workspace.css",
     "workspace/onboarding.js",
     "workspace/task-center.js", "workspace/project-space.js", "workspace/execution.js", "workspace/observation.js",

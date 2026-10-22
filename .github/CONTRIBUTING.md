@@ -22,7 +22,7 @@
 
 生产 Python 包只放在 `src/control_everything`，不要在根目录建立影子包。`src/control_everything/paths.py` 分别定位检出目录、包内资源和用户数据；源码模式保留旧根数据合同，安装模式不会把程序目录当数据目录。包根的四个 CLI 文件只保留模块入口，内部引用指向功能包中的真实实现，不能依赖入口转发内部符号。
 
-前端按 `web/sessions`、`web/progress`、`web/workspace` 分组；执行界面属于工作台，放在 `web/workspace/execution.js`。新增页面资源放入所属功能目录，并在 HTTP 静态白名单中显式映射。物理路径与公开 URL 分开维护：搬文件不改变 `/workspace`、`/workspace.js` 等地址，也不改变普通脚本加载顺序。
+前端按 `web/sessions`、`web/progress`、`web/workspace`、`web/product` 分组；执行界面属于工作台，放在 `web/workspace/execution.js`。产品介绍页属于 `web/product`，通过 `/product`、`/product.css`、`/product.js` 独立提供，只展示产品信息，不读取或写入管理数据。新增页面资源放入所属功能目录，并在 HTTP 静态白名单中显式映射。物理路径与公开 URL 分开维护：搬文件不改变 `/workspace`、`/workspace.js` 等地址，也不改变普通脚本加载顺序。
 
 测试按类型落位：Python 单元/合成接口测试在 `tests/backend`，纯 Node 源码与 DOM 合同在 `tests/frontend`，浏览器及协议 harness 在 `tests/e2e`，共享合成程序在 `tests/fixtures`。Python 发现入口仍是 `tests`；新增后端测试保持可递归发现。新增功能若横跨前后端，各自放入对应功能目录，并补充相应类型测试。
 
@@ -251,7 +251,7 @@ main 的远端规则仅保留防强推与防删分支，不要求 PR 或必需 C
 
 ## 源码与测试目录
 
-后端生产源码在 `src/control_everything`，业务按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 组织，安装维护归 `installation`，Win32 适配归 `platform`。前端使用原生 HTML/CSS 和普通脚本，唯一资源源码放在 `web/sessions`、`web/progress`、`web/workspace`，构建 wheel 时按 HTTP 白名单收进包内；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。公开页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`。
+后端生产源码在 `src/control_everything`，业务按 `http`、`sessions`、`workspace`、`execution`、`profiles`、`integrations` 组织，安装维护归 `installation`，Win32 适配归 `platform`。前端使用原生 HTML/CSS 和普通脚本，唯一资源源码放在 `web/sessions`、`web/progress`、`web/workspace`、`web/product`，构建 wheel 时按 HTTP 白名单收进包内；普通启动直接消费已交付 JS，无需 Node、npm 或现场编译。原有页面和资源 URL 保持不变，例如 `/workspace.js` 对应物理文件 `web/workspace/workspace.js`；独立产品介绍页 `/product` 对应 `web/product/index.html`。
 
 本机观察与每日资讯分别以 `web/workspace/observation.ts`、`news.ts` 和邻近类型声明为手写源码，两个 JS 为同一固定 TypeScript 5.9.3 的生成物；其他模块继续手写 JS。修改对应 TS 后运行 `node tools/scripts/build_observation.cjs build` 或 `node tools/scripts/build_news.cjs build`，连同生成 JS 提交，再用对应 `check` 比较完整字节；不要手改生成物。Node24/项目内固定工具的显式准备、缺工具失败与全部验证命令见[观察前端 TypeScript 开发](CONTRIBUTING.md#观察前端-typescript-开发)。原 URL 和普通脚本相对顺序保留，新 `/news.js` 在页面主脚本前加载，不增加常驻 Node 服务。
 

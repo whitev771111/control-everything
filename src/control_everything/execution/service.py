@@ -662,13 +662,14 @@ class ExecutionService:
                 self._project(run["id"])
                 return
             adapter = self._run_adapter(run)
+            run_policy = json.loads(run.get("effective_policy_json") or "{}").get("policy") or self.policy
             if adapter == "dsh":
                 factory = self._custom_worker or self._dsh_worker_factory
                 dsh_runtime = self.dsh_runtime
                 if dsh_runtime is None and getattr(self.workspace.store, "profile", False):
                     dsh_runtime = self._dsh_runtime_for_run(run)
                 worker = factory(store=self.store, run=run, owner_id=self.owner_id,
-                                 validate_root=self.validate_root, policy=self.policy,
+                                 validate_root=self.validate_root, policy=run_policy,
                                  **({"resolver": self._dsh_resolver} if self._dsh_resolver is not None else {}),
                                  **({"runtime": dsh_runtime} if dsh_runtime is not None else {}))
             else:
@@ -679,7 +680,7 @@ class ExecutionService:
                     from control_everything.execution.runtime import build_runtime
                     codex_runtime = build_runtime(self.workspace.profile, create=True)
                 worker = factory(store=self.store, run=run, owner_id=self.owner_id,
-                                 validate_root=self.validate_root, policy=self.policy, resolver=self._resolver,
+                                 validate_root=self.validate_root, policy=run_policy, resolver=self._resolver,
                                  **({"runtime": codex_runtime} if codex_runtime is not None else {}))
             thread = threading.Thread(target=self._run_worker, args=(run["id"], worker),
                                       name="workspace-run-" + run["id"], daemon=True)

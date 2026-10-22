@@ -1,4 +1,4 @@
-"""Isolated DSH headless account, permission, and network description."""
+"""DSH headless native configuration and permission policy description."""
 
 import hashlib
 import os
@@ -6,25 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 import threading
 
-AUTH_MODE = "desktop-account"
-PROVIDER = "deepseek-account"
-MODEL = "deepseek-flash"
-RUNTIME_VERSION = "dsh-headless-v2"
+AUTH_MODE = "native-config"
+RUNTIME_VERSION = "dsh-headless-v3"
 PERMISSIONS = ("read-only", "workspace-write", "danger-full-access")
 NETWORKS = ("allowed", "denied")
 APPROVALS = ("request_user", "deny", "never")
 
-_BASE_OVERLAY = """- id: credentials
-  disabled: false
-- id: authorization
-  disabled: false
-- id: deepseek-account
-  disabled: false
-- id: agent-default-model
-  config:
-    provider: deepseek-account
-    model: deepseek-flash
-"""
 _PUBLISH_LOCK = threading.Lock()
 
 
@@ -34,8 +21,8 @@ class DshRuntimeDescription:
     overlay_sha256: str
     home_identity: str
     auth_mode: str
-    provider: str
-    model: str
+    provider: str | None
+    model: str | None
     permission: str
     network: str
     approval: str
@@ -62,7 +49,7 @@ def _overlay(permission, approval):
         raise ValueError("invalid_permission")
     approval_policy = "never" if permission == "danger-full-access" else (
         "ask" if approval == "request_user" else "never")
-    return _BASE_OVERLAY + (
+    return (
         "- id: sandbox-policy\n"
         f"  config:\n    mode: {permission}\n"
         "- id: approval\n"
@@ -95,8 +82,8 @@ def build_dsh_runtime(profile, *, create=False, permission="workspace-write",
             overlay_sha256=digest,
             home_identity=_home_identity(),
             auth_mode=AUTH_MODE,
-            provider=PROVIDER,
-            model=MODEL,
+            provider=None,
+            model=None,
             permission=permission,
             network=network,
             approval=effective_approval,

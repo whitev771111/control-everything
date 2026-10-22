@@ -148,6 +148,20 @@ async function main() {
       ? message.includes('账号认证未就绪，请在原生工具中核对登录状态和账号认证配置后重新发起运行') && !message.includes('已登录') && !message.includes('未登录')
       : message.includes('原因：native_error') && !message.includes('账号认证未就绪'));
   }
+  for (const [authMode, model] of [['native-config', null], ['native-config', 'fixture-model-alias'], ['desktop-account', null]]) {
+    const modelRun = { id: randomUUID(), state: 'completed', model,
+      effective_policy: { dsh_runtime: { auth_mode: authMode, provider: null, model: null } } };
+    const h = uiHarness({ detail: { run: modelRun, approvals: [], events: [], next_cursor: 0 } });
+    h.list.runs = [modelRun];
+    h.ui.onView('runs'); await settle();
+    h.get('execution-history').children[0].fire(); await settle();
+    const rows = new Map(h.get('execution-run-meta').children.map(row => row.children.map(cell => cell.textContent)));
+    check(`${authMode}/${model} preserves actual model or honest unknown`, rows.get('实际模型') ===
+      (model ?? (authMode === 'native-config' ? '未知（原生运行未返回）' : '尚未提供')));
+    check(`${authMode}/${model} labels only native configuration receipts`, authMode === 'native-config'
+      ? rows.get('模型配置来源') === 'DSH headless 原生配置；provider/model 启动前未探测'
+      : !rows.has('模型配置来源'));
+  }
   check('execution is loaded before workspace and has guarded bootstrap/view wiring', fs.readFileSync(path.join(root, 'web/workspace/workspace.html'), 'utf8').indexOf('/execution.js') < fs.readFileSync(path.join(root, 'web/workspace/workspace.html'), 'utf8').indexOf('/workspace.js') && source.includes('window.WorkspaceExecution?.init') && source.includes('window.WorkspaceExecution?.onView'));
   check('Agent output never uses HTML sinks', !/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(executionSource));
 }

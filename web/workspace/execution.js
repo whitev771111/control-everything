@@ -226,7 +226,11 @@ window.WorkspaceExecution = (() => {
     setText('execution-run-title', run.task_title || '运行详情');
     const cleanup = run.cleanup_state === 'verified' ? '所属进程清理已确认' : run.cleanup_state === 'unverified' ? '所属进程清理未确认，该目录仍被占用' : '等待确认所属进程清理';
     setText('execution-run-state', `${stateNames[run.state] || '状态未知'} · ${cleanup}${run.cancel_requested && run.state === 'completed' ? ' · 结束先于取消生效' : ''}${run.reason ? ` · ${reasonText(run.reason)}` : ''}`);
-    facts('execution-run-meta', [['项目', run.project_name], ['启动目录', run.cwd], ['实际模型', run.model], ['Thread', run.thread_id], ['Turn', run.turn_id], ['创建时间（北京时间）', stamp(run.created_at)], ['权限模式', run.mode]]);
+    const nativeDsh = run.effective_policy?.dsh_runtime?.auth_mode === 'native-config';
+    const model = run.model ?? (nativeDsh ? '未知（原生运行未返回）' : undefined);
+    facts('execution-run-meta', [['项目', run.project_name], ['启动目录', run.cwd], ['实际模型', model],
+      ...(nativeDsh ? [['模型配置来源', 'DSH headless 原生配置；provider/model 启动前未探测']] : []),
+      ['Thread', run.thread_id], ['Turn', run.turn_id], ['创建时间（北京时间）', stamp(run.created_at)], ['权限模式', run.mode]]);
     setText('execution-run-policy', `本次有效策略：${run.effective_policy ? textDetail(run.effective_policy) : '尚未收到核对结果'}。本机独立 MCP 与 managed 设置可能继承；外部工具有独立权限边界。`);
     const tokens = run.token_usage;
     setText('execution-token', tokens ? `本工作台本次运行官方通知 · ${textDetail(tokens)} · 采样 ${stamp(run.token_observed_at)}。这是最新累计快照，不是每日用量或费用。` : '本工作台本次运行官方 Token 通知：尚未收到；不代表用量为零。');

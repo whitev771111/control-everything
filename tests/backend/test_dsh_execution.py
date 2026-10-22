@@ -1,5 +1,6 @@
 """DSH protocol and dispatch contracts using disposable stores and fake processes."""
 import copy
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ from control_everything.execution.dsh_runtime import build_dsh_runtime
 from control_everything.execution.service import ExecutionService
 from control_everything.execution.store import ExecutionStore
 from control_everything.input_validation import ProfileError
+from control_everything.workspace.store import WorkspaceError
 from tests.backend import test_codex_execution as protocol
 from tests.backend import test_dispatch_admission as admission
 from tests.backend.test_execution_store import FakeOwner, HoldingWorker
@@ -270,11 +272,64 @@ class DshDispatchTests(unittest.TestCase):
         self.assertEqual(json.loads(result['run']['effective_policy_json'])['adapter'], 'dsh')
         self.assertFalse((self.profile.data_dir/'agent-runtime'/'codex').exists())
 
-    def test_confirmed_account_runtime_is_persisted_in_execution_ledger(self):
+    def test_confirmed_native_runtime_is_persisted_and_rechecked_before_start(self):
         expected = self.context()['dsh_runtime']
+        self.assertEqual((expected['auth_mode'], expected['provider'], expected['model'],
+                          expected['policy_version']),
+                         ('native-config', None, None, 'dsh-headless-v3'))
         receipt = self.admit()
         policy = json.loads(receipt['run']['effective_policy_json'])
         self.assertEqual(policy.get('dsh_runtime'), expected)
+        service = ExecutionService(self.service, store=self.ledger, owner_factory=lambda _: FakeOwner(None),
+            job_query=lambda _: True, platform='win32', codex_required=False,
+            dsh_worker_factory=HoldingWorker)
+        self.addCleanup(service.close)
+        self.assertTrue(service.validate_root(receipt['run']))
+        self.assertEqual(service._dsh_runtime_for_run(receipt['run']).public(), expected)
+
+    def test_old_fixed_account_confirmation_cannot_start_native_config_worker(self):
+        factory = Mock()
+        service = ExecutionService(self.service, store=self.ledger, owner_factory=lambda _: FakeOwner(None),
+            job_query=lambda _: True, platform='win32', codex_required=False, dsh_worker_factory=factory)
+        self.addCleanup(service.close)
+        legacy = replace(build_dsh_runtime(self.profile), auth_mode='desktop-account',
+                         provider='deepseek-account', model='deepseek-flash',
+                         policy_version='dsh-headless-v2')
+        with patch('control_everything.execution.dsh_runtime.build_dsh_runtime', return_value=legacy):
+            body = {'confirmed': True, 'context_hash': self.context()['context_hash']}
+        before = self.dump()
+        with self.assertRaises(ProfileError) as error:
+            self.admit(body=body)
+        self.assertEqual(error.exception.reason, 'context_changed')
+        self.assertEqual(self.dump(), before)
+        with patch('control_everything.execution.dsh_runtime.build_dsh_runtime', return_value=legacy):
+            receipt = self.admit(body=body)
+        run = receipt['run']
+        self.assertFalse(service.validate_root(run))
+        with self.assertRaises(WorkspaceError) as error:
+            service._dsh_runtime_for_run(run)
+        self.assertEqual(str(error.exception), 'context_changed')
+        service._start_worker(run)
+        factory.assert_not_called()
+        stored = self.ledger.get_run(run['id'])
+        self.assertEqual((stored['state'], stored['reason'], stored['cleanup_state']),
+                         ('failed', 'context_changed', 'verified'))
+        self.assertEqual(stored['effective_policy_json'], run['effective_policy_json'])
+
+    def test_tampered_native_policy_artifact_cannot_start_worker(self):
+        factory = Mock()
+        service = ExecutionService(self.service, store=self.ledger, owner_factory=lambda _: FakeOwner(None),
+            job_query=lambda _: True, platform='win32', codex_required=False, dsh_worker_factory=factory)
+        self.addCleanup(service.close)
+        run = self.admit()['run']
+        artifact = service._dsh_runtime_for_run(run).overlay_path
+        artifact.write_text('invalid fixture overlay', encoding='utf8')
+        service._start_worker(run)
+        factory.assert_not_called()
+        stored = self.ledger.get_run(run['id'])
+        self.assertEqual((stored['state'], stored['reason'], stored['cleanup_state']),
+                         ('failed', 'worker_start_failed', 'verified'))
+        self.assertEqual(artifact.read_text(encoding='utf8'), 'invalid fixture overlay')
 
     def test_home_change_before_admission_rejects_old_confirmation(self):
         with patch.dict(os.environ, {'DSH_HOME': str(self.root/'different-dsh-home')}):
@@ -290,7 +345,10 @@ class DshDispatchTests(unittest.TestCase):
         self.addCleanup(service.close)
         with patch.dict(os.environ, {'DSH_HOME': str(self.root/'different-dsh-home')}):
             self.assertFalse(service.validate_root(receipt['run']),
-                             'A confirmed account home must not change before the process starts')
+                             'A confirmed native home must not change before the process starts')
+            with self.assertRaises(WorkspaceError) as error:
+                service._dsh_runtime_for_run(receipt['run'])
+            self.assertEqual(str(error.exception), 'context_changed')
 
     def test_file_task_is_admitted_under_confirmed_sandbox_policy(self):
         self.update('task_dispatches', self.dispatch['id'], content_text='Write report.md in the project directory.')

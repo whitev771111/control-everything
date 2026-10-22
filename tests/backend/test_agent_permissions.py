@@ -1,5 +1,6 @@
 """Permission snapshot, admission, and runtime isolation contracts for stage A."""
 import json
+import re
 import sys
 from pathlib import Path
 import tempfile
@@ -18,6 +19,28 @@ from tests.backend.test_execution_store import FakeOwner, HoldingWorker
 
 
 class RuntimeArtifactTests(unittest.TestCase):
+    def test_native_model_configuration_is_not_overridden_by_permission_patch(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = SimpleNamespace(data_dir=Path(root))
+            for permission in ('read-only', 'workspace-write', 'danger-full-access'):
+                for approval in ('request_user', 'deny', 'never'):
+                    with self.subTest(permission=permission, approval=approval):
+                        runtime = build_dsh_runtime(profile, create=True,
+                                                    permission=permission, approval=approval)
+                        content = runtime.overlay_path.read_text(encoding='utf8')
+                        self.assertEqual(re.findall(r'^- id: (.+)$', content, re.MULTILINE),
+                                         ['sandbox-policy', 'approval'])
+                        self.assertIn('mode: '+permission, content)
+                        policy = 'ask' if permission != 'danger-full-access' and approval == 'request_user' else 'never'
+                        self.assertIn('policy: '+policy, content)
+                        public = runtime.public()
+                        self.assertEqual(set(public), {'auth_mode', 'provider', 'model', 'overlay_sha256',
+                                                      'home_identity', 'permission', 'network',
+                                                      'approval', 'policy_version'})
+                        self.assertEqual((public['auth_mode'], public['provider'], public['model'],
+                                          public['policy_version']),
+                                         ('native-config', None, None, 'dsh-headless-v3'))
+
     def test_preparing_another_permission_cannot_change_an_existing_overlay(self):
         with tempfile.TemporaryDirectory() as root:
             profile = SimpleNamespace(data_dir=Path(root))

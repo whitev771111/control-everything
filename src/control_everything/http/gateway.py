@@ -676,10 +676,11 @@ class PanelHandler(BaseHTTPRequestHandler):
         status = (404 if reason in {"task_not_found", "run_not_found"} else
                   403 if reason in {"not_assigned", "project_forbidden"} else
                   409 if reason in {"run_conflict", "run_mismatch", "item_changed", "review_not_ready",
-                                    "review_already_submitted"} else 422)
+                                    "review_already_submitted", "execution_managed_run", "execution_link_conflict"} else 422)
         self.reject(status, reason if reason in {
             "task_not_found", "run_not_found", "run_mismatch", "not_assigned", "project_forbidden", "run_conflict",
-            "item_changed", "review_not_ready", "review_already_submitted", "invalid_agent_request"} else "invalid_agent_request")
+            "item_changed", "review_not_ready", "review_already_submitted", "invalid_agent_request",
+            "execution_managed_run", "execution_link_conflict"} else "invalid_agent_request")
 
     def agent_get(self, path):
         agent = self.authenticated_agent()

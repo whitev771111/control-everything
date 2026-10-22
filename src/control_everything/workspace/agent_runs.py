@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from control_everything.input_validation import ProfileError
 from control_everything.workspace.store import WorkspaceError, now_utc
 from control_everything.workspace.task_schema import MAX_REVISION, STATES
 from control_everything.workspace.dispatch import link_claim
@@ -482,6 +483,7 @@ def progress(store, agent_id, task_id, expected_revision, stage, percent=None, m
 
 def cancel_run(store, task_id, expected_revision, reason):
     """Human release; it does not terminate any external process."""
+    from control_everything.workspace import dispatch as dispatch_module
     reason = _text(reason, "reason", 1000)
     if type(expected_revision) is not int or not 1 <= expected_revision <= MAX_REVISION:
         raise WorkspaceError("invalid_agent_request")
@@ -493,15 +495,40 @@ def cancel_run(store, task_id, expected_revision, reason):
         run = _active_run(connection, task_id)
         if run is None:
             raise WorkspaceError("run_not_found")
-        if _execution_managed(connection, run):
-            raise WorkspaceError("execution_managed_run")
+        payload = {"reason": "human_cancelled", "detail": reason}
+        managed = connection.execute(
+            "SELECT d.* FROM task_dispatches d WHERE (d.id=? OR d.run_id=?) "
+            "AND ((d.delivery_mode='auto' AND d.external_ref IS NOT NULL) "
+            "OR EXISTS(SELECT 1 FROM execution_runs e WHERE e.request_id=d.id))",
+            (run["dispatch_id"], run["id"])).fetchall()
+        if managed:
+            if len(managed) != 1 or managed[0]["delivery_mode"] != "auto":
+                raise WorkspaceError("execution_link_conflict")
+            dispatch = managed[0]
+            try:
+                binding = dispatch_module.execution_binding(
+                    connection, dispatch_id=dispatch["id"],
+                    execution_run_id=dispatch["external_ref"], task_id=task_id)
+            except ProfileError as error:
+                raise WorkspaceError("execution_link_conflict") from error
+            execution = connection.execute("SELECT * FROM execution_runs WHERE id=?",
+                                           (dispatch["external_ref"],)).fetchone()
+            if (binding["agent_run_id"] != run["id"] or execution is None
+                    or execution["request_id"] != dispatch["id"] or execution["task_id"] != task_id
+                    or execution["project_id"] != dispatch["project_id"]
+                    or item["project_id"] != dispatch["project_id"]
+                    or item["assigned_agent_id"] != dispatch["agent_id"]):
+                raise WorkspaceError("execution_link_conflict")
+            if execution["state"] != "unknown" or execution["cleanup_state"] != "verified":
+                raise WorkspaceError("execution_managed_run")
+            # Release only the business claim; preserve the unknown execution and delivery facts.
+            payload.update(reason="human_released_unknown", execution_run_id=execution["id"])
         stamp = now_utc()
         connection.execute("UPDATE agent_runs SET status='cancelled', ended_at=?, heartbeat_at=? WHERE id=?",
                            (stamp, stamp, run["id"]))
         if item["state"] in ("doing", "blocked", "review"):
             item = store._update_item(connection, item, {"state": "todo"}, expected_revision)
-        _event(connection, task_id, run["id"], "failed",
-               {"reason": "human_cancelled", "detail": reason})
+        _event(connection, task_id, run["id"], "failed", payload)
         return {"item": item, "run": _run_view(_latest_run(connection, task_id))}
 
 

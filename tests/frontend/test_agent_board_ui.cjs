@@ -362,6 +362,23 @@ test('closed runs cannot show an outstanding authorization from old progress or 
   assert.equal(f.root.querySelector('#ab-waiting-user'), null); assert.equal(f.root.querySelector('#ab-release-submit'), null);
 });
 
+test('managed release rejection explains why the run cannot be released and retains the reason', async () => {
+  for (const [reason, message] of [
+    ['execution_managed_run', /执行仍在运行或清理尚未核验/],
+    ['execution_link_conflict', /执行关联不一致/]
+  ]) {
+    const row = item('release', { state: 'blocked' });
+    const f = fixture({ rows: [row], detail: { item: row, run: { status: 'running' }, events: [] } });
+    await f.api.load(); await f.api.open(row);
+    f.state.failPost = true; f.state.postError = Object.assign(new Error('HTTP 409'), { reason });
+    f.node('ab-release-reason').value = 'Retain the cleanup evidence'; f.node('ab-release-confirm').checked = true;
+    await f.node('ab-release-submit').parentElement.parentElement.listeners.submit({ preventDefault() {} });
+    assert.match(f.node('ab-feedback').textContent, message);
+    assert.equal(f.node('ab-release-reason').value, 'Retain the cleanup evidence');
+    assert.equal(f.posts.length, 1); assert.equal(f.node('ab-detail').open, true);
+  }
+});
+
 test('404 detail never fabricates progress or output, nor permits unsafe reassignment', async () => {
   const row = item('missing', { assigned_agent_id: 'a', assignment_state: 'assigned' });
   const f = fixture({ rows: [row], detail: new Error('404 not found') }); await f.api.load(); await f.api.open(row);

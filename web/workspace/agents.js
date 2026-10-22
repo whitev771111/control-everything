@@ -526,6 +526,7 @@ window.WorkspaceAgentBoard = (() => {
     const field = (text, control) => { const node = el('label', 'field', text); node.append(control); return node; };
     const when = value => { const time = Date.parse(value); return Number.isFinite(time) ? new Date(time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '未上报'; };
     const failureReason = error => ({ item_changed: '事项已被其他窗口更新', agent_run_conflict: 'Agent 已领取或正在等待审核，不能改派', review_already_submitted: 'Agent 已提交审核，请读取最新材料', run_not_found: '本次运行已结束或不可用，请读取最新状态',
+      execution_managed_run: '执行仍在运行或清理尚未核验，请先在运行页核对；只有结果未知且清理已核验的执行可人工释放', execution_link_conflict: '执行关联不一致，无法释放；请核对最新运行记录',
       project_busy: '同一项目目录还有任务运行或等待审批，请处理完后再点击执行', capacity_busy: '运行名额已满，请等其他任务结束后再点击执行',
       project_required: '请先为待办选择项目，Agent 需要明确的执行目录', execution_unavailable: '执行服务尚未就绪，请核对服务状态' }[error.reason] || error.message);
     const canExecute = agent => agent?.enabled && ['dsh', 'codex'].includes(agent.adapter)

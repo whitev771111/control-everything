@@ -137,6 +137,17 @@ async function main() {
   detail.approvals[1].detail.reason = '另一张卡片更新'; await cards.ui.refresh();
   check('unchanged approval DOM is retained when another approval changes', cards.get('execution-approvals').children[0] === firstCard);
   check('Chinese detail labels preserve exact command and diff text', firstCard.children[2].textContent.includes('命令：echo <unsafe>') && cards.get('execution-approvals').children[1].children[3].textContent.includes('变更内容：+ exact diff'));
+  for (const reason of ['login_required', 'native_error']) {
+    const failedRun = { id: randomUUID(), task_title: '原生运行失败', state: 'failed', reason, cleanup_state: 'verified' };
+    const failed = uiHarness({ detail: { run: failedRun, approvals: [], events: [], next_cursor: 0 } });
+    failed.list.runs = [failedRun];
+    failed.ui.onView('runs'); await settle();
+    failed.get('execution-history').children[0].fire(); await settle();
+    const message = failed.get('execution-run-state').textContent;
+    check(`native failure ${reason} keeps an accurate Chinese explanation`, reason === 'login_required'
+      ? message.includes('账号认证未就绪，请在原生工具中核对登录状态和账号认证配置后重新发起运行') && !message.includes('已登录') && !message.includes('未登录')
+      : message.includes('原因：native_error') && !message.includes('账号认证未就绪'));
+  }
   check('execution is loaded before workspace and has guarded bootstrap/view wiring', fs.readFileSync(path.join(root, 'web/workspace/workspace.html'), 'utf8').indexOf('/execution.js') < fs.readFileSync(path.join(root, 'web/workspace/workspace.html'), 'utf8').indexOf('/workspace.js') && source.includes('window.WorkspaceExecution?.init') && source.includes('window.WorkspaceExecution?.onView'));
   check('Agent output never uses HTML sinks', !/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(executionSource));
 }

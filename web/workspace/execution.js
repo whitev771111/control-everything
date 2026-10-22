@@ -6,7 +6,7 @@ window.WorkspaceExecution = (() => {
   const stateNames = { starting: '正在准备', running: '运行中', waiting_approval: '等待具体审批', cancel_requested: '已请求取消，等待结果', cancelled_before_send: '发送前已取消', completed: '本次运行已结束，待你验收', interrupted: '本次运行已中断', failed: '本次运行失败', unknown: '本次运行结果未知' };
   const approvalNames = { pending: '等待答复', queued: '答复已登记', sending: '正在发送答复', sent: '答复已发送，等待操作结果', resolved: '审批已结束', expired: '审批已过期', unknown: '答复结果未知' };
   const eventNames = { phase: '运行阶段', agent_message: 'Codex 消息', command: '命令与输出', file_change: '文件变更', approval: '审批', error: '运行错误', token_usage: 'Token 通知', turn_finished: '运行结束通知', cleanup: '进程清理' };
-  const reasonNames = { other_instance: '由另一个工作台实例持有，此处只读', platform_unsupported: '当前主机不支持执行', native_cli_not_found: '没有找到可用的 Codex 原生程序', execution_unavailable: '执行服务尚未就绪', storage_unavailable: '本地记录暂时不可用', cleanup_unverified: '所属进程清理尚未确认', policy_mismatch: '有效权限策略未通过核对', config_mismatch: '本次配置未通过核对' };
+  const reasonNames = { other_instance: '由另一个工作台实例持有，此处只读', platform_unsupported: '当前主机不支持执行', native_cli_not_found: '没有找到可用的 Codex 原生程序', execution_unavailable: '执行服务尚未就绪', storage_unavailable: '本地记录暂时不可用', cleanup_unverified: '所属进程清理尚未确认', policy_mismatch: '有效权限策略未通过核对', config_mismatch: '本次配置未通过核对', login_required: '账号认证未就绪，请在原生工具中核对登录状态和账号认证配置后重新发起运行' };
   const $ = id => document.getElementById(id);
   let deps, view = '', timer, polling = false, refreshPending = false;
   let capability = null, listing = null, context = null, contextReady = false, contextVersion = 0, contextTask = null;

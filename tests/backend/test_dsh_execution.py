@@ -158,6 +158,43 @@ class DshProtocolTests(unittest.TestCase):
         worker.run()
         self.assertNotEqual(self.data(worker)['run']['state'], 'completed')
 
+    def test_native_login_errors_keep_login_reason_for_any_exit_code(self):
+        for error_code in ('MISSING_CREDENTIAL', 'ACCOUNT_SIGN_IN_REQUIRED'):
+            for exit_code in (0, 7):
+                with self.subTest(error_code=error_code, exit_code=exit_code):
+                    worker, _ = self.worker([
+                        {'type': 'status', 'phase': 'turn_end', 'reason': {'kind': 'error',
+                            'error': {'code': error_code, 'message': 'fixture sign-in required'}}},
+                        {'type': 'final', 'text': 'Partial answer'}], code=exit_code)
+                    worker.run()
+                    data = self.data(worker)
+                    row = data['run']
+                    self.assertEqual((row['state'], row['reason'], row['cleanup_state']),
+                                     ('failed', 'login_required', 'verified'))
+                    self.assertEqual(worker.auth_status, 'login_required')
+                    self.assertTrue(any(event['kind'] == 'phase'
+                                        and event['payload'].get('phase') == 'auth'
+                                        and event['payload'].get('status') == 'login_required'
+                                        for event in data['events']))
+
+    def test_unrelated_native_errors_keep_native_failure_reason(self):
+        for error_code in ('fixture_error', 'ACCOUNT_QUOTA', 'ACCOUNT_TOKEN_INVALID', None):
+            for exit_code, reason in ((0, 'native_error'), (7, 'native_exit_failed')):
+                with self.subTest(error_code=error_code, exit_code=exit_code):
+                    worker, _ = self.worker([
+                        {'type': 'status', 'phase': 'turn_end', 'reason': {'kind': 'error',
+                            'error': {'code': error_code, 'message': 'fixture failure'}}},
+                        {'type': 'final', 'text': 'Partial answer'}], code=exit_code)
+                    worker.run()
+                    data = self.data(worker)
+                    row = data['run']
+                    self.assertEqual((row['state'], row['reason'], row['cleanup_state']),
+                                     ('failed', reason, 'verified'))
+                    self.assertNotEqual(worker.auth_status, 'login_required')
+                    self.assertFalse(any(event['kind'] == 'phase'
+                                         and event['payload'].get('status') == 'login_required'
+                                         for event in data['events']))
+
     def test_cleanup_failure_remains_unverified(self):
         worker, _ = self.worker(cleanup=False)
         worker.run()

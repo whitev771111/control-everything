@@ -119,7 +119,7 @@ class DshRun:
                         self.native_error = True
                         error = reason.get("error") if isinstance(reason, dict) else None
                         code = error.get("code") if isinstance(error, dict) else None
-                        if code == "MISSING_CREDENTIAL":
+                        if code in ("MISSING_CREDENTIAL", "ACCOUNT_SIGN_IN_REQUIRED"):
                             self.auth_status = "login_required"
                             self.event("phase", phase="auth", status="login_required")
                         elif code:

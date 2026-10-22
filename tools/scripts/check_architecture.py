@@ -31,7 +31,7 @@ def ownership_error(value):
             return None if parts[2] in PACKAGE_FILES else 'package_root_is_for_entries_and_foundations'
         return None if parts[2] in PACKAGES and path.suffix == '.py' else 'unknown_backend_owner'
     if top == 'web':
-        return None if section in {'sessions', 'progress', 'workspace'} and path.suffix in {
+        return None if section in {'sessions', 'progress', 'workspace', 'product'} and path.suffix in {
             '.html', '.css', '.js', '.ts'} else 'unknown_frontend_owner'
     if top == 'tests':
         return None if value == 'tests/__init__.py' or section in {

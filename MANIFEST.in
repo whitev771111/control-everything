@@ -5,6 +5,7 @@ include tools/packaging/requirements.txt
 recursive-include src/control_everything *.py
 include web/sessions/index.html web/sessions/app.js web/sessions/style.css
 include web/progress/progress.html web/progress/progress.js web/progress/progress.css
+include web/product/index.html web/product/product.css web/product/product.js
 include web/workspace/workspace.html web/workspace/workspace.js web/workspace/workspace.css
 include web/workspace/onboarding.js
 include web/workspace/agents.js

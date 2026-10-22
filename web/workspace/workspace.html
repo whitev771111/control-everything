@@ -16,26 +16,40 @@
   <script src="/workspace.js" defer></script>
 </head>
 <body>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="icon-workspace" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18M9 9h12"/></symbol>
+    <symbol id="icon-inbox" viewBox="0 0 24 24"><path d="m4 4-2 10v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5L20 4ZM2 14h6l2 3h4l2-3h6"/></symbol>
+    <symbol id="icon-list" viewBox="0 0 24 24"><path d="m3 6 1 1 2-2m3 1h12M3 12h3m3 0h12M3 18h3m3 0h12"/></symbol>
+    <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 4 12 8-12 8Z"/></symbol>
+    <symbol id="icon-tools" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3M7 9l3 2-3 2m6 0h4"/></symbol>
+    <symbol id="icon-usage" viewBox="0 0 24 24"><path d="M4 20V10m8 10V4m8 16v-7"/></symbol>
+    <symbol id="icon-news" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h4v4H7Zm8 0h2m-2 4h2M7 15h10M7 18h7"/></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></symbol>
+  </defs></svg>
   <dialog id="project-dialog" aria-label="项目设置与记录"><form method="dialog" class="dialog-toolbar"><button class="button secondary" aria-label="关闭项目设置">关闭</button></form></dialog>
   <a class="skip-link" href="#main">跳到工作区</a>
   <div class="shell">
     <aside class="sidebar">
-      <a class="brand" href="/workspace"><span class="brand-mark" aria-hidden="true">w.</span><span>Control Everything</span></a>
+      <a class="brand" href="/workspace"><span class="brand-mark" aria-hidden="true"><svg class="nav-icon"><use href="#icon-workspace"/></svg></span><span>Control Everything</span></a>
+      <button type="button" id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="workspace-navigation"><svg class="nav-icon" aria-hidden="true"><use href="#icon-list"/></svg>导航</button>
+      <div id="workspace-navigation" class="sidebar-content">
       <p class="nav-label">工作空间</p>
       <nav class="navigation" aria-label="主导航">
-        <button type="button" data-view="overview" aria-current="page"><span aria-hidden="true">◫</span>工作台</button>
-        <button type="button" data-view="attention">待处理</button>
-        <button type="button" data-view="tasks"><span aria-hidden="true">☷</span>项目任务</button>
-        <button type="button" data-view="projects" hidden><span aria-hidden="true">◫</span>项目与进度</button>
-        <button type="button" data-view="runs"><span aria-hidden="true">▷</span>运行</button>
-        <button type="button" data-view="agents">工具与接入</button>
-        <button type="button" data-view="usage"><span aria-hidden="true">◷</span>用量与额度</button>
-        <button type="button" data-view="news">新闻</button>
-        <button type="button" data-view="settings" hidden><span aria-hidden="true">⚙</span>来源与导入</button>
+        <button type="button" data-view="overview" aria-current="page"><svg class="nav-icon" aria-hidden="true"><use href="#icon-workspace"/></svg>工作台</button>
+        <button type="button" data-view="attention"><svg class="nav-icon" aria-hidden="true"><use href="#icon-inbox"/></svg>待处理</button>
+        <button type="button" data-view="tasks"><svg class="nav-icon" aria-hidden="true"><use href="#icon-list"/></svg>全部事项</button>
+        <button type="button" data-view="projects" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-folder"/></svg>项目管理</button>
+        <button type="button" data-view="runs"><svg class="nav-icon" aria-hidden="true"><use href="#icon-play"/></svg>运行</button>
+        <button type="button" data-view="agents"><svg class="nav-icon" aria-hidden="true"><use href="#icon-tools"/></svg>工具与接入</button>
+        <button type="button" data-view="usage"><svg class="nav-icon" aria-hidden="true"><use href="#icon-usage"/></svg>用量与额度</button>
+        <button type="button" data-view="news"><svg class="nav-icon" aria-hidden="true"><use href="#icon-news"/></svg>新闻</button>
+        <button type="button" data-view="settings" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-settings"/></svg>设置与导入</button>
       </nav>
       <p class="nav-label project-navigation-label">项目</p><nav id="project-navigation" class="project-navigation" aria-label="我的项目"></nav>
       <div class="sidebar-links"><p class="nav-label">已有工具</p><a href="/">会话与终端观察 <span>↗</span></a><a href="/progress">进度、待办与启动器 <span>↗</span></a></div>
       <div class="local-note"><span class="local-dot" aria-hidden="true"></span><strong>本机工作空间</strong></div>
+      </div>
     </aside>
     <dialog id="onboarding-dialog" class="onboarding-dialog" aria-labelledby="onboarding-title">
   <div class="section-heading"><h2 id="onboarding-title">添加项目</h2><button id="onboarding-close" type="button" class="button secondary">关闭</button></div>

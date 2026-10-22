@@ -302,7 +302,11 @@ window.WorkspaceTaskDispatch = (() => {
       const changedContent = result.dispatch.brief_sha256 !== expected.brief_sha256;
       clearPreview();
       await refreshHistory(); await onChanged();
-      if (expected.delivery_mode === 'auto' && result.status === 'previewed') {
+      if (expected.delivery_mode === 'auto') {
+        if (changedContent) { message('保存后的材料与预览已变化，请重新核对历史中的实际快照；尚未启动执行。'); return; }
+        if (result.dispatch.delivery_mode !== 'auto' || result.dispatch.delivery_state !== 'previewed' || result.dispatch.run_id !== null) {
+          message('已有交接快照已关联运行或状态不允许执行，请重新核对历史；本次未启动 Agent。'); return;
+        }
         const context = await fetchJson('/api/workspace/dispatches/' + encodeURIComponent(result.dispatch.id) + '/execution-context');
         if (!context?.context_hash) throw new Error('执行上下文未准备完整，请核对交接记录。');
         await postJson('/api/workspace/dispatches/' + encodeURIComponent(result.dispatch.id) + '/execute', { context_hash: context.context_hash, confirmed: true });

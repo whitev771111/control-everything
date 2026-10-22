@@ -79,7 +79,7 @@ function dispatchFixture(options = {}) {
   const task = item('brief'), record = { id: 'dispatch-one', agent_id: 'a', directory_path: 'C:/example/project', content_text: 'Saved request', brief_sha256: 'a'.repeat(64), delivery_state: 'previewed' };
   const state = { current: true, revision: 3, records: [], globalBusy: false };
   const briefResult = () => ({ item: task, brief: { revision: state.revision, request_text: 'Build a small feature', references: [], execution_directory_id: 'main' }, directories: [{ binding_id: 'main', path: 'C:/example/project' }] });
-  const api = context.window.WorkspaceTaskDispatch.create({ root, item: task, agents: [agent],
+  const api = context.window.WorkspaceTaskDispatch.create({ root, item: task, agents: options.agents || [agent],
     isCurrent: () => state.current, isBusy: () => state.globalBusy, onBusy: value => { state.globalBusy = value; }, onDirty: value => dirty.push(value),
     fetchJson: async url => { calls.push(url); if (options.read) return options.read(url, briefResult()); return url.endsWith('/brief') ? briefResult() : { items: state.records }; },
     postJson: async (url, body) => {
@@ -159,6 +159,74 @@ test('preview hash conflict prevents replay and leaves the saved brief and agent
   await f.node('td-create').listeners.click(); await f.node('td-create').listeners.click();
   assert.equal(f.posts.length, 2); assert.equal(f.node('td-agent').value, 'a');
   assert.equal(f.node('td-confirm').checked, false); assert.match(f.node('td-status').textContent, /重新读取/);
+});
+
+async function previewAutoDispatch(f) {
+  f.node('td-agent').value = 'a'; f.node('td-agent').listeners.change();
+  f.node('td-auto').checked = true; f.node('td-auto').listeners.change();
+  await f.node('td-preview').listeners.click();
+}
+
+test('F5 an existing unstarted automatic snapshot retries only after reload and renewed confirmation', async () => {
+  let saved = false, executions = 0, contexts = 0;
+  const record = { id: 'auto-dispatch', agent_id: 'a', brief_sha256: 'a'.repeat(64), delivery_mode: 'auto', delivery_state: 'previewed', run_id: null };
+  const f = dispatchFixture({ agents: [{ ...agent, adapter: 'codex' }], read: async (url, brief) => {
+    if (url.endsWith('/brief')) return brief;
+    if (url.endsWith('/execution-context')) return { context_hash: `context-${++contexts}` };
+    return { items: saved ? [record] : [] };
+  }, post: async url => {
+    if (url.endsWith('/dispatch-preview')) return { status: 'preview', dispatch: { brief_revision: 3 }, brief_sha256: record.brief_sha256, content_text: 'Request' };
+    if (url.endsWith('/dispatch')) { const status = saved ? 'existing' : 'previewed'; saved = true; return { status, dispatch: record }; }
+    if (url.endsWith('/execute') && ++executions === 1) throw Object.assign(new Error('capacity_busy'), { status: 409, reason: 'capacity_busy' });
+    return { status: 'admitted' };
+  } });
+  await f.api.ready; await previewAutoDispatch(f); f.node('td-confirm').checked = true;
+  await f.node('td-create').listeners.click(); assert.equal(executions, 1);
+  assert.match(f.node('td-status').textContent, /capacity_busy.*不会自动重试/);
+  await f.node('td-create').listeners.click(); await f.node('td-preview').listeners.click();
+  assert.equal(executions, 1); assert.equal(f.posts.filter(row => row.url.endsWith('/dispatch')).length, 1);
+  await f.root.all.find(node => node.textContent === '重新读取说明与交接记录').listeners.click();
+  assert.equal(executions, 1); await previewAutoDispatch(f);
+  await f.node('td-create').listeners.click(); assert.equal(executions, 1);
+  f.node('td-confirm').checked = true; await f.node('td-create').listeners.click();
+  const writes = f.posts.filter(row => row.url.endsWith('/execute'));
+  assert.equal(executions, 2); assert.equal(contexts, 2);
+  assert.equal(writes[0].url, writes[1].url); assert.equal(writes[1].body.context_hash, 'context-2');
+  assert.equal(writes[1].body.confirmed, true); assert.match(f.node('td-status').textContent, /后台启动 Agent/);
+});
+
+test('F5 an automatic execution with unknown outcome cannot be replayed before a record reload', async () => {
+  let finish;
+  const record = { id: 'pending-auto', brief_sha256: 'a'.repeat(64), delivery_mode: 'auto', delivery_state: 'previewed', run_id: null };
+  const f = dispatchFixture({ agents: [{ ...agent, adapter: 'dsh' }], read: async (url, brief) => url.endsWith('/brief') ? brief : url.endsWith('/execution-context') ? { context_hash: 'context' } : { items: [record] }, post: async url => {
+    if (url.endsWith('/dispatch-preview')) return { status: 'preview', dispatch: { brief_revision: 3 }, brief_sha256: record.brief_sha256, content_text: 'Request' };
+    if (url.endsWith('/dispatch')) return { status: 'previewed', dispatch: record };
+    if (url.endsWith('/execute')) return new Promise((_resolve, reject) => { finish = () => reject(new Error('connection closed')); });
+  } });
+  await f.api.ready; await previewAutoDispatch(f); f.node('td-confirm').checked = true;
+  const pending = f.node('td-create').listeners.click(); await new Promise(setImmediate);
+  await f.node('td-create').listeners.click(); assert.equal(f.posts.filter(row => row.url.endsWith('/execute')).length, 1);
+  finish(); await pending;
+  await f.node('td-create').listeners.click(); assert.equal(f.node('td-preview').disabled, true);
+  assert.equal(f.posts.filter(row => row.url.endsWith('/execute')).length, 1);
+  assert.equal(f.node('td-confirm').checked, false); assert.match(f.node('td-status').textContent, /不会自动重试|不会重复提交/);
+});
+
+for (const status of ['previewed', 'existing']) for (const recordState of [
+  { delivery_state: 'previewed', run_id: 'known-run' }, { delivery_state: 'cancelled', run_id: null },
+  { delivery_state: 'failed', run_id: null }, { delivery_state: 'sent', run_id: null },
+  { delivery_state: 'delivered', run_id: null }, { delivery_state: 'previewed', run_id: null, delivery_mode: 'manual' },
+  { delivery_state: 'previewed', run_id: null, brief_sha256: 'b'.repeat(64) }
+]) test(`F5 ${status} snapshot ${JSON.stringify(recordState)} cannot restart automatically`, async () => {
+  const record = { id: 'old-auto', brief_sha256: 'a'.repeat(64), delivery_mode: 'auto', ...recordState };
+  const f = dispatchFixture({ agents: [{ ...agent, adapter: 'codex' }], read: async (url, brief) => url.endsWith('/brief') ? brief : { items: [record] }, post: async url => {
+    if (url.endsWith('/dispatch-preview')) return { status: 'preview', dispatch: { brief_revision: 3 }, brief_sha256: 'a'.repeat(64), content_text: 'Request' };
+    if (url.endsWith('/dispatch')) return { status, dispatch: record };
+    throw new Error('Unexpected execution');
+  } });
+  await f.api.ready; await previewAutoDispatch(f); f.node('td-confirm').checked = true; await f.node('td-create').listeners.click();
+  assert.equal(f.calls.filter(url => url.endsWith('/execution-context')).length, 0);
+  assert.equal(f.posts.filter(row => row.url.endsWith('/execute')).length, 0);
 });
 
 test('groups distinguish assignment from a real run and honor manual review/completion', () => {

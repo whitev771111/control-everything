@@ -709,8 +709,10 @@ class ExecutionService:
             try:
                 row = self.store.get_run(run_id)
                 if row["state"] in ACTIVE_STATES:
+                    cleanup = ("verified" if getattr(worker, "process", None) is None
+                               and not row["turn_send_started"] else row["cleanup_state"])
                     self.store.update_run(run_id, state="unknown" if row["turn_send_started"] else "failed",
-                                          reason="execution_error")
+                                          reason="execution_error", cleanup_state=cleanup)
             except WorkspaceError:
                 pass
         finally:

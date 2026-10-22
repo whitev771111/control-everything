@@ -9,6 +9,7 @@ from control_everything.execution import service as execution
 from control_everything.execution.codex import CodexRun
 from control_everything.execution.store import ExecutionStore
 from control_everything.input_validation import ProfileError
+from control_everything.workspace.store import WorkspaceError
 from tests.backend import test_codex_execution as protocol
 from tests.backend import test_dispatch_admission as admission
 from tests.backend import test_dispatch_execution_context as fixtures
@@ -22,6 +23,17 @@ class EchoPolicyTransport(protocol.MemoryTransport):
         super().write(value)
 
 
+class UnstartedWorker:
+    def __init__(self, process=None):
+        self.process = process
+        self.ran = self.closed = False
+
+    def run(self):
+        self.ran = True
+        raise RuntimeError('synthetic worker failure')
+
+    def close(self):
+        self.closed = True
 
 
 class ExecutionAdmissionFailureTests(unittest.TestCase):
@@ -43,6 +55,11 @@ class ExecutionAdmissionFailureTests(unittest.TestCase):
         self.addCleanup(service.close)
         return service
 
+    def admit(self, service):
+        return execution.admit_dispatch_execution(
+            self.service, self.ledger, self.dispatch['id'],
+            {'context_hash': self.context()['context_hash'], 'confirmed': True},
+            owner_id=service.owner_id, require_owner=service._require_owner)
 
     def assert_worker_policy(self, permission):
         self.save_agent(permission=permission)
@@ -87,9 +104,66 @@ class ExecutionAdmissionFailureTests(unittest.TestCase):
         self.assertEqual(caught.exception.reason, 'context_changed')
         self.assertIsNone(self.ledger.find_request(self.dispatch['id']))
 
+    def assert_failed_before_process_releases_claim(self, service, admitted, worker):
+        row = self.ledger.get_run(admitted['run']['id'])
+        self.assertFalse(worker.ran)
+        self.assertTrue(worker.closed)
+        self.assertIsNone(worker.process)
+        self.assertEqual((row['state'], row['cleanup_state']), ('failed', 'verified'))
+        with self.profile.store.connection() as connection:
+            projected = connection.execute('SELECT status FROM agent_runs WHERE id=?',
+                                           (admitted['agent_run_id'],)).fetchone()
+        self.assertEqual(projected['status'], 'failed')
+        dispatch, body = self.make_dispatch(self.project)
+        retry = execution.admit_dispatch_execution(
+            self.service, self.ledger, dispatch['id'], body,
+            owner_id=service.owner_id, require_owner=service._require_owner)
+        self.assertFalse(retry['replayed'])
+        self.assertEqual(retry['run']['cwd'], row['cwd'])
 
+    def test_real_directory_lease_failure_releases_pending_claim_for_retry(self):
+        service = self.execution_service()
+        admitted = self.admit(service)
+        worker = UnstartedWorker()
+        with execution.directory_lock(admitted['run']['cwd']):
+            service._run_worker(admitted['run']['id'], worker)
+        self.assert_failed_before_process_releases_claim(service, admitted, worker)
 
+    def test_root_revalidation_failure_releases_pending_claim_for_retry(self):
+        service = self.execution_service()
+        admitted = self.admit(service)
+        worker = UnstartedWorker()
+        with patch.object(service, 'validate_root', return_value=False):
+            service._run_worker(admitted['run']['id'], worker)
+        self.assert_failed_before_process_releases_claim(service, admitted, worker)
 
+    def test_process_with_unverified_cleanup_keeps_claim_and_directory_lease(self):
+        service = self.execution_service()
+        admitted = self.admit(service)
+        worker = UnstartedWorker(process=object())
+        run_id = admitted['run']['id']
+        try:
+            service._run_worker(run_id, worker)
+            row = self.ledger.get_run(run_id)
+            self.assertTrue(worker.ran)
+            self.assertNotEqual(row['cleanup_state'], 'verified')
+            self.assertIn(run_id, execution._UNVERIFIED_LEASES)
+            with self.assertRaisesRegex(OSError, 'sandbox_busy'):
+                with execution.directory_lock(row['cwd']):
+                    pass
+            with self.profile.store.connection() as connection:
+                projected = connection.execute('SELECT status FROM agent_runs WHERE id=?',
+                                               (admitted['agent_run_id'],)).fetchone()
+            self.assertIn(projected['status'], ('claimed', 'running'))
+            dispatch, body = self.make_dispatch(self.project)
+            with self.assertRaisesRegex(WorkspaceError, 'project_busy'):
+                execution.admit_dispatch_execution(
+                    self.service, self.ledger, dispatch['id'], body,
+                    owner_id=service.owner_id, require_owner=service._require_owner)
+        finally:
+            lease = execution._UNVERIFIED_LEASES.pop(run_id, None)
+            if lease is not None:
+                lease.close()
 
 
 if __name__ == '__main__':

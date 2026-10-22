@@ -115,7 +115,7 @@ Claude Code 与 OpenCode 列出的是“识别到的项目目录”，不代表�
 
 程序登记位于“工具与接入 → 配置工具”；添加项目面板只处理项目和项目来源。Claude/OpenCode 原生 EXE 与其他工具的自定义 EXE 必须确认本机路径，校验的是文件身份，不保证发布者签名；不接受 node/python/cmd 等通用宿主。登记不会运行、安装或结束工具。普通工具页只展示存在/登记状态，进程资源在折叠诊断中查看。页面自动刷新，错误时提供局部重试；外部资源管理器目录拖入请改用新建项目的手工路径入口。
 
-v4 备份恢复保留项目、路径和移出意图，但停用三个工具的来源许可，需在新目录重新确认读取；原生登记沿用重新绑定规则。恢复不恢复进程或窗口许可，回退前应保全当前备份并在另一目录恢复升级前版本，不要手工删字段降版。
+v4/v5 备份恢复保留项目、路径和移出意图，但停用三个工具的来源许可，需在新目录重新确认读取；原生登记沿用重新绑定规则。恢复不恢复进程或窗口许可，回退前应保全当前备份并在另一目录恢复升级前版本，不要手工删字段降版。
 
 新 profile 的远端 SSH、终端、工作台和启动器均为未配置；登记方式见[可选接入](integrations.md)。这些接入配置不会代替 Agent 执行配置。官方额度仅在点击查询后读取，公开资讯独立加载。源码开发版的 Agent 执行与审批条件见上面的最小执行流程；实际模型运行会使用对应账户额度。
 
@@ -240,14 +240,14 @@ GET  /api/agent/tasks/<task_id>/review
 
 ## 导入旧记录与恢复
 
-管理库使用schema8，配置仍独立兼容v1/v2/v3/v4/v5；备份manifest1对应schema1，manifest2对应schema2，manifest3对应schema3，manifest4对应schema4，manifest5对应schema5，manifest6对应schema6，manifest7对应schema7，manifest8对应schema8。新空profile直接初始化schema8，已有schema1/schema2/schema3/schema4/schema5/schema6/schema7不会随启动自动升级：先正常停止自己使用该profile的实例，再显式执行离线迁移。命令不会终止其他程序；锁忙、未知表/版本、校验失败或超预算会拒绝并保留原库及已生成备份，不截断历史值。
+管理库使用schema9，配置仍独立兼容v1/v2/v3/v4/v5；各版备份manifest1–9分别对应schema1–9。新空profile直接初始化schema9，已有schema1–8不会随启动自动升级：先正常停止自己使用该profile的实例，再显式执行离线迁移。命令不会终止其他程序；锁忙、未知表/版本、校验失败或超预算会拒绝并保留原库及已生成备份，不截断历史值。
 
 ```powershell
 & '.venv/Scripts/python.exe' -m control_everything.profile status --data-dir 'C:/example/SessionPanel/main'
 & '.venv/Scripts/python.exe' -m control_everything.profile migrate-tasks --data-dir 'C:/example/SessionPanel/main'
 ```
 
-迁移将旧tasks/todos收为一个可写模型，保留来源及原ID（包括空待办ID）、重复标题、原顺序、时间和NULL；旧接口通过适配读写同一模型。数据库中的tasks/todos是只读兼容视图，不能再用旧程序或直接SQL写入。新列表的顺序单独保存，不伪造两种来源的历史先后。schema3在保留旧视图的同时增加事项优先级、今日标记、审核记录和项目决策日志；schema4增加 assigned_agent_id、agent_runs 和 task_events，用于 Agent 领取、进度与审核证据；schema5增加 task_briefs、task_dispatches 和 agent_runs.dispatch_id，用于版本化事项说明与人工确认派发快照；schema6增加 task_sessions，用于事项与外部会话元数据关联（不保存聊天正文）；schema7为 task_sessions 增加 source_instance，同厂商多实例用独立命名空间；schema8增加 task_messages，用于人工补充要求/退回意见/等待人回答的手动交接记录；旧记录未设置这些字段时行为不变。
+迁移将旧tasks/todos收为一个可写模型，保留来源及原ID（包括空待办ID）、重复标题、原顺序、时间和NULL；旧接口通过适配读写同一模型。数据库中的tasks/todos是只读兼容视图，不能再用旧程序或直接SQL写入。新列表的顺序单独保存，不伪造两种来源的历史先后。schema3在保留旧视图的同时增加事项优先级、今日标记、审核记录和项目决策日志；schema4增加 assigned_agent_id、agent_runs 和 task_events，用于 Agent 领取、进度与审核证据；schema5增加 task_briefs、task_dispatches 和 agent_runs.dispatch_id，用于版本化事项说明与人工确认派发快照；schema6增加 task_sessions，用于事项与外部会话元数据关联（不保存聊天正文）；schema7为 task_sessions 增加 source_instance，同厂商多实例用独立命名空间；schema8增加 task_messages，用于人工补充要求/退回意见/等待人回答的手动交接记录；schema9增加 execution_runs、execution_events、execution_approvals，在同一管理库保存真实执行、事件及工具审批，并纳入备份恢复。
 
 在空 profile 的“来源与导入”填写旧数据目录的绝对路径，例如 `C:/example/previous-panel`。固定读取 `progress-registry.json`，以及可选的 `progress-manual.json`、`progress-todos.json`、`workspace-state.sqlite3`。只导入全部合法项目、人工进度、待办、工作台任务和人工用量；保留原 ID、顺序、关联与已有时间。未登记项目的记录进入兼容区；没有原时间的导入快照显示“来源未提供时间”。
 
@@ -257,14 +257,14 @@ GET  /api/agent/tasks/<task_id>/review
 
 ```powershell
 & '.venv/Scripts/python.exe' -m control_everything.profile restore --backup 'C:/example/SessionPanel/main/backups/<备份目录>' --data-dir 'C:/example/SessionPanel/restored'
-# Only when restore reports schema1/schema2 / migration_required:
+# Only when restore reports schema1-8 / migration_required:
 & '.venv/Scripts/python.exe' -m control_everything.profile migrate-tasks --data-dir 'C:/example/SessionPanel/restored'
 & '.venv/Scripts/python.exe' -m control_everything.gateway --data-dir 'C:/example/SessionPanel/restored' --port 14401
 ```
 
 恢复会校验 manifest、文件大小/哈希、schema 与 SQLite 完整性。停止自己的旧实例后另行启动恢复目录；不在线切换，不删除原 profile 或导入后的新记录。真实个人数据是否符合导入合同需实际校验，隔离 fixture 验证不能替代个人迁移结果。
 
-恢复旧备份会先保留其原schema结构，再由上述命令显式迁移。需要退回旧程序时，先停新版实例并运行 `python -m control_everything.profile preserve-tasks --data-dir <绝对profile目录>`，验证包含升级后全部新增/变更的schema8私密备份，再把升级前旧备份恢复到另一个空目录。原schema8目录和保全件必须保留；保全不是把新语义自动反写旧库，单独回退代码不代表数据已无损降级。
+恢复旧备份会先保留其原schema结构，再由上述命令显式迁移。需要退回旧程序时，先停新版实例并运行 `python -m control_everything.profile preserve-tasks --data-dir <绝对profile目录>`，验证包含升级后全部新增/变更的schema9私密备份，再把升级前旧备份恢复到另一个空目录。原schema9目录和保全件必须保留；保全不是把新语义自动反写旧库，单独回退代码不代表数据已无损降级。
 
 新记录保存在所选 profile，源码旁旧 JSON/SQLite 与既有服务保留原位。任务负责人表示人工分配，不向 Agent 发送命令。资讯含来源与采样时间，不是推送流。
 

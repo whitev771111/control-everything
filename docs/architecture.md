@@ -32,7 +32,7 @@ flowchart TD
 | `src/control_everything/sessions` | 会话索引、工具进程观察与终端证据 |
 | `src/control_everything/profiles` | 配置、数据目录、导入、备份与离线恢复 |
 | `src/control_everything/integrations` | 外部服务、固定启动器与只读 MCP 适配 |
-| `src/control_everything/execution` | 受控执行基础；当前产品不开放 Agent 执行入口 |
+| `src/control_everything/execution` | Codex / DSH 受控执行、工具审批、运行归属与清理；当前为源码开发版入口 |
 | `src/control_everything/installation` | Windows 产品清单、所属登记和安装维护 |
 | `src/control_everything/platform` | Windows Job、句柄与安装身份原语 |
 | `web/sessions`、`web/progress`、`web/workspace` | 三组页面及其脚本、样式 |
@@ -59,4 +59,4 @@ HTTP 层可以装配各功能包，功能包不能反向依赖 HTTP。会话观�
 开发环境、检查命令和提交约定见[参与开发](../.github/CONTRIBUTING.md)；配置及数据恢复操作见[使用指南](usage.md)。
 
 
-项目发现、读取许可和加入工作台分别处理。Codex 沿用原许可字段；Claude Code/OpenCode 的许可与移出 ID 集合保存在 profile v4，v5 增加本机 Agent 注册身份与可选 project_ids 范围。已存项目默认保留，未保存的外部发现不自动进入导航。移出只写配置，不删除业务记录；首次加入只写管理库，合法悬空移出 ID 需要第二次配置请求重新加入。业务 schema8 与备份 manifest8 保持；agent_runs/task_events 记录领取、进度、等待人工/授权和审核证据；task_briefs/task_dispatches 记录版本化说明与人工确认的派发快照；task_sessions 只存外部会话元数据与 source_instance，不存正文；task_messages 记录人工补充/退回/等待人回答的手动交接状态；连接未知只提示，不释放运行或任务，不表示宿主执行或自动完成。
+项目发现、读取许可和加入工作台分别处理。Codex 沿用原许可字段；Claude Code/OpenCode 的许可与移出 ID 集合保存在 profile v4，v5 增加本机 Agent 注册身份与可选 project_ids 范围。已存项目默认保留，未保存的外部发现不自动进入导航。移出只写配置，不删除业务记录；首次加入只写管理库，合法悬空移出 ID 需要第二次配置请求重新加入。当前业务 schema9 与备份 manifest9 对应；agent_runs/task_events 记录领取、进度、等待人工/授权和审核证据；task_briefs/task_dispatches 记录版本化说明与人工确认的派发快照；task_sessions 只存外部会话元数据与 source_instance，不存正文；task_messages 记录人工补充/退回/等待人回答的手动交接状态；execution_runs/execution_events/execution_approvals 在同一管理库记录真实执行、事件及工具审批。连接未知只提示，不释放运行或任务，不表示宿主执行或自动完成。

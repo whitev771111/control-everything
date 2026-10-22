@@ -477,7 +477,7 @@ def restore_backup(backup_dir, data_dir):
         config = validate_config(strict_json(config_path.read_text(encoding="utf-8")))
         if config["version"] >= 3:
             config["observations"] = observation_settings.restore_intent(config["observations"])
-            if config["version"] == 4:
+            if config["version"] >= 4:
                 config["codex"]["enabled"] = False
                 for source in config["workbench"]["sources"].values():
                     source["enabled"] = False

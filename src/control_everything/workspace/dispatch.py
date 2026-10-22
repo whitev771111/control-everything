@@ -376,6 +376,8 @@ def create_dispatch(profile, task_id, body):
             "AND delivery_mode=? AND delivery_state IN ('previewed','sent','delivered') AND run_id IS NULL "
             "ORDER BY created_at DESC LIMIT 1",
             (task_id, body["agent_id"], digest, delivery_mode)).fetchone()
+        if item["assigned_agent_id"] != payload["agent_id"]:
+            profile.store._update_item(connection, item, {"assigned_agent_id": payload["agent_id"]}, item["revision"])
         if existing is not None:
             return {"status": "existing", "dispatch": dict(existing), "duplicate": True}
         identity = str(uuid4())
@@ -387,8 +389,6 @@ def create_dispatch(profile, task_id, body):
             (identity, task_id, payload["agent_id"], payload["project_id"], payload["directory_id"],
              payload["directory_path"], canonical, digest, content, delivery_mode, "previewed", None, None, None,
              stamp, None, stamp))
-        if item["assigned_agent_id"] != payload["agent_id"]:
-            profile.store._update_item(connection, item, {"assigned_agent_id": payload["agent_id"]}, item["revision"])
         value = dict(connection.execute("SELECT * FROM task_dispatches WHERE id=?", (identity,)).fetchone())
         return {"status": "previewed", "dispatch": value, "duplicate": False}
 

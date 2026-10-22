@@ -120,7 +120,7 @@ class WorkspaceStore:
                 raise WorkspaceError("task_not_found")
             return dict(row)
 
-    def save_task(self, fields, task_id=None):
+    def save_task(self, fields, task_id=None, *, agent_settings=None):
         if self.profile:
             with self.connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -133,6 +133,13 @@ class WorkspaceStore:
                     # The legacy service includes its raw id in the validated body.
                     changes = {key: fields[key] for key in ('title', 'project_id', 'provider_id', 'state', 'session_key')}
                     self._check_public_item_update(connection, old, changes)
+                    if (agent_settings is not None and old['project_id'] != changes['project_id']
+                            and old['assigned_agent_id'] is not None):
+                        agent = next((row for row in agent_settings['items']
+                                      if row['id'] == old['assigned_agent_id'] and row['enabled']), None)
+                        if (agent is None or agent['project_ids']
+                                and changes['project_id'] not in agent['project_ids']):
+                            raise ProfileError('invalid_item', 'assigned_agent_id')
                     self._update_item(connection, old, changes)
                 return dict(connection.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
         now = datetime.now(timezone.utc).isoformat()

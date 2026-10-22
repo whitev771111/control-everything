@@ -522,7 +522,7 @@ window.WorkspaceAgentBoard = (() => {
     const el = (tag, cls = '', text) => { const node = document.createElement(tag); node.className = cls; if (text !== undefined) node.textContent = text; return node; };
     const id = (node, name) => { node.id = name; return node; };
     const btn = (text, fn, cls = 'button secondary') => { const node = el('button', cls, text); node.type = 'button'; node.addEventListener('click', fn); return node; };
-    const option = (select, value, text) => { const node = el('option', '', text); node.value = value; select.append(node); };
+    const option = (select, value, text) => { const node = el('option', '', text); node.value = value; select.append(node); return node; };
     const field = (text, control) => { const node = el('label', 'field', text); node.append(control); return node; };
     const when = value => { const time = Date.parse(value); return Number.isFinite(time) ? new Date(time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '未上报'; };
     const failureReason = error => ({ item_changed: '事项已被其他窗口更新', agent_run_conflict: 'Agent 已领取或正在等待审核，不能改派', review_already_submitted: 'Agent 已提交审核，请读取最新材料', run_not_found: '本次运行已结束或不可用，请读取最新状态',
@@ -530,6 +530,7 @@ window.WorkspaceAgentBoard = (() => {
       project_required: '请先为待办选择项目，Agent 需要明确的执行目录', execution_unavailable: '执行服务尚未就绪，请核对服务状态' }[error.reason] || error.message);
     const canExecute = agent => agent?.enabled && ['dsh', 'codex'].includes(agent.adapter)
       && !Object.keys(agent.connection || {}).length && (!agent.command || agent.command === agent.adapter);
+    const canAssign = (agent, projectId) => agent?.enabled && (!agent.project_ids?.length || agent.project_ids.includes(projectId));
     async function executeTask(item) {
       const base = '/api/workspace/tasks/' + encodeURIComponent(item.id);
       let loaded = await fetchJson(base + '/brief');
@@ -703,25 +704,36 @@ window.WorkspaceAgentBoard = (() => {
       if (!targetProject) option(owner, '', '未归属项目的事项');
       for (const p of projects.filter(row => !targetProject || row.id === targetProject)) option(owner, p.id, p.name);
       owner.value = targetProject || ''; owner.disabled = Boolean(targetProject);
-      const agent = id(el('select'), 'ab-new-agent'); option(agent, '', '暂不分配 Agent');
-      for (const a of agents.filter(row => row.enabled)) option(agent, a.id, a.name);
+      const agent = id(el('select'), 'ab-new-agent');
       agent.disabled = !registryAvailable;
       const execute = id(el('input'), 'ab-new-execute'); execute.type = 'checkbox'; execute.checked = true;
       const executionNote = el('p', 'section-note');
       function syncExecute() {
         const selected = agents.find(row => row.id === agent.value);
-        execute.disabled = !canExecute(selected);
-        executionNote.textContent = execute.disabled ? '选择 DSH / Codex 后可创建并执行。'
+        const invalid = agent.value && !canAssign(selected, targetProject || owner.value || null);
+        execute.disabled = invalid || !canExecute(selected);
+        executionNote.textContent = invalid ? '所选 Agent 无权访问当前项目；请重新选择或明确取消分配。'
+          : execute.disabled ? '选择 DSH / Codex 后可创建并执行。'
           : !(targetProject || owner.value) ? '立即执行需要选择所属项目；若只想登记全局待办，请取消勾选立即执行。'
           : `创建后在项目目录启动 ${selected.name}；权限：${selected.permission || 'workspace-write'}，网络：${selected.network || 'denied'}，工具审批：${selected.approval || 'request_user'}。结果等待你审核。`;
       }
-      agent.addEventListener('change', syncExecute); owner.addEventListener('change', syncExecute); syncExecute();
+      function renderAgents() {
+        const previous = agent.value;
+        const available = agents.filter(row => canAssign(row, targetProject || owner.value || null));
+        agent.replaceChildren(); option(agent, '', '暂不分配 Agent');
+        for (const row of available) option(agent, row.id, row.name);
+        if (previous && !available.some(row => row.id === previous)) option(agent, previous, '原选择无权访问当前项目，请重新选择或取消分配').disabled = true;
+        agent.value = previous;
+        syncExecute();
+      }
+      agent.addEventListener('change', syncExecute); owner.addEventListener('change', renderAgents); renderAgents();
       for (const control of [name, owner, agent]) control.addEventListener('input', () => { detailDirty = true; });
       const save = el('button', 'button primary', '确认创建待办'); save.type = 'submit';
       fields.append(field('要做什么', name), field('所属项目', owner), field('分配 Agent（可选）', agent), field('创建后立即交给所选 Agent 执行', execute), executionNote, save); form.append(fields); detail.append(form);
       form.addEventListener('submit', async event => {
         event.preventDefault(); if (writing) return;
         if (!name.value.trim() || [...name.value].length > 2000) { feedback('请填写待办，最多 2000 字。', true); return; }
+        if (agent.value && !agents.some(row => row.id === agent.value && canAssign(row, targetProject || owner.value || null))) { feedback('所选 Agent 无权访问当前项目；请重新选择或明确取消分配。', true); return; }
         if (execute.checked && !execute.disabled && !(targetProject || owner.value)) { feedback('请选择所属项目再执行；或取消勾选立即执行，仅保存全局待办。', true); return; }
         writing = true; fields.disabled = true;
         try {
@@ -743,8 +755,11 @@ window.WorkspaceAgentBoard = (() => {
       if (failure) detail.append(el('p', 'feedback error', failure));
       const assignment = el('section', 'agent-detail-section'); assignment.append(el('h3', '', '分配 Agent'));
       const select = id(el('select'), 'ab-assignee'); option(select, '', '暂不分配');
-      for (const agent of agents.filter(row => row.enabled)) option(select, agent.id, agent.name);
-      if (item.assigned_agent_id && !agents.some(row => row.id === item.assigned_agent_id && row.enabled)) option(select, item.assigned_agent_id, '原 Agent 已禁用或移除');
+      for (const agent of agents.filter(row => canAssign(row, item.project_id))) option(select, agent.id, agent.name);
+      if (item.assigned_agent_id && !agents.some(row => row.id === item.assigned_agent_id && canAssign(row, item.project_id))) {
+        const original = agents.find(row => row.id === item.assigned_agent_id);
+        option(select, item.assigned_agent_id, original?.enabled ? '原 Agent 无权访问当前项目（授权范围已变化）' : '原 Agent 已禁用或移除').disabled = true;
+      }
       select.value = item.assigned_agent_id || '';
       const active = run && ['claimed', 'running', 'waiting_review'].includes(run.status) || ['running', 'waiting_user', 'waiting_review'].includes(item.assignment_state);
       const unverified = !!(failure && item.assigned_agent_id);
@@ -752,6 +767,7 @@ window.WorkspaceAgentBoard = (() => {
       const assign = id(btn('确认分配', async () => {
         const value = select.value || null;
         if (writing || select.disabled || value === (item.assigned_agent_id || null)) return;
+        if (value && !agents.some(row => row.id === value && canAssign(row, item.project_id))) { feedback('所选 Agent 无权访问当前项目；请重新选择或明确取消分配。', true); return; }
         if (briefDirty || sessionDirty || messageDirty) { feedback('请先保存或放弃事项说明、会话关联和补充草稿，再修改分配。'); return; }
         writing = true; assign.disabled = true; select.disabled = true;
         try {

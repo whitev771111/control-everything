@@ -379,6 +379,59 @@ test('assignment uses enabled registry entries and optimistic revision without s
   assert.match(f.node('ab-detail').textContent, /进度：未上报/);
 });
 
+const scopeAgents = [agent, { ...agent, id: 'empty', name: 'Unrestricted', project_ids: [] },
+  { ...agent, id: 'only-p', name: 'Only P', project_ids: ['p'] }, { ...agent, id: 'only-q', name: 'Only Q', project_ids: ['q'] },
+  { ...agent, id: 'off', enabled: false, project_ids: ['p'] }];
+for (const projectId of ['p', 'q', null]) test(`F7 assignment options respect project scope ${projectId}`, async () => {
+  const row = item('scoped', { project_id: projectId }), f = fixture({ rows: [row], agents: scopeAgents, projects: [{ id: 'p', name: 'P' }, { id: 'q', name: 'Q' }] });
+  await f.api.load(); await f.api.open(row);
+  assert.deepEqual(f.node('ab-assignee').children.map(node => node.value), ['', 'a', 'empty', ...(projectId ? [`only-${projectId}`] : [])]);
+  f.node('ab-assignee').value = projectId === 'p' ? 'only-q' : 'only-p';
+  await f.node('ab-assign').listeners.click(); assert.equal(f.posts.length, 0);
+  assert.match(f.node('ab-feedback').textContent, /无权访问|授权范围/);
+  f.node('ab-assignee').value = projectId ? `only-${projectId}` : 'a'; await f.node('ab-assign').listeners.click();
+  assert.equal(f.posts.length, 1); assert.equal(f.posts[0].body.changes.assigned_agent_id, projectId ? `only-${projectId}` : 'a');
+});
+
+test('F7 an old out-of-scope assignment remains explicit until the user clears or replaces it', async () => {
+  const row = item('old-scope', { project_id: 'q', assigned_agent_id: 'only-p' });
+  const f = fixture({ rows: [row], agents: scopeAgents, projects: [{ id: 'q', name: 'Q' }] });
+  await f.api.load(); await f.api.open(row);
+  const select = f.node('ab-assignee'), old = select.children.find(node => node.value === 'only-p');
+  assert.equal(select.value, 'only-p'); assert.equal(old.disabled, true); assert.match(old.textContent, /无权访问|授权范围/);
+  await f.node('ab-assign').listeners.click(); assert.equal(f.posts.length, 0);
+  select.value = ''; await f.node('ab-assign').listeners.click();
+  assert.equal(f.posts.length, 1); assert.equal(f.posts[0].body.changes.assigned_agent_id, null);
+});
+
+test('F7 a new todo retains an invalid selection when switching projects and requires an explicit correction', async () => {
+  const f = fixture({ agents: scopeAgents, projects: [{ id: 'p', name: 'P' }, { id: 'q', name: 'Q' }] });
+  await f.api.load(); f.root.all.find(node => node.textContent === '＋ 新建待办').listeners.click();
+  const owner = f.node('ab-new-project'), select = f.node('ab-new-agent');
+  const form = f.node('ab-new-title').parentElement.parentElement.parentElement;
+  assert.deepEqual(select.children.map(node => node.value), ['', 'a', 'empty']);
+  owner.value = 'p'; owner.listeners.change(); assert.deepEqual(select.children.map(node => node.value), ['', 'a', 'empty', 'only-p']);
+  select.value = 'only-p'; select.listeners.change(); f.node('ab-new-title').value = 'Scoped draft';
+  owner.value = 'q'; owner.listeners.change(); assert.equal(select.value, 'only-p');
+  const old = select.children.find(node => node.value === 'only-p'); assert.equal(old.disabled, true); assert.match(old.textContent, /无权访问|授权范围/);
+  await form.listeners.submit({ preventDefault() {} }); assert.equal(f.posts.length, 0); assert.match(f.node('ab-feedback').textContent, /无权访问|授权范围/);
+  owner.value = 'p'; owner.listeners.change(); assert.equal(select.value, 'only-p');
+  assert.equal(select.children.find(node => node.value === 'only-p').disabled, false);
+  owner.value = ''; owner.listeners.change(); assert.equal(select.value, 'only-p');
+  await form.listeners.submit({ preventDefault() {} }); assert.equal(f.posts.length, 0);
+  select.value = ''; select.listeners.change(); await form.listeners.submit({ preventDefault() {} });
+  assert.equal(f.posts.length, 1); assert.equal(f.posts[0].body.assigned_agent_id, null); assert.equal(f.posts[0].body.project_id, null);
+});
+
+test('F7 creating within a selected project only offers its authorized Agents', async () => {
+  const f = fixture({ agents: scopeAgents }); await f.api.load(); f.api.setProject('p');
+  f.root.all.find(node => node.textContent === '＋ 新建待办').listeners.click();
+  assert.deepEqual(f.node('ab-new-agent').children.map(node => node.value), ['', 'a', 'empty', 'only-p']);
+  f.node('ab-new-title').value = 'Project task'; f.node('ab-new-agent').value = 'only-q';
+  await f.node('ab-new-title').parentElement.parentElement.parentElement.listeners.submit({ preventDefault() {} });
+  assert.equal(f.posts.length, 0); assert.match(f.node('ab-feedback').textContent, /无权访问|授权范围/);
+});
+
 test('review requires a selected verdict, reason and an explicit confirmation', async () => {
   const row = item('review', { state: 'review', assignment_state: 'waiting_review' }); const f = fixture({ rows: [row] });
   await f.api.load(); await f.api.open(row); await f.submit(); assert.equal(f.posts.length, 0);

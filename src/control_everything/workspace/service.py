@@ -654,11 +654,6 @@ class WorkspaceService:
             project = next((row for row in registry if row["id"] == fields["project_id"]), None)
             if project is None or project["archived"]:
                 invalid("project_id")
-        if "assigned_agent_id" in fields and fields["assigned_agent_id"] is not None:
-            agent_id = fields["assigned_agent_id"]
-            if not isinstance(agent_id, str) or not any(
-                    row["id"] == agent_id and row["enabled"] for row in self.profile.agent_settings()["items"]):
-                invalid("assigned_agent_id")
         link_changed = old is None or any(name in fields for name in ("project_id", "provider_id", "session_key"))
         project = next((row for row in registry if row["id"] == merged["project_id"]), None)
         projection = None
@@ -700,9 +695,17 @@ class WorkspaceService:
                 raise WorkspaceError("session_project_mismatch")
             session_cwd = session["cwd"]
         # Preserve no-op CAS: the store receives an unchanged allowed field, never an empty patch.
-        item = self.store.save_item(fields or {"title": old["title"]}, item_id=item_id,
-                                    expected_revision=revision, session_cwd=session_cwd,
-                                    codex_project=projection, codex_session_project_id=session_project_id)
+        with self.profile.agent_settings_guard() as agents:
+            assignment_changed = old is None or any(key in fields for key in ("project_id", "assigned_agent_id"))
+            agent_id = merged.get("assigned_agent_id")
+            if assignment_changed and agent_id is not None:
+                agent = next((row for row in agents["items"] if row["id"] == agent_id and row["enabled"]), None)
+                if (not isinstance(agent_id, str) or agent is None
+                        or agent["project_ids"] and merged["project_id"] not in agent["project_ids"]):
+                    invalid("assigned_agent_id")
+            item = self.store.save_item(fields or {"title": old["title"]}, item_id=item_id,
+                                        expected_revision=revision, session_cwd=session_cwd,
+                                        codex_project=projection, codex_session_project_id=session_project_id)
         projected = self._item_projection(item, sessions, context)
         from control_everything.workspace import agent_runs
         info = agent_runs.assignment_states(self.store, [item["id"]]).get(item["id"]) or {}
@@ -829,7 +832,11 @@ class WorkspaceService:
                     if self.profile is not None else inside_project(session["cwd"], project["root"]))
             if not owns:
                 raise WorkspaceError("session_project_mismatch")
-        task = self.store.save_task({**body, "title": title.strip()}, task_id)
+        if self.profile is not None:
+            with self.profile.agent_settings_guard() as agents:
+                task = self.store.save_task({**body, "title": title.strip()}, task_id, agent_settings=agents)
+        else:
+            task = self.store.save_task({**body, "title": title.strip()}, task_id)
         return {"status": "ok", "task": {**task, "session_link_state": self.link_state(task, sessions,
             context["history"] if context is not None else registry, context["desktop"] if context is not None else None)}}
 
